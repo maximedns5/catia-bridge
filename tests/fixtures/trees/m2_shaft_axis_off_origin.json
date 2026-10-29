@@ -1,0 +1,146 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M2/ShaftOffAxis",
+   "name": "ShaftOffAxis",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       -1,
+       0
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        10,
+        0
+       ],
+       "end": [
+        18,
+        0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        18,
+        0
+       ],
+       "end": [
+        18,
+        25
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        18,
+        25
+       ],
+       "end": [
+        15,
+        25
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        15,
+        25
+       ],
+       "end": [
+        15,
+        40
+       ],
+       "id": "e4"
+      },
+      {
+       "type": "line",
+       "start": [
+        15,
+        40
+       ],
+       "end": [
+        10,
+        40
+       ],
+       "id": "e5"
+      },
+      {
+       "type": "line",
+       "start": [
+        10,
+        40
+       ],
+       "end": [
+        10,
+        0
+       ],
+       "id": "e6"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4",
+        "e5",
+        "e6"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "revolve",
+     "id": "revolve1",
+     "name": "Revolve1",
+     "sketch": "sketch1",
+     "angle": 360,
+     "axis": {
+      "origin": [
+       10,
+       0,
+       0
+      ],
+      "direction": [
+       0,
+       0,
+       1
+      ]
+     },
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

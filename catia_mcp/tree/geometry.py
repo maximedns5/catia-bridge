@@ -132,11 +132,12 @@ def _polyline(entity: dict[str, Any]) -> list[tuple[float, float]]:
     raise ValueError(f"no polyline for entity type '{kind}'")
 
 
-def _loop_area_centroid(entities: list[dict[str, Any]]) -> tuple[float, tuple[float, float]]:
-    """Unsigned area and centroid of one closed loop of entities."""
+def _loop_points(entities: list[dict[str, Any]]) -> list[tuple[float, float]]:
+    """One closed loop of entities as a closed polygon (first point = last);
+    arcs and circles are discretized."""
     if len(entities) == 1 and entities[0]["type"] == "circle":
-        r = float(entities[0]["radius"])
-        return math.pi * r * r, tuple(entities[0]["center"])
+        (cu, cv), r = entities[0]["center"], float(entities[0]["radius"])
+        return Arc((cu, cv), r, 0.0, 2 * math.pi).points()
     pieces = [_polyline(e) for e in entities]
     chain = list(pieces.pop(0))
     while pieces:
@@ -153,8 +154,16 @@ def _loop_area_centroid(entities: list[dict[str, Any]]) -> tuple[float, tuple[fl
         pieces.pop(i)
     if math.dist(chain[0], chain[-1]) > POINT_TOL:
         raise ValueError("the loop is not closed")
+    return chain
+
+
+def _loop_area_centroid(entities: list[dict[str, Any]]) -> tuple[float, tuple[float, float]]:
+    """Unsigned area and centroid of one closed loop of entities."""
+    if len(entities) == 1 and entities[0]["type"] == "circle":
+        r = float(entities[0]["radius"])
+        return math.pi * r * r, tuple(entities[0]["center"])
     area2 = cx = cy = 0.0
-    for (x0, y0), (x1, y1) in pairwise(chain):
+    for (x0, y0), (x1, y1) in pairwise(_loop_points(entities)):
         c = x0 * y1 - x1 * y0
         area2 += c
         cx += (x0 + x1) * c
@@ -162,6 +171,17 @@ def _loop_area_centroid(entities: list[dict[str, Any]]) -> tuple[float, tuple[fl
     if abs(area2) < 1e-12:
         raise ValueError("the loop encloses no area")
     return abs(area2) / 2, (cx / (3 * area2), cy / (3 * area2))
+
+
+def profile_loops(sketch: dict[str, Any]) -> list[tuple[int, list[tuple[float, float]]]]:
+    """(+1 outer / -1 inner, closed polygon) for every loop of the profiles."""
+    by_id = {e["id"]: e for e in sketch["entities"]}
+    loops = []
+    for profile in sketch["profiles"]:
+        loops.append((1, _loop_points([by_id[i] for i in profile["outer"]])))
+        loops.extend((-1, _loop_points([by_id[i] for i in inner]))
+                     for inner in profile.get("inner", []))
+    return loops
 
 
 def profile_area_centroid(sketch: dict[str, Any], profiles: list[dict[str, Any]] | None = None):
@@ -188,3 +208,63 @@ def prism_expectation(frame: Frame, area: float, centroid: tuple[float, float],
     if symmetric:
         return area * 2 * abs(distance), frame.world(*centroid)
     return area * abs(distance), frame.world(centroid[0], centroid[1], distance / 2)
+
+
+def _polygon_moments(points: list[tuple[float, float]]) -> tuple[float, float, float, float]:
+    """Unsigned A, Sx = int x dA, Ixx = int x^2 dA and Ixy = int x y dA of a
+    closed polygon (Green's theorem), whatever its orientation."""
+    a = sx = ixx = ixy = 0.0
+    for (x0, y0), (x1, y1) in pairwise(points):
+        c = x0 * y1 - x1 * y0
+        a += c / 2
+        sx += (x0 + x1) * c / 6
+        ixx += (x0 * x0 + x0 * x1 + x1 * x1) * c / 12
+        ixy += (x0 * y1 + 2 * x0 * y0 + 2 * x1 * y1 + x1 * y0) * c / 24
+    sign = 1.0 if a >= 0 else -1.0
+    return sign * a, sign * sx, sign * ixx, sign * ixy
+
+
+@dataclass(frozen=True)
+class RevolveExpectation:
+    volume: float
+    cog: Vec          # revolving by +angle, right-handed about the axis direction
+    cog_reversed: Vec  # revolving the other way
+    min_radius: float  # < 0 when the profile crosses the axis
+
+
+def revolve_expectation(frame: Frame, sketch: dict[str, Any], axis_origin: Vec,
+                        axis_direction: Vec, angle_deg: float) -> RevolveExpectation:
+    """Volume (Pappus) and centre of gravity of a profile revolved about an
+    axis lying in its plane. Lengths mm, angle degrees."""
+    d = unit(axis_direction)
+    _, centroid = profile_area_centroid(sketch)
+    offset = add(frame.world(*centroid), scale(axis_origin, -1))
+    radial = add(offset, scale(d, -dot(offset, d)))
+    if norm(radial) < POINT_TOL:
+        raise ValueError("the profile's centroid lies on the revolve axis")
+    e_r = unit(radial)
+    area = s1 = s2 = st = 0.0
+    min_radius = math.inf
+    for sign, polygon in profile_loops(sketch):
+        local = []
+        for u, v in polygon:
+            rel = add(frame.world(u, v), scale(axis_origin, -1))
+            local.append((dot(rel, e_r), dot(rel, d)))
+            min_radius = min(min_radius, local[-1][0])
+        a, sx, ixx, ixy = _polygon_moments(local)
+        area += sign * a
+        s1 += sign * sx
+        s2 += sign * ixx
+        st += sign * ixy
+    theta = math.radians(angle_deg)
+    volume = theta * s1
+    along = scale(d, st / s1)
+    half = theta / 2
+    distance_from_axis = 0.0 if abs(angle_deg - 360) < 1e-9 else (s2 / s1) * math.sin(half) / half
+    tangent = cross(d, e_r)
+
+    def at(phi: float) -> Vec:
+        swing = add(scale(e_r, math.cos(phi)), scale(tangent, math.sin(phi)))
+        return add(add(axis_origin, along), scale(swing, distance_from_axis))
+
+    return RevolveExpectation(volume, at(half), at(-half), min_radius)

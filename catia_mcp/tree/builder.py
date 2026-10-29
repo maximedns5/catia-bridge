@@ -12,7 +12,12 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
   centre of gravity against the profile's), with one direction flip if CATIA
   extruded the other way; join / cut / intersect then combine that tool body
   into its target with Add / Remove / Intersect. Holes are cuts of cylinders
-  (the contract's own hole profiles).
+  (the contract's own hole profiles); countersinks are revolved profiles.
+- Revolves are Shafts in a body of their own, checked by Pappus (volume and
+  centre of gravity, which also tells the turning direction for a partial
+  angle). Mirrors joined straight back are CATIA Mirrors (checked by the
+  centre of gravity landing on the plane); splits are checked by which side
+  of the plane the centre of gravity ends on, with one flip.
 - Nothing is retried: the first failure stops the part and is reported with
   its feature, and the document may then hold a partial model.
 """
@@ -27,9 +32,15 @@ from typing import Any
 
 from catia_mcp.automation import call_fill_array
 from catia_mcp.connection import CATIAConnection
+from catia_mcp.introspect import find_enum
 from catia_mcp.measure import Measurer
 from catia_mcp.tools.document import DocumentTools, _same
-from catia_mcp.tools.part_design import _force_solid_inwork, _read_prop, _set_prop
+from catia_mcp.tools.part_design import (
+    _force_solid_inwork,
+    _read_prop,
+    _set_prop,
+    _sketch_v_direction,
+)
 from catia_mcp.tree.geometry import (
     Arc,
     Frame,
@@ -40,11 +51,12 @@ from catia_mcp.tree.geometry import (
     dot,
     prism_expectation,
     profile_area_centroid,
+    revolve_expectation,
     scale,
     unit,
 )
 from catia_mcp.tree.preflight import check
-from catia_mcp.tree.reference import frame_axes, hole_segments
+from catia_mcp.tree.reference import frame_axes, hole_profile_sketch, hole_segments
 
 # Origin planes and the sketch frame CATIA gives them (H, V; normal = H x V).
 ORIGIN_PLANES = {
@@ -141,6 +153,7 @@ class TreeBuilder:
         self.bodies: dict[str, Any] = {}
         self.sketches: dict[str, dict[str, Any]] = {}
         self.first_pad: tuple[Any, Any] | None = None
+        self.pending_mirror: dict[str, Any] | None = None
         for feature in part["features"]:
             if time.monotonic() - self.started > self.deadline_s:
                 raise BuildFailed(f"the build exceeded its {self.deadline_s:.0f} s budget",
@@ -196,14 +209,73 @@ class TreeBuilder:
                            bool(feature.get("symmetric")), entry)
         self._combine(self.bodies[target], tool, operation, entry)
 
+    def _feature_revolve(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        sketch = self.sketches[feature["sketch"]]
+        axis = feature["axis"]
+        origin = tuple(float(c) for c in axis["origin"])
+        direction = unit(tuple(float(c) for c in axis["direction"]))
+        angle = float(feature["angle"])
+        if feature["operation"] == "new_body":
+            body = self._new_body(use_main=True)
+            self._verified_shaft(body, sketch, origin, direction, angle, entry)
+            self.bodies[feature["creates"][0]] = body
+            return
+        (target,) = feature["bodies"]
+        tool = self._new_body(use_main=False)
+        self._verified_shaft(tool, sketch, origin, direction, angle, entry)
+        self._combine(self.bodies[target], tool, feature["operation"], entry)
+
     def _feature_combine(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         (target,) = feature["targets"]
+        mirror = self.pending_mirror
+        self.pending_mirror = None
+        if mirror is not None and feature["tools"] == mirror["creates"]:
+            # Preflight guarantees this combine joins the mirror's copy
+            # straight back into its source: one CATIA Mirror of that body.
+            self.bodies.pop(feature["tools"][0])
+            self._mirror_into(self.bodies[target], mirror["plane"], entry)
+            return
         for name in feature["tools"]:
             self._combine(self.bodies[target], self.bodies.pop(name), feature["operation"], entry)
+
+    def _feature_mirror(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        self.pending_mirror = feature
+        self.bodies[feature["creates"][0]] = None  # exists only until the join
+        entry["note"] = "applied as a CATIA Mirror by the combine that joins it back"
+
+    def _feature_split(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        (target,) = feature["bodies"]
+        body = self.bodies[target]
+        frame = _plane_frame(feature["plane"])
+        ref, _ = self._support(frame)
+        before = self._volume(body)
+        keep_top = feature["keep"] == "top"
+        part = self.part
+        part.InWorkObject = body
+        sides = self._split_sides()
+        split = part.ShapeFactory.AddNewSplit(ref, sides["top" if keep_top else "bottom"])
+        entry["catia"].append(str(split.Name))
+        part.UpdateObject(split)
+        if not self._split_on_side(body, frame, keep_top, before):
+            current = _read_prop(split, "SplitSide")
+            other = sides["bottom"] if current == sides["top"] else sides["top"]
+            if not _set_prop(split, "SplitSide", other):
+                raise BuildFailed(f"CATIA refused to flip the side of '{split.Name}'")
+            part.UpdateObject(split)
+            if not self._split_on_side(body, frame, keep_top, before):
+                raise BuildFailed(f"'{split.Name}' keeps material on the wrong side of the "
+                                  "plane after one flip")
+            entry.setdefault("notes", []).append(f"{split.Name}: side flipped to match the tree")
 
     def _feature_hole(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         (target,) = feature["bodies"]
         for matrix in feature["frames"]:
+            if feature["kind"] == "countersink":
+                sketch, origin, z_dir = hole_profile_sketch(feature, matrix)
+                tool = self._new_body(use_main=False)
+                self._verified_shaft(tool, sketch, origin, z_dir, 360.0, entry)
+                self._combine(self.bodies[target], tool, "cut", entry)
+                continue
             origin, x_dir, z_dir = frame_axes(matrix)
             for radius, top, bottom in hole_segments(feature):
                 cylinder = {
@@ -232,7 +304,7 @@ class TreeBuilder:
         frame = Frame.from_tree(sketch["plane"])
         area, centroid = profile_area_centroid(sketch)
         want_volume, want_cog = prism_expectation(frame, area, centroid, dist, symmetric)
-        catia_sketch, along = self._draw(body, sketch, frame)
+        catia_sketch, along, _ = self._draw(body, sketch, frame)
         part = self.part
         _force_solid_inwork(part, catia_sketch)
         part.InWorkObject = body
@@ -266,6 +338,107 @@ class TreeBuilder:
                 raise BuildFailed(f"'{pad.Name}' still points the wrong way after one flip")
             entry.setdefault("notes", []).append(f"{pad.Name}: direction flipped to match the tree")
         return pad
+
+    def _verified_shaft(self, body: Any, sketch: dict[str, Any], axis_origin: Vec,
+                        axis_direction: Vec, angle: float, entry: dict[str, Any]) -> Any:
+        frame = Frame.from_tree(sketch["plane"])
+        want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame)
+        part = self.part
+        axis_ref = self._axis_reference(catia_sketch, catia_frame, axis_origin, axis_direction)
+        _force_solid_inwork(part, catia_sketch)
+        part.InWorkObject = body
+        shaft = part.ShapeFactory.AddNewShaft(catia_sketch)
+        entry["catia"].append(str(shaft.Name))
+        shaft.RevoluteAxis = axis_ref
+        if not _set_prop(shaft, "FirstAngle", angle):
+            raise BuildFailed(f"CATIA refused the angle of '{shaft.Name}'")
+        _set_prop(shaft, "SecondAngle", 0.0)
+        part.UpdateObject(shaft)
+        volume, cog = self._volume(body), self._cog(body)
+        size = math.sqrt(max(want.volume, 1e-9) ** (2 / 3))
+        tol = max(1e-3, FEATURE_REL_TOL * size)
+        if abs(volume - want.volume) > max(1e-3, FEATURE_REL_TOL * want.volume):
+            raise BuildFailed(
+                f"'{shaft.Name}' measures {volume:.4f} mm3, expected {want.volume:.4f} mm3 "
+                "(Pappus): the profile or the axis was not read as the tree gives them")
+        if distance(cog, want.cog) > tol:
+            if distance(cog, want.cog_reversed) > tol:
+                raise BuildFailed(
+                    f"'{shaft.Name}' has its centre of gravity at {_fmt(cog)}, expected "
+                    f"{_fmt(want.cog)}")
+            # CATIA turned the other way about this axis: put the angle on
+            # the other side of the profile.
+            if not (_set_prop(shaft, "FirstAngle", 0.0) and _set_prop(shaft, "SecondAngle", angle)):
+                raise BuildFailed(f"CATIA refused to turn '{shaft.Name}' the other way")
+            part.UpdateObject(shaft)
+            cog = self._cog(body)
+            if distance(cog, want.cog) > tol:
+                raise BuildFailed(f"'{shaft.Name}' still turns the wrong way after one swap")
+            entry.setdefault("notes", []).append(f"{shaft.Name}: angle swapped to turn as the tree")
+        return shaft
+
+    def _axis_reference(self, catia_sketch: Any, catia_frame, axis_origin: Vec,
+                        axis_direction: Vec) -> Any:
+        """The revolve axis: the sketch's own H or V axis when the tree's axis is
+        one of them, else a 3D line in the construction set."""
+        origin, h, v = catia_frame
+        offset = add(axis_origin, scale(origin, -1))
+        through_origin = distance(offset, scale(axis_direction, dot(offset, axis_direction))) < 1e-6
+        part = self.part
+        if through_origin and _parallel(axis_direction, v):
+            return part.CreateReferenceFromObject(_sketch_v_direction(catia_sketch))
+        if through_origin and _parallel(axis_direction, h):
+            return part.CreateReferenceFromObject(_sketch_h_direction(catia_sketch))
+        hsf = part.HybridShapeFactory
+        geoset = self._construction_set()
+        points = []
+        for point in (axis_origin, add(axis_origin, scale(axis_direction, 100.0))):
+            created = hsf.AddNewPointCoord(*point)
+            geoset.AppendHybridShape(created)
+            part.UpdateObject(created)
+            points.append(part.CreateReferenceFromObject(created))
+        line = hsf.AddNewLinePtPt(*points)
+        geoset.AppendHybridShape(line)
+        part.UpdateObject(line)
+        return part.CreateReferenceFromObject(line)
+
+    def _mirror_into(self, body: Any, plane: dict[str, Any], entry: dict[str, Any]) -> None:
+        frame = _plane_frame(plane)
+        ref, _ = self._support(frame)
+        before = self._volume(body)
+        part = self.part
+        part.InWorkObject = body
+        mirror = part.ShapeFactory.AddNewMirror(ref)
+        entry["catia"].append(str(mirror.Name))
+        part.UpdateObject(mirror)
+        after, cog = self._volume(body), self._cog(body)
+        slack = max(1e-3, FEATURE_REL_TOL * before)
+        if not before - slack <= after <= 2 * before + slack:
+            raise BuildFailed(f"'{mirror.Name}' left {after:.4f} mm3 from {before:.4f} mm3, "
+                              "which no mirror union gives")
+        off_plane = dot(add(cog, scale(frame.origin, -1)), frame.normal)
+        if abs(off_plane) > max(1e-3, FEATURE_REL_TOL * math.sqrt(max(after, 1e-9) ** (2 / 3))):
+            raise BuildFailed(f"'{mirror.Name}' is not symmetric about the tree's plane "
+                              f"(centre of gravity {off_plane:.4f} mm off it)")
+
+    def _split_sides(self) -> dict[str, int]:
+        """CatSplitSide values for keeping the side the plane normal points to
+        (top) or the other (bottom), from the type library when it is
+        readable. The side actually kept is checked after the update anyway."""
+        values = find_enum([self.part.ShapeFactory, self.conn.app], "CatSplitSide") or {}
+        top = [v for n, v in values.items() if "positive" in n.lower()]
+        bottom = [v for n, v in values.items() if "negative" in n.lower()]
+        if len(top) == 1 and len(bottom) == 1:
+            return {"top": top[0], "bottom": bottom[0]}
+        return {"top": 0, "bottom": 1}
+
+    def _split_on_side(self, body: Any, frame: Frame, keep_top: bool, before: float) -> bool:
+        after = self._volume(body)
+        if after <= 0 or after > before + max(1e-3, FEATURE_REL_TOL * before):
+            return False
+        side = dot(add(self._cog(body), scale(frame.origin, -1)), frame.normal)
+        return side > 0 if keep_top else side < 0
 
     def _combine(self, target: Any, tool: Any, operation: str, entry: dict[str, Any]) -> None:
         part = self.part
@@ -327,9 +500,10 @@ class TreeBuilder:
         data = call_fill_array(self.conn.app, sketch, "GetAbsoluteAxisData", 9)
         return tuple(data[0:3]), unit(tuple(data[3:6])), unit(tuple(data[6:9]))
 
-    def _draw(self, body: Any, sketch: dict[str, Any], frame: Frame) -> tuple[Any, float]:
+    def _draw(self, body: Any, sketch: dict[str, Any], frame: Frame):
         """Draw the tree sketch in a new CATIA sketch of `body`. Returns the
-        sketch and +1 / -1 for whether its normal agrees with the tree's."""
+        sketch, +1 / -1 for whether its normal agrees with the tree's, and the
+        CATIA sketch frame (origin, H, V)."""
         ref, known = self._support(frame)
         catia_sketch = body.Sketches.Add(ref)
         origin, h, v = self._sketch_frame(catia_sketch, known)
@@ -360,7 +534,7 @@ class TreeBuilder:
                 factory.CreateCircle(arc.center[0], arc.center[1], arc.radius, arc.start, arc.end)
         catia_sketch.CloseEdition()
         self.part.UpdateObject(catia_sketch)
-        return catia_sketch, along
+        return catia_sketch, along, (origin, h, v)
 
     # ── Measures and checks ──
 
@@ -402,6 +576,25 @@ class TreeBuilder:
         record.editability_note = (
             f"{pad.Name} length {original:g} -> {original + 1:g} -> {original:g} mm: volume "
             f"{before:.1f} -> {moved:.1f} -> {restored:.1f} mm3")
+
+
+def _sketch_h_direction(sketch: Any) -> Any:
+    """The sketch's H axis, by name first (as _sketch_v_direction), then by the
+    language-independent Sketch.AbsoluteAxis property."""
+    try:
+        return sketch.GeometricElements.Item("AbsoluteAxis").GetItem("HDirection")
+    except Exception:
+        return sketch.AbsoluteAxis.HorizontalReference
+
+
+def _plane_frame(plane: dict[str, Any]) -> Frame:
+    """A Frame for a mirror or split plane, which may come without x_dir."""
+    normal = unit(tuple(float(c) for c in plane["normal"]))
+    x_dir = plane.get("x_dir")
+    if not x_dir:
+        seed = (1.0, 0.0, 0.0) if abs(normal[0]) < 0.9 else (0.0, 1.0, 0.0)
+        x_dir = unit(add(seed, scale(normal, -dot(seed, normal))))
+    return Frame.from_tree({"origin": plane["origin"], "x_dir": list(x_dir), "normal": list(normal)})
 
 
 def _fmt(p: Vec) -> str:

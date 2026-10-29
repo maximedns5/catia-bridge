@@ -1,0 +1,214 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M2/PartialRevolveCut",
+   "name": "PartialRevolveCut",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       -10
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -40.0,
+        -25.0
+       ],
+       "end": [
+        40.0,
+        -25.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        40.0,
+        -25.0
+       ],
+       "end": [
+        40.0,
+        25.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        40.0,
+        25.0
+       ],
+       "end": [
+        -40.0,
+        25.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -40.0,
+        25.0
+       ],
+       "end": [
+        -40.0,
+        -25.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 20,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Sketch2",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       -1,
+       0
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        5.0,
+        -5.0
+       ],
+       "end": [
+        15.0,
+        -5.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        15.0,
+        -5.0
+       ],
+       "end": [
+        15.0,
+        5.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        15.0,
+        5.0
+       ],
+       "end": [
+        5.0,
+        5.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        5.0,
+        5.0
+       ],
+       "end": [
+        5.0,
+        -5.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "revolve",
+     "id": "revolve1",
+     "name": "Revolve1",
+     "sketch": "sketch2",
+     "angle": 120,
+     "axis": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "direction": [
+       0,
+       0,
+       1
+      ]
+     },
+     "operation": "cut",
+     "bodies": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

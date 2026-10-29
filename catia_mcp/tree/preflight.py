@@ -10,14 +10,18 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Any
 
-from catia_mcp.tree.geometry import Frame, profile_area_centroid
+from catia_mcp.tree.geometry import Frame, dot, profile_area_centroid, revolve_expectation, unit
 
-# Milestone 1: sketches, extrudes, combines and simple / counterbored holes.
-SUPPORTED = ("sketch", "extrude", "combine", "hole")
+# Milestones 1-2: sketches, extrudes, revolves, combines, holes, mirrors
+# joined back into their source, and splits.
+SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split")
 ENTITY_TYPES = ("line", "circle", "arc")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
 COMBINE_OPERATIONS = ("join", "cut", "intersect")
-HOLE_KINDS = ("simple", "counterbore")
+HOLE_KINDS = ("simple", "counterbore", "countersink")
+SPLIT_SIDES = ("top", "bottom")
+# Points closer than this to a plane or an axis are on it (mm).
+ON_TOL = 1e-6
 
 
 class TreeRefused(Exception):
@@ -55,7 +59,8 @@ def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
         ids: set[str] = set()
         sketches: dict[str, dict[str, Any]] = {}
         bodies: set[str] = set()
-        for feature in part.get("features") or []:
+        features = part.get("features") or []
+        for index, feature in enumerate(features):
             kind, fid, where = feature.get("type"), feature.get("id"), _where(feature)
             if fid in ids:
                 refuse(f"duplicate feature id '{fid}'", f"{pid} {where}")
@@ -73,6 +78,13 @@ def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
                 sketches[fid] = feature
             elif kind == "extrude":
                 _check_extrude(feature, sketches, bodies, refuse, f"{pid} {where}")
+            elif kind == "revolve":
+                _check_revolve(feature, sketches, bodies, refuse, f"{pid} {where}")
+            elif kind == "mirror":
+                following = features[index + 1] if index + 1 < len(features) else None
+                _check_mirror(feature, following, bodies, refuse, f"{pid} {where}")
+            elif kind == "split":
+                _check_split(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "combine":
                 _check_combine(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "hole":
@@ -99,6 +111,89 @@ def _check_sketch(feature, refuse, where) -> None:
         refuse(f"sketch profile is not a closed region ({error})", where)
 
 
+def _check_operation(feature, bodies, refuse, where, kind) -> None:
+    operation = feature.get("operation")
+    if operation not in EXTRUDE_OPERATIONS:
+        refuse(f"{kind} operation '{operation}' is not supported", where)
+    elif operation == "new_body":
+        created = feature.get("creates") or []
+        if len(created) != 1:
+            refuse(f"a new-body {kind} must create exactly one body", where)
+        bodies.update(created)
+    elif len(feature.get("bodies") or []) != 1 or feature["bodies"][0] not in bodies:
+        refuse(f"{kind} must modify exactly one known body", where)
+
+
+def _check_revolve(feature, sketches, bodies, refuse, where) -> None:
+    sketch = sketches.get(feature.get("sketch"))
+    if sketch is None:
+        refuse("revolve refers to an unknown sketch", where)
+    angle = feature.get("angle")
+    if not isinstance(angle, (int, float)) or not 0 < angle <= 360:
+        refuse("revolve angle must be in (0, 360] degrees", where)
+        angle = None
+    axis = feature.get("axis") or {}
+    try:
+        origin = tuple(float(c) for c in axis["origin"])
+        direction = unit(tuple(float(c) for c in axis["direction"]))
+    except (KeyError, TypeError, ValueError):
+        refuse("revolve axis is invalid", where)
+        origin = direction = None
+    if sketch is not None and origin is not None:
+        try:
+            frame = Frame.from_tree(sketch["plane"])
+        except (KeyError, TypeError, ValueError):
+            frame = None
+        if frame is not None:
+            offset = tuple(o - p for o, p in zip(origin, frame.origin))
+            if abs(dot(direction, frame.normal)) > ON_TOL or abs(dot(offset, frame.normal)) > ON_TOL:
+                refuse("revolve axis does not lie in its sketch plane", where)
+            elif angle is not None:
+                try:
+                    if revolve_expectation(frame, sketch, origin, direction, angle).min_radius < -ON_TOL:
+                        refuse("revolve profile crosses its axis", where)
+                except (KeyError, ValueError) as error:
+                    refuse(f"revolve profile is invalid ({error})", where)
+    _check_operation(feature, bodies, refuse, where, "revolve")
+
+
+def _check_mirror(feature, following, bodies, refuse, where) -> None:
+    sources, created = feature.get("bodies") or [], feature.get("creates") or []
+    if len(sources) != 1 or sources[0] not in bodies or len(created) != 1:
+        refuse("mirror must copy exactly one known body into one new body", where)
+        bodies.update(created)
+        return
+    _check_plane(feature, refuse, where, "mirror")
+    # CATIA's Mirror unites a body with its image; a tree mirror creates the
+    # image as a new body, so only the usual "join it straight back" maps.
+    joined_back = (
+        following is not None and following.get("type") == "combine"
+        and following.get("operation") == "join"
+        and following.get("targets") == sources and following.get("tools") == created
+    )
+    if not joined_back:
+        refuse("mirrored bodies that are not joined straight back into their source are "
+               "not supported yet", where)
+    bodies.update(created)
+
+
+def _check_split(feature, bodies, refuse, where) -> None:
+    if len(feature.get("bodies") or []) != 1 or feature["bodies"][0] not in bodies:
+        refuse("split must cut exactly one known body", where)
+    if feature.get("keep") not in SPLIT_SIDES:
+        refuse(f"split keep '{feature.get('keep')}' is not supported", where)
+    _check_plane(feature, refuse, where, "split")
+
+
+def _check_plane(feature, refuse, where, kind) -> None:
+    plane = feature.get("plane") or {}
+    try:
+        tuple(float(c) for c in plane["origin"])
+        unit(tuple(float(c) for c in plane["normal"]))
+    except (KeyError, TypeError, ValueError):
+        refuse(f"{kind} plane is invalid", where)
+
+
 def _check_extrude(feature, sketches, bodies, refuse, where) -> None:
     if feature.get("sketch") not in sketches:
         refuse("extrude refers to an unknown sketch", where)
@@ -106,16 +201,7 @@ def _check_extrude(feature, sketches, bodies, refuse, where) -> None:
         refuse("tapered extrudes are not supported yet", where)
     if feature.get("direction"):
         refuse("oblique extrudes (direction) are not supported yet", where)
-    operation = feature.get("operation")
-    if operation not in EXTRUDE_OPERATIONS:
-        refuse(f"extrude operation '{operation}' is not supported", where)
-    elif operation == "new_body":
-        created = feature.get("creates") or []
-        if len(created) != 1:
-            refuse("a new-body extrude must create exactly one body", where)
-        bodies.update(created)
-    elif len(feature.get("bodies") or []) != 1 or feature["bodies"][0] not in bodies:
-        refuse("extrude must modify exactly one known body", where)
+    _check_operation(feature, bodies, refuse, where, "extrude")
     if not feature.get("distance"):
         refuse("extrude has no distance", where)
 
@@ -141,6 +227,13 @@ def _check_hole(feature, bodies, refuse, where) -> None:
         refuse("hole needs one frame per position", where)
     if not feature.get("effective_depth") and feature.get("depth") is None:
         refuse("through hole has no effective depth", where)
+    if feature.get("kind") == "countersink":
+        angle = feature.get("countersink_angle")
+        if not feature.get("countersink_diameter") or not isinstance(angle, (int, float)) \
+                or not 0 < angle < 180:
+            refuse("countersink hole needs a diameter and an angle in (0, 180) degrees", where)
+        elif feature["countersink_diameter"] <= feature.get("diameter", 0):
+            refuse("countersink diameter must exceed the hole diameter", where)
 
 
 def refusal(reasons: OrderedDict[str, list[str]]) -> str:

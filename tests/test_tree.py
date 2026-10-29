@@ -17,7 +17,16 @@ import pytest
 
 from catia_mcp.tree import builder as builder_module
 from catia_mcp.tree.builder import TreeBuilder
-from catia_mcp.tree.geometry import Arc, Frame, _loop_area_centroid, cross, profile_area_centroid
+from catia_mcp.tree.geometry import (
+    Arc,
+    Frame,
+    _loop_area_centroid,
+    cross,
+    dot,
+    profile_area_centroid,
+    revolve_expectation,
+    unit,
+)
 from catia_mcp.tree.preflight import analyze, refusal, truncate
 
 TREES = Path(__file__).parent / "fixtures" / "trees"
@@ -29,6 +38,13 @@ CLOSED_FORM_MM3 = {
     "m1_slot_arcs_negative": (40 * 10 + math.pi * 5**2) * 8,
     "m1_tilted_plane": 30 * 20 * 12,
     "m1_holes": 60 * 40 * 10 - math.pi * (3**2 * 10 + 2**2 * 4 + 4**2 * 2 + 2**2 * 8),
+    "m2_shaft_axis_off_origin": math.pi * (8**2 * 25 + 5**2 * 15),
+    "m2_ring_sketch_v_axis": 2 * math.pi * 15 * (10 * 20),
+    "m2_partial_revolve_cut_h_axis": 80 * 50 * 20 - (120 / 360) * 2 * math.pi * 10 * (10 * 10),
+    "m2_mirror_join": 2 * 20 * 10 * 10,
+    "m2_mirror_offset_plane": 2 * 20 * 10 * 10,
+    "m2_split_keep_bottom": 70 * 50 * 20,
+    "m2_split_tilted_keep_top": 80 * 50 * 20 / 2,
 }
 
 
@@ -86,12 +102,12 @@ def test_preflight_refuses_with_each_reason_once_and_where():
 def test_preflight_does_not_cascade_from_an_unsupported_feature():
     tree = {"version": 1, "parts": [{"id": "/P", "features": [
         {"type": "loft", "id": "loft1", "creates": ["Body1"]},
-        {"type": "mirror", "id": "mirror1", "bodies": ["Body1"], "creates": ["Body2"]},
+        {"type": "copy", "id": "copy1", "bodies": ["Body1"], "creates": ["Body2"]},
         {"type": "combine", "id": "combine1", "operation": "join",
          "targets": ["Body1"], "tools": ["Body2"]},
     ]}]}
     assert list(analyze(tree)) == ["'loft' features are not supported yet",
-                                   "'mirror' features are not supported yet"]
+                                   "'copy' features are not supported yet"]
 
 
 def test_fixture_trees_pass_preflight():
@@ -139,10 +155,18 @@ class _Factory:
                               "end": point(a1)})
 
 
+def _localized(name):
+    raise RuntimeError("La méthode Item a échoué")  # French session: no "AbsoluteAxis"
+
+
 class _Sketch:
     def __init__(self, ref):
         # ref: the (origin, H, V) frame of the support the sketch lies on.
         self.ref, self.factory, self.Name = ref, _Factory(), "Esquisse"
+        origin, h, v = ref
+        self.GeometricElements = SimpleNamespace(Item=_localized)
+        self.AbsoluteAxis = SimpleNamespace(HorizontalReference=("axis", origin, h),
+                                            VerticalReference=("axis", origin, v))
 
     def OpenEdition(self):
         return self.factory
@@ -166,8 +190,9 @@ class _FakePart:
     """Pads extrude the drawn profile along the fake sketch's normal (or the
     opposite when `pads_reversed`); booleans assume disjoint or nested solids."""
 
-    def __init__(self, pads_reversed=False):
+    def __init__(self, pads_reversed=False, turns_reversed=False, split_reversed=False):
         self.Name, self.pads_reversed, self.pads = "Part1", pads_reversed, []
+        self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.MainBody = _Body("Corps principal")
         bodies = [self.MainBody]
         self.Bodies = SimpleNamespace(Add=lambda: bodies.append(_Body(f"Body.{len(bodies) + 1}")) or bodies[-1])
@@ -176,9 +201,15 @@ class _FakePart:
         self.HybridBodies = SimpleNamespace(
             Count=0, Item=lambda i: sets[i - 1],
             Add=lambda: sets.append(SimpleNamespace(Name="", AppendHybridShape=lambda s: None)) or sets[-1])
-        self.HybridShapeFactory = SimpleNamespace(AddNewPlaneOffset=self._offset_plane)
+        self.HybridShapeFactory = SimpleNamespace(
+            AddNewPlaneOffset=self._offset_plane,
+            AddNewPointCoord=lambda x, y, z: ("point", (x, y, z)),
+            AddNewLinePtPt=lambda p1, p2: ("axis", p1[1], unit(tuple(b - a for a, b in zip(p1[1], p2[1])))))
         self.ShapeFactory = SimpleNamespace(
-            AddNewPad=self._pad, AddNewAdd=lambda t: self._boolean("add", t),
+            AddNewPad=self._pad, AddNewShaft=self._shaft,
+            AddNewMirror=lambda ref: self._feature("mirror", ref=ref),
+            AddNewSplit=lambda ref, side: self._feature("split", ref=ref, SplitSide=side),
+            AddNewAdd=lambda t: self._boolean("add", t),
             AddNewRemove=lambda t: self._boolean("remove", t),
             AddNewIntersect=lambda t: self._boolean("intersect", t))
         self.InWorkObject = None
@@ -200,6 +231,15 @@ class _FakePart:
         self.pads.append(pad)
         return pad
 
+    def _shaft(self, sketch):
+        return self._feature("shaft", sketch=sketch, RevoluteAxis=None, FirstAngle=0.0, SecondAngle=0.0)
+
+    def _feature(self, kind, **fields):
+        feature = SimpleNamespace(Name=f"{kind}.{len(self.pads) + 1}", kind=kind,
+                                  body=self.InWorkObject, **fields)
+        self.pads.append(feature)
+        return feature
+
     def _boolean(self, kind, tool):
         target = self.InWorkObject
         feature = SimpleNamespace(Name=f"{kind}.{len(self.pads)}", kind=kind, tool=tool, target=target)
@@ -207,7 +247,27 @@ class _FakePart:
         return feature
 
     def UpdateObject(self, obj):
-        if hasattr(obj, "length"):
+        kind = getattr(obj, "kind", None)
+        if kind == "shaft":
+            obj.body.solids = [self._revolved(obj)]
+        elif kind == "mirror":
+            origin, h, v = obj.ref
+            n = cross(h, v)
+            volume, cog = _mass(obj.body.solids)
+            off = dot(tuple(c - o for c, o in zip(cog, origin)), n)
+            obj.body.solids = [(2 * volume, tuple(c - off * n[i] for i, c in enumerate(cog)))]
+        elif kind == "split":
+            origin, h, v = obj.ref
+            n = cross(h, v)
+            if not hasattr(obj, "original"):
+                obj.original = list(obj.body.solids)
+            volume, cog = _mass(obj.original)
+            off = dot(tuple(c - o for c, o in zip(cog, origin)), n)
+            keeps_positive = (obj.SplitSide == 0) != self.split_reversed
+            on_plane = tuple(c - off * n[i] for i, c in enumerate(cog))
+            obj.body.solids = [(volume / 2, tuple(c + (1 if keeps_positive else -1) * n[i]
+                                                  for i, c in enumerate(on_plane)))]
+        elif hasattr(obj, "length"):
             obj.body.solids = [self._prism(obj)]
         elif hasattr(obj, "tool"):
             tool_volume, tool_cog = _mass(obj.tool.solids)
@@ -231,6 +291,19 @@ class _FakePart:
         return area * pad.length * (2 if pad.IsSymmetric else 1), cog
 
 
+    def _revolved(self, shaft):
+        origin, h, v = shaft.sketch.ref
+        entities = [dict(e, id=str(i)) for i, e in enumerate(shaft.sketch.factory.entities)]
+        sketch = {"plane": {"origin": list(origin), "x_dir": list(h), "normal": list(cross(h, v))},
+                  "entities": entities, "profiles": [{"outer": [e["id"] for e in entities], "inner": []}]}
+        _, axis_origin, axis_direction = shaft.RevoluteAxis
+        angle = shaft.FirstAngle + shaft.SecondAngle
+        want = revolve_expectation(Frame.from_tree(sketch["plane"]), sketch, axis_origin,
+                                   axis_direction, angle)
+        turns_positive = (shaft.FirstAngle > 0) != self.turns_reversed
+        return want.volume, want.cog if turns_positive else want.cog_reversed
+
+
 def _mass(solids):
     volume = sum(v for v, _ in solids)
     if not volume:
@@ -239,7 +312,8 @@ def _mass(solids):
 
 
 def _builder(part, monkeypatch, active=None):
-    conn = SimpleNamespace(is_3dx=True, get_active_part=lambda: active() if active else part)
+    conn = SimpleNamespace(is_3dx=True, app=None,
+                           get_active_part=lambda: active() if active else part)
     built = TreeBuilder(conn, log=lambda _: None)
     built.documents = SimpleNamespace(_new_part=lambda name, kind: None)
     # Measures go through the real active-window check, then read the fake.
@@ -336,3 +410,64 @@ def test_cli_check_reports_acceptance_and_refusal(tmp_path, capsys):
     path.write_text(json.dumps(refused))
     assert main(["check", str(path)]) == 1
     assert "'sweep' features are not supported yet" in capsys.readouterr().out
+
+
+# ── Milestone 2: revolve, mirror, split ──
+
+
+def _shafts(part):
+    return [f for f in part.pads if getattr(f, "kind", None) == "shaft"]
+
+
+def test_revolve_about_an_axis_off_the_sketch_origin_uses_a_3d_line(monkeypatch):
+    """Like Fab's sample 1 Shaft: a -XZ sketch revolved about a vertical axis
+    that is not the CATIA sketch's own axis."""
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(
+        load("m2_shaft_axis_off_origin"),
+        {"/M2/ShaftOffAxis": {"volume_mm3": CLOSED_FORM_MM3["m2_shaft_axis_off_origin"]}},
+        check_editability=False)
+    assert report["success"], report.get("error")
+    (shaft,) = _shafts(part)
+    assert shaft.RevoluteAxis == ("axis", (10.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+    assert shaft.FirstAngle == 360
+
+
+def test_revolve_about_the_sketch_v_axis_uses_its_absolute_axis(monkeypatch):
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(load("m2_ring_sketch_v_axis"), check_editability=False)
+    assert report["success"], report.get("error")
+    (shaft,) = _shafts(part)
+    assert shaft.RevoluteAxis == ("axis", (0.0, 0.0, 0.0), (0.0, 1.0, 0.0))  # VerticalReference
+
+
+def test_partial_revolve_swaps_its_angle_when_catia_turns_the_other_way(monkeypatch):
+    part = _FakePart(turns_reversed=True)
+    report = _builder(part, monkeypatch).build(
+        load("m2_partial_revolve_cut_h_axis"),
+        {"/M2/PartialRevolveCut": {"volume_mm3": CLOSED_FORM_MM3["m2_partial_revolve_cut_h_axis"]}},
+        check_editability=False)
+    assert report["success"], report.get("error")
+    (shaft,) = _shafts(part)
+    assert shaft.RevoluteAxis[2] == pytest.approx((0, 0, 1))  # the zx sketch's H axis
+    assert (shaft.FirstAngle, shaft.SecondAngle) == (0.0, 120.0)
+    assert any("angle swapped" in note for f in report["parts_detail"][0]["features"]
+               for note in f.get("notes", []))
+
+
+def test_a_mirror_joined_back_is_one_catia_mirror(monkeypatch):
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(
+        load("m2_mirror_join"), {"/M2/MirrorJoin": {"volume_mm3": 4000.0}}, check_editability=False)
+    assert report["success"], report.get("error")
+    assert [f.kind for f in part.pads if hasattr(f, "kind")] == ["mirror"]
+    assert report["parts_detail"][0]["features"][3]["catia"] == ["mirror.2"]
+
+
+def test_a_split_flips_once_when_catia_keeps_the_other_side(monkeypatch):
+    part = _FakePart(split_reversed=True)
+    report = _builder(part, monkeypatch).build(load("m2_split_keep_bottom"), check_editability=False)
+    assert report["success"], report.get("error")
+    (split,) = [f for f in part.pads if getattr(f, "kind", None) == "split"]
+    assert split.SplitSide == 0  # asked for bottom (1), flipped after the check
+    assert report["parts_detail"][0]["features"][2]["notes"] == ["split.2: side flipped to match the tree"]
