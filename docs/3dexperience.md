@@ -146,6 +146,12 @@ Search (Ctrl+F), build topology queries for a face, an edge and a vertex, and
 start the server with `CATIA_MCP_TOPOLOGY_NAMES=<keyword>,<Face>,<Edge>,<Vertex>`
 spelled as they appear there (French would be `Topologie,Face,Arête,Sommet`).
 
+Tree-name searches need no translation: `catia_measure_distance` resolves a
+name with `Name=<name>,all`, and on the French R428 SP6 session that finds
+default French names with spaces and accents unquoted (`Congé arête.1`,
+`Répétition circulaire.1`) as well as user names (`P1`). Single quotes work
+too; double quotes find nothing, without an error.
+
 ## Discovering the API on your release
 
 The full reference ships with the installation as `DSYAutomation.chm` in
