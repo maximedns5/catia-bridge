@@ -86,50 +86,65 @@ def topology_index(name: str, kind: str) -> int:
     return match[1]
 
 
-# Selection.Search keywords follow the language of the CATIA session:
-# "Topology" in English, "Topologie" in French (live, 3DEXPERIENCE R428 SP6 in
-# French: "Topology.Face,sel" fails with E_FAIL, "Topologie.Face,sel" finds the
-# 14 faces of the smoke block). CATIA_MCP_TOPOLOGY_KEYWORD adds the keyword of
-# another session language.
-TOPOLOGY_KEYWORDS = ("Topology", "Topologie")
-_working_keyword: str | None = None
+# Selection.Search queries follow the language of the CATIA session, both the
+# workbench keyword and the type names. Live on 3DEXPERIENCE R428 SP6 in
+# French: "Topology.Face,sel" fails with E_FAIL, while "Topologie.Face,sel",
+# "Topologie.Arête,sel" and "Topologie.Sommet,sel" find the smoke block's 14
+# faces, 26 edges and 12 vertices ("Topologie.Edge" and "Topologie.Vertex"
+# fail). CATIA_MCP_TOPOLOGY_NAMES adds another language as
+# "<keyword>,<Face>,<Edge>,<Vertex>", spelled as CATIA's Search shows them.
+TOPOLOGY_LANGUAGES: dict[str, dict[str, str]] = {
+    "en": {"keyword": "Topology", "Face": "Face", "Edge": "Edge", "Vertex": "Vertex"},
+    "fr": {"keyword": "Topologie", "Face": "Face", "Edge": "Arête", "Vertex": "Sommet"},
+}
+_working_language: str | None = None
 
 
-def topology_keywords() -> list[str]:
-    """Keywords to try, the one that last worked in this process first."""
-    keywords = list(TOPOLOGY_KEYWORDS)
-    extra = os.environ.get("CATIA_MCP_TOPOLOGY_KEYWORD", "").strip()
-    if extra:
-        keywords.insert(0, extra)
-    if _working_keyword:
-        keywords.insert(0, _working_keyword)
-    return list(dict.fromkeys(keywords))
+def topology_languages() -> list[tuple[str, dict[str, str]]]:
+    """Languages to try, the one that last worked in this process first."""
+    languages = dict(TOPOLOGY_LANGUAGES)
+    custom = os.environ.get("CATIA_MCP_TOPOLOGY_NAMES", "").strip()
+    if custom:
+        names = [name.strip() for name in custom.split(",")]
+        if len(names) != 4 or not all(names):
+            raise InvalidArgument(
+                f"CATIA_MCP_TOPOLOGY_NAMES must be '<keyword>,<Face>,<Edge>,<Vertex>' "
+                f"as CATIA's Search spells them (French: 'Topologie,Face,Arête,Sommet'), "
+                f"got {custom!r}."
+            )
+        languages = {"custom": dict(zip(("keyword", "Face", "Edge", "Vertex"), names)), **languages}
+    order = list(languages)
+    if _working_language in languages:
+        order.remove(_working_language)
+        order.insert(0, _working_language)
+    return [(language, languages[language]) for language in order]
 
 
 def _search_topology(sel: Any, root: Any, kind: str) -> int:
     """Replace `sel` with the `kind` cells under `root`, in whichever language
     the session searches, and return how many there are."""
-    global _working_keyword
+    global _working_language
     failures = []
-    for keyword in topology_keywords():
+    for language, names in topology_languages():
         # A failed search may leave the selection in any state: start over.
         sel.Clear()
         sel.Add(root)
-        query = f"{keyword}.{kind},sel"
+        query = f"{names['keyword']}.{names[kind]},sel"
         try:
             sel.Search(query)
         except Exception as error:
             failures.append((query, error))
             continue
-        _working_keyword = keyword
+        _working_language = language
         return sel.Count
     tried = ", ".join(f"'{query}'" for query, _ in failures)
     raise UnsupportedCapability(
         f"CATIA rejected every topology search ({tried}; last error: "
-        f"{failures[-1][1]}). Search keywords follow the CATIA session language: "
-        "open CATIA's Search (Ctrl+F), build a topology query for a Face and set "
-        "CATIA_MCP_TOPOLOGY_KEYWORD to the keyword it shows. The part's window "
-        "must also be the active one."
+        f"{failures[-1][1]}). Search queries follow the CATIA session language: "
+        "open CATIA's Search (Ctrl+F), build topology queries for a face, an edge "
+        "and a vertex, and set CATIA_MCP_TOPOLOGY_NAMES to "
+        "'<keyword>,<Face>,<Edge>,<Vertex>' as they appear there. The part's "
+        "window must also be the active one."
     )
 
 

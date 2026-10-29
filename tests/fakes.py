@@ -92,21 +92,23 @@ class Selection:
     def Item(self, index: int) -> Any:  # noqa: N802
         return self.items[index - 1]
 
-    # Search keywords follow the session language ("Topologie" in French).
-    keyword = "Topology"
+    # Search queries follow the session language: keyword and type names.
+    language = {"keyword": "Topology", "Face": "Face", "Edge": "Edge", "Vertex": "Vertex"}
 
     def Search(self, query: str) -> None:  # noqa: N802
-        """'<keyword>.<Kind>,sel' replaces the selection with the cells listed
-        in each selected object's `topology` mapping. Another language's
-        keyword fails like CATIA does (E_FAIL)."""
+        """'<keyword>.<Type>,sel' replaces the selection with the cells listed
+        in each selected object's `topology` mapping. A query in another
+        language fails like CATIA does (E_FAIL)."""
         match = re.match(r"^(\w+)\.(\w+),sel$", query)
         if not match:
             raise AssertionError(f"unexpected search {query}")
-        if match.group(1) != self.keyword:
+        keyword, type_name = match.groups()
+        kinds = {self.language[k]: k for k in ("Face", "Edge", "Vertex")}
+        if keyword != self.language["keyword"] or type_name not in kinds:
             raise RuntimeError("La méthode Search a échoué")
         roots, self.items = self.items, []
         for root in roots:
-            self.items.extend(getattr(root, "topology", {}).get(match.group(2), []))
+            self.items.extend(getattr(root, "topology", {}).get(kinds[type_name], []))
 
     def Copy(self) -> None:  # noqa: N802
         Selection.shared_clipboard = list(self.items)

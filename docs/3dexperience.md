@@ -127,13 +127,21 @@ or 1e-9 in the report means the convention differs.
 
 ## Non-English CATIA sessions
 
-`Selection.Search` queries use the keywords of the CATIA session language.
-The topology search behind every `Face.N` / `Edge.N` / `Vertex.N` tool tries
-`Topology` (English) and `Topologie` (French, live-checked on R428 SP6: the
-English query fails with E_FAIL there) and keeps the one that works for the
-rest of the session. For another language, open CATIA's Search (Ctrl+F),
-build a topology query for a Face, and start the server with the keyword it
-shows in `CATIA_MCP_TOPOLOGY_KEYWORD`.
+`Selection.Search` queries use the session language for both the keyword and
+the type names. The topology search behind every `Face.N` / `Edge.N` /
+`Vertex.N` tool knows English and French, and keeps the language that works
+for the rest of the session:
+
+| Language | Face | Edge | Vertex |
+|----------|------|------|--------|
+| English | `Topology.Face` | `Topology.Edge` | `Topology.Vertex` |
+| French (live-checked on R428 SP6) | `Topologie.Face` | `Topologie.Arête` | `Topologie.Sommet` |
+
+On a French session the English queries, and `Topologie.Edge` /
+`Topologie.Vertex`, fail with E_FAIL. For another language, open CATIA's
+Search (Ctrl+F), build topology queries for a face, an edge and a vertex, and
+start the server with `CATIA_MCP_TOPOLOGY_NAMES=<keyword>,<Face>,<Edge>,<Vertex>`
+spelled as they appear there (French would be `Topologie,Face,Arête,Sommet`).
 
 ## Discovering the API on your release
 
