@@ -1941,8 +1941,12 @@ class PartDesignTools:
                     sel.Clear()
                 except Exception:
                     pass
+        except CATIAToolError:
+            raise
         except Exception as e:
-            return f"Could not enumerate faces: {e}"
+            # A failure is an error, not a result: an agent reading "Could not
+            # enumerate" as success would go on to use Face.N names that do not exist.
+            raise CATIAToolError(f"Could not enumerate faces: {e}") from e
 
         if not faces:
             return "No faces found on the final shape"
@@ -1973,8 +1977,12 @@ class PartDesignTools:
                     sel.Clear()
                 except Exception:
                     pass
+        except CATIAToolError:
+            raise
         except Exception as e:
-            return f"Could not enumerate edges: {e}. Use CATIA selection to identify edge names."
+            raise CATIAToolError(
+                f"Could not enumerate edges: {e}. Use CATIA selection to identify edge names."
+            ) from e
 
         if not edges:
             return "No edges found on the last feature"

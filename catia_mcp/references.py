@@ -13,12 +13,13 @@ the search root differs per platform (see there).
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
 from catia_mcp.automation import iter_items
 from catia_mcp.connection import CATIAConnection
-from catia_mcp.errors import InvalidArgument, ObjectNotFound
+from catia_mcp.errors import InvalidArgument, ObjectNotFound, UnsupportedCapability
 
 # Origin plane aliases
 PLANE_MAP = {
@@ -85,6 +86,53 @@ def topology_index(name: str, kind: str) -> int:
     return match[1]
 
 
+# Selection.Search keywords follow the language of the CATIA session:
+# "Topology" in English, "Topologie" in French (live, 3DEXPERIENCE R428 SP6 in
+# French: "Topology.Face,sel" fails with E_FAIL, "Topologie.Face,sel" finds the
+# 14 faces of the smoke block). CATIA_MCP_TOPOLOGY_KEYWORD adds the keyword of
+# another session language.
+TOPOLOGY_KEYWORDS = ("Topology", "Topologie")
+_working_keyword: str | None = None
+
+
+def topology_keywords() -> list[str]:
+    """Keywords to try, the one that last worked in this process first."""
+    keywords = list(TOPOLOGY_KEYWORDS)
+    extra = os.environ.get("CATIA_MCP_TOPOLOGY_KEYWORD", "").strip()
+    if extra:
+        keywords.insert(0, extra)
+    if _working_keyword:
+        keywords.insert(0, _working_keyword)
+    return list(dict.fromkeys(keywords))
+
+
+def _search_topology(sel: Any, root: Any, kind: str) -> int:
+    """Replace `sel` with the `kind` cells under `root`, in whichever language
+    the session searches, and return how many there are."""
+    global _working_keyword
+    failures = []
+    for keyword in topology_keywords():
+        # A failed search may leave the selection in any state: start over.
+        sel.Clear()
+        sel.Add(root)
+        query = f"{keyword}.{kind},sel"
+        try:
+            sel.Search(query)
+        except Exception as error:
+            failures.append((query, error))
+            continue
+        _working_keyword = keyword
+        return sel.Count
+    tried = ", ".join(f"'{query}'" for query, _ in failures)
+    raise UnsupportedCapability(
+        f"CATIA rejected every topology search ({tried}; last error: "
+        f"{failures[-1][1]}). Search keywords follow the CATIA session language: "
+        "open CATIA's Search (Ctrl+F), build a topology query for a Face and set "
+        "CATIA_MCP_TOPOLOGY_KEYWORD to the keyword it shows. The part's window "
+        "must also be the active one."
+    )
+
+
 def search_final_topology(
     sel: Any, body: Any, kind: str, last_shape: Any | None = None, *, is_3dx: bool
 ) -> int:
@@ -109,10 +157,7 @@ def search_final_topology(
             last_shape = body.Shapes.Item(body.Shapes.Count)
         roots = (last_shape, body)
     for root in roots:
-        sel.Clear()
-        sel.Add(root)
-        sel.Search(f"Topology.{kind},sel")
-        if sel.Count:
+        if _search_topology(sel, root, kind):
             break
     return sel.Count
 

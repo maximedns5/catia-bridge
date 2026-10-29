@@ -125,6 +125,16 @@ face 6000 mm², its bounding box 100/60/40), and `DistanceMinTo` returns mm
 `units_note`. On another release, the smoke test settles it: a ratio of 1e9
 or 1e-9 in the report means the convention differs.
 
+## Non-English CATIA sessions
+
+`Selection.Search` queries use the keywords of the CATIA session language.
+The topology search behind every `Face.N` / `Edge.N` / `Vertex.N` tool tries
+`Topology` (English) and `Topologie` (French, live-checked on R428 SP6: the
+English query fails with E_FAIL there) and keeps the one that works for the
+rest of the session. For another language, open CATIA's Search (Ctrl+F),
+build a topology query for a Face, and start the server with the keyword it
+shows in `CATIA_MCP_TOPOLOGY_KEYWORD`.
+
 ## Discovering the API on your release
 
 The full reference ships with the installation as `DSYAutomation.chm` in
