@@ -101,6 +101,12 @@ class CATIAMCPServer:
         self.connection = CATIAConnection(platform)
         if allow_scripts is None:
             allow_scripts = _env_flag("CATIA_MCP_ALLOW_SCRIPTS")
+        self.allow_scripts = allow_scripts
+        if allow_scripts:
+            logger.warning(
+                "catia_run_script is ENABLED: connected clients can run arbitrary "
+                "VBScript with this user's rights in CATIA and on this machine."
+            )
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="catia-sta")
         self.document_tools = DocumentTools(self.connection)
         self.sketcher_tools = SketcherTools(self.connection)
@@ -219,7 +225,7 @@ class CATIAMCPServer:
 
         logger.info("Starting CATIA MCP Server (HTTP): %d tools", len(self._tool_router))
         try:
-            await serve(self.server, host, port, token)
+            await serve(self.server, host, port, token, self.allow_scripts)
         finally:
             await self.close()
 
@@ -261,7 +267,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         default=_env_flag("CATIA_MCP_ALLOW_SCRIPTS"),
         help="Enable catia_run_script (VBScript inside CATIA, full user rights). "
-        "Off by default (env: CATIA_MCP_ALLOW_SCRIPTS=1).",
+        "Off by default (env: CATIA_MCP_ALLOW_SCRIPTS=1). Refused with --http on a "
+        "non-loopback --host.",
     )
     args = parser.parse_args(argv)
     try:
@@ -281,7 +288,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.http:
         from catia_mcp.http_transport import check_bind
 
-        check_bind(args.host, args.token)
+        check_bind(args.host, args.token, args.allow_scripts)
         server = CATIAMCPServer(args.platform, args.allow_scripts)
         asyncio.run(server.run_http(args.host, args.port, args.token))
         return

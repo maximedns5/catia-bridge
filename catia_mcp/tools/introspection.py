@@ -13,14 +13,15 @@ CATIA_MCP_ALLOW_SCRIPTS=1), because a script can do anything the user can.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from typing import Any
 
 from catia_mcp.automation import evaluate, get_member
 from catia_mcp.connection import CATIAConnection
-from catia_mcp.errors import InvalidArgument, ObjectNotFound, PermissionDenied
-from catia_mcp.introspect import describe_members, find_enum, list_enums, type_name
+from catia_mcp.errors import CATIAToolError, InvalidArgument, ObjectNotFound, PermissionDenied
+from catia_mcp.introspect import describe_members, find_enum, list_enums, member_kind, type_name
 
 # Getter-like methods allowed in an inspection path; no other call is made.
 _ALLOWED_CALLS = {
@@ -182,16 +183,54 @@ class IntrospectionTools:
                     "ReferenceRootOccurrenceOf, ReferenceInstanceOf, InstanceOccurrenceOf."
                 )
             try:
-                if called and arg is not None:
-                    obj = getattr(obj, name)(arg)
+                if called:
+                    getter = getattr(obj, name)
+                    obj = getter(arg) if arg is not None else getter()
                 else:
-                    obj = get_member(obj, name)
+                    obj = self._read_property(obj, walked, name)
+            except CATIAToolError:
+                raise
             except AttributeError:
                 raise ObjectNotFound(f"'{walked}' has no member '{name}'.")
             except Exception as e:
                 raise ObjectNotFound(f"Reading '{walked}.{name}' failed: {e}")
             walked += f".{name}"
         return obj
+
+    @staticmethod
+    def _read_property(obj: Any, walked: str, name: str) -> Any:
+        """Read `obj.name` without ever invoking a method.
+
+        A bare path segment is a property read. pywin32 resolves a method
+        name to a bound method (and get_member would call it: app.Quit,
+        Document.Close, Selection.Delete), so the member kind comes from the
+        type library first. Only the navigation getters in _ALLOWED_CALLS
+        may be called bare.
+        """
+        if not hasattr(obj, "_oleobj_"):
+            value = getattr(obj, name)
+            if inspect.ismethod(value) or inspect.isfunction(value):
+                raise InvalidArgument(
+                    f"'{walked}.{name}' is a method, not a property; "
+                    "catia_inspect_api never calls it."
+                )
+            return value
+        kind = member_kind(obj, name)
+        if kind is None:
+            raise ObjectNotFound(f"'{walked}' has no readable member '{name}'.")
+        if kind == "method":
+            if name.lower() not in _ALLOWED_CALLS:
+                raise InvalidArgument(
+                    f"'{walked}.{name}' is a method, not a property; catia_inspect_api "
+                    "only calls the allowed getters (Item, GetItem, GetService, "
+                    "GetSessionService, GetWorkbench, GetTechnologicalObject, "
+                    "ReferenceRootOccurrenceOf, ReferenceInstanceOf, InstanceOccurrenceOf)."
+                )
+            return get_member(obj, name)
+        value = getattr(obj, name)
+        if inspect.ismethod(value) or inspect.isfunction(value):
+            raise InvalidArgument(f"'{walked}.{name}' resolved to a method; it was not called.")
+        return value
 
     def _inspect(self, args: dict[str, Any]) -> str:
         self.conn.ensure_connected()

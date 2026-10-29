@@ -189,11 +189,12 @@ class CATIAConnection:
                 return PLATFORM_3DX
         except Exception:
             pass
-        try:
-            if "3DEXPERIENCE" in str(app.Caption).upper():
-                return PLATFORM_3DX
-        except Exception:
-            pass
+        # No caption check: a V5 caption carries the active document's name,
+        # so "3DEXPERIENCE_bracket.CATPart" would switch a V5 session to 3DX.
+        logger.info(
+            "No 3DEXPERIENCE editor or session service found: driving CATIA V5 "
+            "(force with --platform 3dx if this is wrong)."
+        )
         return PLATFORM_V5
 
     def _get_version(self) -> str:

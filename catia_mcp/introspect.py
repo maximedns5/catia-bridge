@@ -160,6 +160,41 @@ def describe_members(obj: Any) -> list[dict[str, Any]]:
     )
 
 
+def member_kind(obj: Any, name: str) -> str | None:
+    """'method' or 'property' for a readable member of a COM object, from its
+    type information, or None when the object declares no such readable
+    member. Raises UnsupportedCapability when no type information is
+    available. Never touches the member itself."""
+    ti = type_info(obj)
+    attr = ti.GetTypeAttr()
+    wanted = name.lower()
+    kind = None
+    for j in range(int(attr[6])):  # cFuncs
+        fd = ti.GetFuncDesc(j)
+        try:
+            names = ti.GetNames(fd.memid)
+        except Exception:
+            continue
+        if not names or str(names[0]).lower() != wanted:
+            continue
+        invkind = int(fd.invkind)
+        if invkind == INVOKE_FUNC:
+            return "method"
+        if invkind == INVOKE_PROPERTYGET:
+            kind = "property"
+    if kind is None:
+        # Pure dispinterfaces may declare properties as variables.
+        for j in range(int(attr[7])):  # cVars
+            try:
+                vd = ti.GetVarDesc(j)
+                names = ti.GetNames(vd.memid)
+            except Exception:
+                continue
+            if names and str(names[0]).lower() == wanted:
+                return "property"
+    return kind
+
+
 def method_params(obj: Any, method: str) -> list[dict[str, Any]] | None:
     """Parameters of one method, or None when type info is unavailable or
     the method is unknown."""

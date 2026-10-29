@@ -44,8 +44,16 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def check_bind(host: str, token: str | None) -> None:
-    """Refuse to expose the server beyond this machine without a token."""
+def check_bind(host: str, token: str | None, allow_scripts: bool = False) -> None:
+    """Refuse to expose the server beyond this machine without a token, and
+    refuse to expose script execution beyond this machine at all."""
+    if allow_scripts and not is_loopback(host):
+        raise SystemExit(
+            f"Refusing to enable --allow-scripts while listening on {host}: anyone "
+            "holding the token could run arbitrary VBScript on this machine. Scripts "
+            "are only allowed on a loopback bind; reach it remotely through an SSH "
+            "tunnel instead."
+        )
     if not is_loopback(host) and not token:
         raise SystemExit(
             f"Refusing to listen on {host} without a token: anyone on the network "
@@ -118,10 +126,12 @@ def build_app(mcp_server: Any, host: str, port: int, token: str | None) -> Any:
     return app
 
 
-async def serve(mcp_server: Any, host: str, port: int, token: str | None) -> None:
+async def serve(
+    mcp_server: Any, host: str, port: int, token: str | None, allow_scripts: bool = False
+) -> None:
     import uvicorn
 
-    check_bind(host, token)
+    check_bind(host, token, allow_scripts)
     app = build_app(mcp_server, host, port, token)
     shown = "set" if token else "none (loopback only)"
     logger.info("Serving MCP over HTTP at http://%s:%d%s (token: %s)", host, port, MCP_PATH, shown)

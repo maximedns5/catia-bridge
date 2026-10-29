@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Security
+- `catia_inspect_api` is read-only again. A bare path segment such as
+  `app.Quit`, `document.Close` or `selection.Delete` is now resolved as a
+  property read only: the member kind is read from the type library first,
+  and only the listed navigation getters may be called.
+- `--allow-scripts` is refused with `--http` on a non-loopback `--host`, and
+  the server logs a warning at startup whenever scripts are enabled.
+- Platform detection no longer reads the window caption, which on V5 carries
+  the active document's name (`3DEXPERIENCE_bracket.CATPart` switched a V5
+  session to 3DEXPERIENCE).
+
 ### Added
 - **CATIA 3DEXPERIENCE (V6) support (123 tools total).** The server detects
   CATIA V5 or CATIA 3DEXPERIENCE on connect (`--platform` /

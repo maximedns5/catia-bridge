@@ -17,7 +17,7 @@ import pytest
 from catia_mcp.connection import PLATFORM_3DX, PLATFORM_V5, CATIAConnection, normalize_platform
 from catia_mcp.errors import ObjectNotFound, UnsupportedCapability, WrongDocumentType
 from catia_mcp.references import topology_reference
-from catia_mcp.server import CATIAMCPServer, parse_args
+from catia_mcp.server import CATIAMCPServer, main, parse_args
 from catia_mcp.tools.assembly import compose_position
 from tests.fakes import (
     App3DX,
@@ -78,6 +78,12 @@ def test_platform_detection_and_override():
         normalize_platform("v4")
 
 
+def test_v5_document_named_3dexperience_stays_v5():
+    conn = CATIAConnection(platform="auto")
+    conn.app = SimpleNamespace(Caption="CATIA V5 - [3DEXPERIENCE_bracket.CATPart]")
+    assert conn._detect_platform() == PLATFORM_V5
+
+
 def test_platform_environment_variable(monkeypatch):
     monkeypatch.setenv("CATIA_MCP_PLATFORM", "3dx")
     conn = CATIAConnection()
@@ -91,6 +97,12 @@ def test_cli_platform_and_scripts_flags():
     assert parse_args([]).allow_scripts is False
     with pytest.raises(SystemExit):
         parse_args(["--platform", "nope"])
+
+
+def test_cli_refuses_scripts_on_network_bind(monkeypatch):
+    monkeypatch.setattr(CATIAMCPServer, "run_http", lambda *a: pytest.fail("server started"))
+    with pytest.raises(SystemExit, match="allow-scripts"):
+        main(["--http", "--host", "0.0.0.0", "--token", "x" * 32, "--allow-scripts"])
 
 
 # ── Part resolution ──
@@ -1168,6 +1180,46 @@ def test_inspect_api_tool_allows_getters_only():
     assert not ok.isError and "GetThing" in text(ok) and "Title" not in text(ok)
     refused = run(call(server_on(app), "catia_inspect_api", {"path": "app.Quit()"}))
     assert refused.structuredContent["code"] == "INVALID_ARGUMENT"
+
+
+class _ComWithMethods:
+    """COM double whose type library declares zero-argument methods."""
+
+    def __init__(self):
+        info = _FakeTypeInfo()
+        info.funcs = [
+            *info.funcs,
+            SimpleNamespace(memid=4, invkind=1, wFuncFlags=0, args=()),
+            SimpleNamespace(memid=5, invkind=1, wFuncFlags=0, args=()),
+        ]
+        info.names = {**info.names, 4: ("Quit",), 5: ("ReferenceRootOccurrenceOf",)}
+        self._oleobj_ = SimpleNamespace(GetTypeInfo=lambda: info)
+        self.Title = "Bracket"
+        self.quit_calls = 0
+
+    def Quit(self):  # noqa: N802
+        self.quit_calls += 1
+
+    def ReferenceRootOccurrenceOf(self):  # noqa: N802
+        return "root occurrence"
+
+
+def test_inspect_api_never_calls_bare_methods():
+    app = App3DX()
+    app.open_editor(make_part(), "Shape")
+    app.Thing = _ComWithMethods()
+    for path in ("app.Thing.Quit", "app.Thing.quit", "app.GetSessionService"):
+        refused = run(call(server_on(app), "catia_inspect_api", {"path": path}))
+        assert refused.structuredContent["code"] == "INVALID_ARGUMENT", path
+    assert app.Thing.quit_calls == 0
+
+    title = run(call(server_on(app), "catia_inspect_api", {"path": "app.Thing.Title"}))
+    assert not title.isError and json.loads(text(title))["value"] == "Bracket"
+    navigation = run(call(server_on(app), "catia_inspect_api",
+                          {"path": "app.Thing.ReferenceRootOccurrenceOf"}))
+    assert json.loads(text(navigation))["value"] == "root occurrence"
+    missing = run(call(server_on(app), "catia_inspect_api", {"path": "app.Thing.Nope"}))
+    assert missing.structuredContent["code"] == "OBJECT_NOT_FOUND"
 
 
 def test_run_script_is_disabled_unless_allowed():

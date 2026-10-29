@@ -49,6 +49,13 @@ def test_non_loopback_bind_requires_token():
     check_bind("127.0.0.1", None)
 
 
+def test_scripts_are_refused_on_network_bind():
+    with pytest.raises(SystemExit, match="allow-scripts"):
+        check_bind("0.0.0.0", TOKEN, allow_scripts=True)
+    check_bind("127.0.0.1", None, allow_scripts=True)
+    check_bind("localhost", TOKEN, allow_scripts=True)
+
+
 def test_cli_defaults_keep_stdio():
     args = parse_args([])
     assert args.http is False and args.host == "127.0.0.1" and args.port == 8765
