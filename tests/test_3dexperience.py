@@ -679,6 +679,62 @@ def test_v5_hole_sets_the_depth_and_measures_through_the_spa_workbench():
     assert f"Removed {_D8_DEPTH20_MM3:.1f} mm3" in text(result)
 
 
+def _threading_block(platform):
+    """Drilled block whose holes start smooth (ThreadingMode 1, the B30
+    smooth value) and record the threading mode at each update."""
+    part, holes, volume = _drilled_block({False})
+    part.CreateReferenceFromObject = lambda obj: obj
+    create, measure = part.ShapeFactory.AddNewHoleFromSketch, part.UpdateObject
+    modes_at_update: list = []
+
+    def smooth_hole(sketch, depth):
+        hole = create(sketch, depth)
+        hole.ThreadingMode = 1
+        return hole
+
+    def update(obj):
+        modes_at_update.append(holes[0].ThreadingMode)
+        measure(obj)
+
+    part.ShapeFactory.AddNewHoleFromSketch = smooth_hole
+    part.UpdateObject = update
+    if platform == PLATFORM_V5:
+        spa = SimpleNamespace(GetMeasurable=lambda ref: SimpleNamespace(Volume=volume.volume_mm3 / 1e9))
+        app = _v5_app(part, spa)
+    else:
+        app = _app_with_part(part, PLATFORM_3DX, {"MeasurableService": volume})
+    return server_on(app, platform), holes, modes_at_update
+
+
+def test_v5_threading_is_applied_after_the_first_update_with_the_b30_value():
+    server, holes, modes_at_update = _threading_block(PLATFORM_V5)
+    result = run(call(server, "catia_hole", {"diameter": 8, "depth": 20, "threaded": True}))
+    assert not result.isError, text(result)
+    assert modes_at_update[0] == 1  # the hole materialized smooth first
+    assert holes[0].ThreadingMode == 0  # B30: 0 = threaded
+    assert "Threaded." in text(result)
+
+
+def test_3dx_threading_value_comes_from_the_type_library(monkeypatch):
+    monkeypatch.setattr(
+        "catia_mcp.tools.part_design.find_enum",
+        lambda objs, name: {"catSmoothHoleThreading": 0, "catThreadedHoleThreading": 1},
+    )
+    server, holes, _ = _threading_block(PLATFORM_3DX)
+    result = run(call(server, "catia_hole", {"diameter": 8, "depth": 20, "threaded": True}))
+    assert not result.isError, text(result)
+    assert holes[0].ThreadingMode == 1  # the type library's "threaded" value
+
+
+def test_3dx_threading_without_the_enum_is_refused_not_guessed():
+    server, holes, _ = _threading_block(PLATFORM_3DX)
+    result = run(call(server, "catia_hole", {"diameter": 8, "depth": 20, "threaded": True}))
+    assert result.structuredContent["code"] == "UNSUPPORTED_CAPABILITY"
+    assert result.structuredContent["effects"]["modified"] is None
+    assert holes[0].ThreadingMode == 1  # left smooth, not set to a guess
+    assert "CatHoleThreadingMode" in result.structuredContent["message"]
+
+
 def _pattern_part(seed):
     part = make_part()
     part.MainBody.Shapes.append(seed)
