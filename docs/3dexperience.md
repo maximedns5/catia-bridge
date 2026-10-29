@@ -17,7 +17,10 @@ below), and are covered by offline contract tests with COM doubles
 Shape), 0 failed. A front view of a Physical Product and a right projection
 view of it were also created through the tools on that release. Section,
 detail and isometric views are bound from the documented signatures but not
-yet run live. Treat other releases as unvalidated until the smoke test
+yet run live. The same smoke test also passes, 51 passed, 2 expected skips, 0 failed, on a
+French R428 SP6 (B428_Cloud) session with the student Mechanical & Shape Designer
+role, which needs the localized topology search (see Non-English CATIA
+sessions). Treat other releases as unvalidated until the smoke test
 passes there, and report what fails.
 
 CATIA V5 behavior is unchanged, with one fix: component positions are now
