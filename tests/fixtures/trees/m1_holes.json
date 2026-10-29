@@ -1,0 +1,248 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M1/Holes",
+   "name": "Holes",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30.0,
+        -20.0
+       ],
+       "end": [
+        30.0,
+        -20.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30.0,
+        -20.0
+       ],
+       "end": [
+        30.0,
+        20.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        30.0,
+        20.0
+       ],
+       "end": [
+        -30.0,
+        20.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -30.0,
+        20.0
+       ],
+       "end": [
+        -30.0,
+        -20.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 10,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "hole",
+     "id": "hole1",
+     "name": "Hole1",
+     "kind": "simple",
+     "diameter": 6,
+     "depth": null,
+     "effective_depth": 30.0,
+     "positions": [
+      [
+       15,
+       0,
+       10
+      ]
+     ],
+     "direction": [
+      0,
+      0,
+      -1
+     ],
+     "frames": [
+      [
+       [
+        1,
+        0,
+        0,
+        15
+       ],
+       [
+        0,
+        1,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        1,
+        10
+       ]
+      ]
+     ],
+     "bodies": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "hole",
+     "id": "hole2",
+     "name": "Hole2",
+     "kind": "simple",
+     "diameter": 4,
+     "depth": 4,
+     "effective_depth": 4.0,
+     "positions": [
+      [
+       -15,
+       0,
+       10
+      ]
+     ],
+     "direction": [
+      0,
+      0,
+      -1
+     ],
+     "frames": [
+      [
+       [
+        1,
+        0,
+        0,
+        -15
+       ],
+       [
+        0,
+        1,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        1,
+        10
+       ]
+      ]
+     ],
+     "bodies": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "hole",
+     "id": "hole3",
+     "name": "Hole3",
+     "kind": "counterbore",
+     "diameter": 4,
+     "depth": null,
+     "effective_depth": 30.0,
+     "positions": [
+      [
+       0,
+       10,
+       10
+      ]
+     ],
+     "direction": [
+      0,
+      0,
+      -1
+     ],
+     "frames": [
+      [
+       [
+        1,
+        0,
+        0,
+        0
+       ],
+       [
+        0,
+        1,
+        0,
+        10
+       ],
+       [
+        0,
+        0,
+        1,
+        10
+       ]
+      ]
+     ],
+     "bodies": [
+      "Body1"
+     ],
+     "counterbore_diameter": 8,
+     "counterbore_depth": 2
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}
