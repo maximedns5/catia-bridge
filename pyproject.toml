@@ -27,6 +27,10 @@ dev = [
     "pytest>=7.0",
     "ruff>=0.4.0",
 ]
+# Reference kernel for scripts/differential (build123d on OpenCascade).
+differential = [
+    "build123d>=0.13",
+]
 
 [project.scripts]
 catia-mcp = "catia_mcp.server:main"

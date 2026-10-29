@@ -59,6 +59,21 @@ def _read_prop(obj: Any, name: str) -> int | None:
         return None
 
 
+def _sketch_v_direction(sketch: Any) -> Any:
+    """The sketch's V axis, which drives a Shaft or Groove.
+
+    The V5-6R2020 field route looks the axis up by name,
+    GeometricElements.Item("AbsoluteAxis").GetItem("VDirection"). That name is
+    localized: a French 3DEXPERIENCE R428 session has no element called
+    "AbsoluteAxis" (Item fails with DISP_E_MEMBERNOTFOUND), so fall back to the
+    Sketch.AbsoluteAxis property, whose VerticalReference is the same axis.
+    """
+    try:
+        return sketch.GeometricElements.Item("AbsoluteAxis").GetItem("VDirection")
+    except Exception:
+        return sketch.AbsoluteAxis.VerticalReference
+
+
 def _force_solid_inwork(part: Any, sketch: Any) -> None:
     """Make the body owning ``sketch`` the in-work object.
 
@@ -112,7 +127,7 @@ class PartDesignTools:
                         },
                         "symmetric": {
                             "type": "boolean",
-                            "description": "If true, extrude equally on both sides (total = height)",
+                            "description": "If true, extrude `height` on EACH side of the sketch plane (total 2 x height; live-checked on 3DEXPERIENCE R428)",
                             "default": False,
                         },
                         "sketch_name": {
@@ -148,7 +163,7 @@ class PartDesignTools:
                         },
                         "symmetric": {
                             "type": "boolean",
-                            "description": "If true, mirrored extent: cuts equally on both sides (reliable on V5-6R2020, where DirectionOrientation may not flip the cut side)",
+                            "description": "If true, mirrored extent: cuts `depth` on EACH side of the sketch plane, like catia_pad symmetric (reliable on V5-6R2020, where DirectionOrientation may not flip the cut side)",
                             "default": False,
                         },
                         "sketch_name": {
@@ -836,7 +851,10 @@ class PartDesignTools:
 
         part.UpdateObject(pad)
         self.conn.refresh_display()
-        return f"Pad created: {height} mm ({direction}). Feature: '{pad.Name}'"
+        extent = (
+            f"{height} mm on each side (symmetric)" if symmetric else f"{height} mm ({direction})"
+        )
+        return f"Pad created: {extent}. Feature: '{pad.Name}'"
 
     def _body_volume_mm3(self, part: Any, body: Any) -> float | None:
         """Measure the body's solid volume in mm3, or None if unavailable."""
@@ -944,8 +962,7 @@ class PartDesignTools:
         # wrapping the sketch raises DISP_E_BADTYPE. FirstAngle goes through
         # the parameter-object fallback (direct PUTs fail on factory-returned
         # objects under dynamic dispatch).
-        abs_axis = sketch.GeometricElements.Item("AbsoluteAxis")
-        vdir = abs_axis.GetItem("VDirection")
+        vdir = _sketch_v_direction(sketch)
         shaft.RevoluteAxis = part.CreateReferenceFromObject(vdir)
         if not _set_prop(shaft, "FirstAngle", angle):
             raise RuntimeError(
@@ -974,8 +991,7 @@ class PartDesignTools:
         groove = sf.AddNewGroove(sketch)
         # V5-6R2020: revolution axis from the sketch's AbsoluteAxis.VDirection
         # (see _shaft); FirstAngle through the parameter-object fallback.
-        abs_axis = sketch.GeometricElements.Item("AbsoluteAxis")
-        vdir = abs_axis.GetItem("VDirection")
+        vdir = _sketch_v_direction(sketch)
         groove.RevoluteAxis = part.CreateReferenceFromObject(vdir)
         if not _set_prop(groove, "FirstAngle", angle):
             raise RuntimeError(
@@ -1274,9 +1290,7 @@ class PartDesignTools:
         self._safe_update(part, pattern)
         self.conn.refresh_display()
         after = self._body_volume_mm3(part, body)
-        effect = ""
-        if before is not None and after is not None:
-            effect = f" Volume {before:.1f} -> {after:.1f} mm3."
+        effect = self._pattern_effect(pattern, before, after)
         return (
             f"Rectangular pattern '{pattern.Name}' created: {d1_count}x{d2_count}, "
             f"spacing {d1_spacing}x{d2_spacing} mm, directions: {directions}."
@@ -1411,9 +1425,7 @@ class PartDesignTools:
         self._safe_update(part, pattern)
         self.conn.refresh_display()
         after = self._body_volume_mm3(part, body)
-        effect = ""
-        if before is not None and after is not None:
-            effect = f" Volume {before:.1f} -> {after:.1f} mm3."
+        effect = self._pattern_effect(pattern, before, after)
         return (
             f"Circular pattern '{pattern.Name}' created: {count} instances, "
             f"{angular_spacing} deg spacing around the {axis.upper()} axis "
@@ -1479,9 +1491,7 @@ class PartDesignTools:
             ) from e
         self.conn.refresh_display()
         after = self._body_volume_mm3(part, body)
-        effect = ""
-        if before is not None and after is not None:
-            effect = f" Volume {before:.1f} -> {after:.1f} mm3."
+        effect = self._pattern_effect(pattern, before, after)
         return (
             f"Circular pattern '{pattern.Name}' created: {count} instances, "
             f"{angular_spacing} deg spacing around the {axis.upper()} axis through "
@@ -1678,6 +1688,27 @@ class PartDesignTools:
             return True
         return name_exists(feature, "BottomLimit") and name_exists(feature, "ThreadingMode")
 
+    @staticmethod
+    def _pattern_effect(pattern: Any, before: float | None, after: float | None) -> str:
+        """The volume change of a pattern, or FEATURE_NO_EFFECT when there is none.
+
+        Live on R428, a rectangular pattern whose instances all landed outside
+        the solid reported success with the volume unchanged. Instances that
+        change no material mean the directions or spacing are wrong.
+        """
+        if before is None or after is None:
+            return ""
+        if abs(after - before) <= max(1e-3, 1e-9 * abs(before)):
+            raise CATIAToolError(
+                f"Pattern '{pattern.Name}' was created in the tree but changed no material "
+                f"(volume stayed {before:.1f} mm3): its instances landed outside the solid "
+                "or on material the seed already handles. Check the directions and "
+                "spacing, then delete it with catia_delete_feature.",
+                code="FEATURE_NO_EFFECT",
+                modified=None,
+            )
+        return f" Volume {before:.1f} -> {after:.1f} mm3."
+
     def _user_pattern(self, args: dict[str, Any]) -> str:
         self.conn.ensure_connected()
         part = self.conn.get_active_part()
@@ -1723,9 +1754,7 @@ class PartDesignTools:
         self._safe_update(part, pattern)
         self.conn.refresh_display()
         after = self._body_volume_mm3(part, body)
-        effect = ""
-        if before is not None and after is not None:
-            effect = f" Volume {before:.1f} -> {after:.1f} mm3."
+        effect = self._pattern_effect(pattern, before, after)
         return (
             f"User pattern '{pattern.Name}' created: {count} instances placed "
             f"on the points of sketch '{sketch.Name}'." + effect

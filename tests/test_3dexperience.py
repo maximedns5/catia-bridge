@@ -1430,3 +1430,89 @@ def test_failure_after_plm_create_does_not_claim_untouched(monkeypatch):
     result = run(call(server, "catia_new_part", {"plm_type": "3DShape"}))
     assert result.structuredContent["code"] == "WRONG_DOCUMENT_TYPE"
     assert result.structuredContent["effects"]["modified"] is None
+
+
+# ── Live R428 (French) findings from the differential harness ──
+
+
+def _revolve_part(item):
+    """V5 part whose last sketch resolves its axis through `item` (the
+    GeometricElements.Item double) or, failing that, Sketch.AbsoluteAxis."""
+    part = make_part()
+    sketch = SimpleNamespace(
+        Name="Esquisse.1",
+        GeometricElements=SimpleNamespace(Item=item),
+        AbsoluteAxis=SimpleNamespace(VerticalReference="sketch-V-axis"),
+    )
+    part.MainBody.Sketches.append(sketch)
+    created = []
+
+    def add(sk):
+        feature = SimpleNamespace(Name=f"Feature.{len(created) + 1}", RevoluteAxis=None, FirstAngle=None)
+        created.append(feature)
+        return feature
+
+    part.ShapeFactory = SimpleNamespace(AddNewShaft=add, AddNewGroove=add)
+    part.CreateReferenceFromObject = lambda obj: ("ref", obj)
+    part.UpdateObject = lambda obj: None
+    return part, created
+
+
+def test_shaft_and_groove_find_the_sketch_axis_without_its_english_name():
+    """Live R428 in French: GeometricElements.Item("AbsoluteAxis") fails with
+    DISP_E_MEMBERNOTFOUND; Sketch.AbsoluteAxis.VerticalReference is the same axis."""
+
+    def localized(name):
+        raise RuntimeError("La méthode Item a échoué")
+
+    for tool in ("catia_shaft", "catia_groove"):
+        part, created = _revolve_part(localized)
+        result = run(call(server_on(_v5_app(part), PLATFORM_V5), tool, {"angle": 360}))
+        assert not result.isError, text(result)
+        assert created[0].RevoluteAxis == ("ref", "sketch-V-axis")
+        assert created[0].FirstAngle == 360
+
+
+def test_shaft_keeps_the_field_verified_named_axis_when_it_resolves():
+    named = SimpleNamespace(GetItem=lambda name: f"named-{name}")
+    part, created = _revolve_part(lambda name: named)
+    result = run(call(server_on(_v5_app(part), PLATFORM_V5), "catia_shaft", {"angle": 180}))
+    assert not result.isError, text(result)
+    assert created[0].RevoluteAxis == ("ref", "named-VDirection")
+
+
+def _patterned_plate(removes_per_instance):
+    """V5 plate with a pocket seed; updating the rectangular pattern removes
+    `removes_per_instance` mm3 for each instance beyond the seed."""
+    volume = {"mm3": 59748.7}
+    part = make_part()
+    part.MainBody.Shapes.append(SimpleNamespace(Name="Poche.1"))
+    part.OriginElements = SimpleNamespace(PlaneXY="XY", PlaneYZ="YZ", PlaneZX="ZX")
+    part.CreateReferenceFromObject = lambda obj: obj
+    pattern = SimpleNamespace(Name="Répétition rectangulaire.1", instances=0)
+
+    def add_pattern(feature, n1, n2, *rest):
+        pattern.instances = n1 * n2 - 1
+        return pattern
+
+    def update(obj):
+        volume["mm3"] = 59748.7 - removes_per_instance * pattern.instances
+
+    part.ShapeFactory = SimpleNamespace(AddNewRectPattern=add_pattern)
+    part.UpdateObject = update
+    spa = SimpleNamespace(GetMeasurable=lambda ref: SimpleNamespace(Volume=volume["mm3"] / 1e9))
+    return server_on(_v5_app(part, spa), PLATFORM_V5)
+
+
+def test_a_pattern_that_changes_no_material_is_feature_no_effect():
+    """Live R428: the 3 x 2 pattern of the harness reported success with the
+    volume unchanged, its instances outside the plate."""
+    args = {"dir1_count": 3, "dir1_spacing": 30, "dir2_count": 2, "dir2_spacing": 30}
+    missed = run(call(_patterned_plate(0.0), "catia_rect_pattern", args))
+    assert missed.structuredContent["code"] == "FEATURE_NO_EFFECT"
+    assert missed.structuredContent["effects"]["modified"] is None
+    assert "Répétition rectangulaire.1" in missed.structuredContent["message"]
+
+    landed = run(call(_patterned_plate(251.3), "catia_rect_pattern", args))
+    assert not landed.isError, text(landed)
+    assert "Volume 59748.7 -> 58492.2 mm3" in text(landed)
