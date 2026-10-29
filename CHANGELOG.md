@@ -16,6 +16,20 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **Feature tree replay** (`python -m catia_mcp.tree check|reference|build`):
+  replays a CAD feature tree (version 1) as native CATIA features, for a
+  bridge that receives trees as data. Milestone 1 covers sketches (lines,
+  circles, 3-point arcs on any plane), extrudes (new body, join, cut,
+  intersect, symmetric), combines and simple / counterbored holes, and
+  refuses everything else up front.
+  - Each pad is verified in its own body (volume and centre of gravity
+    against the profile) and flipped once if CATIA extruded the other way.
+  - Each part's volume is compared with build123d's, and editability is
+    proved by an edit and a restore.
+  - The command attaches to a running CATIA and never launches one
+    (`CATIAConnection(allow_launch=False)`).
+
+  See docs/feature-tree.md.
 - **Differential testing against build123d** (`python -m scripts.differential`):
   each case is written once as a list of operations, built by build123d
   (OpenCascade) for the expected values and through the MCP tools in CATIA,

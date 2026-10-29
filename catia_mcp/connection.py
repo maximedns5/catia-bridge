@@ -68,8 +68,11 @@ class CATIAConnection:
     # Both CATIA V5 and 3DEXPERIENCE register this ProgID.
     CATIA_PROGID = "CATIA.Application"
 
-    def __init__(self, platform: str | None = None) -> None:
+    def __init__(self, platform: str | None = None, allow_launch: bool = True) -> None:
         self.app: Any | None = None
+        # False: attach to a running CATIA only, never start one (the tree
+        # bridge: on 3DEXPERIENCE a fresh start needs an interactive login).
+        self.allow_launch = allow_launch
         self._initialized_com = False
         self._forced_platform = normalize_platform(
             platform if platform is not None else os.environ.get("CATIA_MCP_PLATFORM")
@@ -131,6 +134,13 @@ class CATIAConnection:
             logger.info("Connected to running %s instance (%s)", self.platform_label, version)
             return f"Connected to running {self.platform_label} instance ({version})"
         except Exception:
+            if not self.allow_launch:
+                self.app = None
+                self.platform = None
+                raise RuntimeError(
+                    "CATIA is not running. Open CATIA (on 3DEXPERIENCE, log in and pick "
+                    "a collaborative space), then try again."
+                ) from None
             logger.info("No running CATIA instance found, launching new one...")
 
         # Phase 2: Launch a new CATIA instance

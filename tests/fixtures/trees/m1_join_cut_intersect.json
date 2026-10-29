@@ -1,0 +1,307 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M1/JoinCutIntersect",
+   "name": "JoinCutIntersect",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30.0,
+        -20.0
+       ],
+       "end": [
+        30.0,
+        -20.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30.0,
+        -20.0
+       ],
+       "end": [
+        30.0,
+        20.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        30.0,
+        20.0
+       ],
+       "end": [
+        -30.0,
+        20.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -30.0,
+        20.0
+       ],
+       "end": [
+        -30.0,
+        -20.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 20,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Sketch2",
+     "plane": {
+      "origin": [
+       -40,
+       0,
+       0
+      ],
+      "x_dir": [
+       0,
+       1,
+       0
+      ],
+      "normal": [
+       1,
+       0,
+       0
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        10
+       ],
+       "radius": 5,
+       "id": "c1"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "c1"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude2",
+     "name": "Extrude2",
+     "sketch": "sketch2",
+     "distance": 80,
+     "operation": "join",
+     "bodies": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch3",
+     "name": "Sketch3",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       20
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        0.0,
+        0.0
+       ],
+       "end": [
+        20.0,
+        0.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        20.0,
+        0.0
+       ],
+       "end": [
+        20.0,
+        10.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        20.0,
+        10.0
+       ],
+       "end": [
+        0.0,
+        10.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        0.0,
+        10.0
+       ],
+       "end": [
+        0.0,
+        0.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude3",
+     "name": "Extrude3",
+     "sketch": "sketch3",
+     "distance": -5,
+     "operation": "cut",
+     "bodies": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch4",
+     "name": "Sketch4",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       10
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 28,
+       "id": "c1"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "c1"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude4",
+     "name": "Extrude4",
+     "sketch": "sketch4",
+     "distance": 6,
+     "operation": "intersect",
+     "bodies": [
+      "Body1"
+     ],
+     "symmetric": true
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

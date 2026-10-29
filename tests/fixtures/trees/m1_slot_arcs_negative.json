@@ -1,0 +1,116 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M1/SlotArcs",
+   "name": "SlotArcs",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -20,
+        -5
+       ],
+       "end": [
+        20,
+        -5
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "arc",
+       "start": [
+        20,
+        -5
+       ],
+       "mid": [
+        25,
+        0
+       ],
+       "end": [
+        20,
+        5
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        20,
+        5
+       ],
+       "end": [
+        -20,
+        5
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "arc",
+       "start": [
+        -20,
+        5
+       ],
+       "mid": [
+        -25,
+        0
+       ],
+       "end": [
+        -20,
+        -5
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": -8,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}
