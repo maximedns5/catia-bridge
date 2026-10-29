@@ -16,6 +16,15 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **Feature tree replay, milestone 2:** `revolve` (any axis in the sketch
+  plane, any angle, every operation), `mirror` joined straight back into its
+  source, `split`, and countersink holes.
+  - Revolves are checked by Pappus (volume, and the centre of gravity, which
+    also gives the turning direction) and swapped once if CATIA turned the
+    other way.
+  - A mirror must put the centre of gravity on its plane, and a split must
+    keep it on the kept side, flipped once otherwise.
+  - The reference reproduces Fab's sample Shaft and split Housing exactly.
 - **Feature tree replay** (`python -m catia_mcp.tree check|reference|build`):
   replays a CAD feature tree (version 1) as native CATIA features, for a
   bridge that receives trees as data. Milestone 1 covers sketches (lines,

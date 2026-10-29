@@ -8,11 +8,12 @@ features preflight.SUPPORTED lists. Needs build123d
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
-from build123d import CenterOf, Edge, Face, Plane, Solid, Wire, extrude
+from build123d import Axis, CenterOf, Edge, Face, Keep, Plane, Solid, Wire, extrude, revolve, split
 
-from catia_mcp.tree.geometry import Frame, add, scale
+from catia_mcp.tree.geometry import Frame, add, cross, scale
 
 
 class ReferenceError(Exception):
@@ -65,7 +66,8 @@ def _combine(target: Any, tool: Any, operation: str) -> Any:
 
 def hole_segments(feature: dict[str, Any]) -> list[tuple[float, float, float]]:
     """(radius, top, bottom) along the hole frame's Z, as the contract's
-    revolved profiles give them (d = effective depth)."""
+    revolved profiles give them (d = effective depth). Countersinks have a
+    cone, so they come from hole_profile instead."""
     r = feature["diameter"] / 2
     d = feature.get("effective_depth") or feature["depth"]
     if feature["kind"] == "simple":
@@ -73,7 +75,34 @@ def hole_segments(feature: dict[str, Any]) -> list[tuple[float, float, float]]:
     if feature["kind"] == "counterbore":
         h = feature["counterbore_depth"]
         return [(feature["counterbore_diameter"] / 2, d, -h), (r, -h, -d)]
-    raise ReferenceError(f"no reference for '{feature['kind']}' holes")
+    raise ReferenceError(f"no cylinder segments for '{feature['kind']}' holes")
+
+
+def hole_profile(feature: dict[str, Any]) -> list[tuple[float, float]]:
+    """Countersink: the (radius, height) profile revolved about the frame's Z,
+    as build123d's CounterSinkHole builds it: the hole below, a cone of the
+    given angle from the countersink radius at the surface, and clearance of
+    the countersink radius above."""
+    r, big = feature["diameter"] / 2, feature["countersink_diameter"] / 2
+    d = feature.get("effective_depth") or feature["depth"]
+    cone = (big - r) / math.tan(math.radians(feature["countersink_angle"]) / 2)
+    return [(0.0, d), (big, d), (big, 0.0), (r, -cone), (r, -d), (0.0, -d)]
+
+
+def hole_profile_sketch(feature: dict[str, Any], matrix) -> tuple[dict[str, Any], Any, Any]:
+    """The countersink profile as a tree sketch in the frame's (X, Z) plane,
+    with the revolve axis (origin, Z). The sketch normal is X x Z, so its V
+    axis (normal x H) is the frame's Z."""
+    origin, x_dir, z_dir = frame_axes(matrix)
+    points = hole_profile(feature)
+    entities = [{"type": "line", "start": list(points[i]),
+                 "end": list(points[(i + 1) % len(points)]), "id": f"p{i}"}
+                for i in range(len(points))]
+    sketch = {"plane": {"origin": list(origin), "x_dir": list(x_dir),
+                        "normal": list(cross(x_dir, z_dir))},
+              "entities": entities,
+              "profiles": [{"outer": [e["id"] for e in entities], "inner": []}]}
+    return sketch, origin, z_dir
 
 
 def frame_axes(matrix: list[list[float]]):
@@ -103,6 +132,26 @@ def build_part(part: dict[str, Any]) -> Any:
             else:
                 (target,) = feature["bodies"]
                 bodies[target] = _combine(bodies[target], solid, feature["operation"])
+        elif kind == "revolve":
+            sketch = sketches[feature["sketch"]]
+            axis = feature["axis"]
+            solid = revolve(sketch_faces(sketch), axis=Axis(axis["origin"], axis["direction"]),
+                            revolution_arc=feature["angle"])
+            if feature["operation"] == "new_body":
+                bodies[feature["creates"][0]] = solid
+            else:
+                (target,) = feature["bodies"]
+                bodies[target] = _combine(bodies[target], solid, feature["operation"])
+        elif kind == "mirror":
+            (source,), (created,) = feature["bodies"], feature["creates"]
+            plane = feature["plane"]
+            bodies[created] = bodies[source].mirror(Plane(origin=plane["origin"], z_dir=plane["normal"]))
+        elif kind == "split":
+            (target,) = feature["bodies"]
+            plane = feature["plane"]
+            cutter = Plane(origin=plane["origin"], z_dir=plane["normal"])
+            keep = Keep.TOP if feature["keep"] == "top" else Keep.BOTTOM
+            bodies[target] = split(bodies[target], bisect_by=cutter, keep=keep)
         elif kind == "combine":
             (target,) = feature["targets"]
             for tool in feature["tools"]:
@@ -110,6 +159,11 @@ def build_part(part: dict[str, Any]) -> Any:
         elif kind == "hole":
             (target,) = feature["bodies"]
             for matrix in feature["frames"]:
+                if feature["kind"] == "countersink":
+                    sketch, origin, z_dir = hole_profile_sketch(feature, matrix)
+                    tool = revolve(sketch_faces(sketch), axis=Axis(origin, z_dir))
+                    bodies[target] = bodies[target] - tool
+                    continue
                 origin, x_dir, z_dir = frame_axes(matrix)
                 for radius, top, bottom in hole_segments(feature):
                     plane = Plane(origin=add(origin, scale(z_dir, bottom)), x_dir=x_dir, z_dir=z_dir)

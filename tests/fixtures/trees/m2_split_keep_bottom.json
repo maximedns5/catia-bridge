@@ -1,0 +1,133 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M2/SplitBottom",
+   "name": "SplitBottom",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       -10
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -40.0,
+        -25.0
+       ],
+       "end": [
+        40.0,
+        -25.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        40.0,
+        -25.0
+       ],
+       "end": [
+        40.0,
+        25.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        40.0,
+        25.0
+       ],
+       "end": [
+        -40.0,
+        25.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -40.0,
+        25.0
+       ],
+       "end": [
+        -40.0,
+        -25.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 20,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "split",
+     "id": "split1",
+     "bodies": [
+      "Body1"
+     ],
+     "keep": "bottom",
+     "plane": {
+      "origin": [
+       30,
+       0,
+       0
+      ],
+      "normal": [
+       1,
+       0,
+       0
+      ],
+      "x_dir": [
+       0,
+       1,
+       0
+      ]
+     }
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}
