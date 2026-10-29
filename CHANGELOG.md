@@ -69,6 +69,18 @@ All notable changes to this project are documented here.
   live V5 or 3DEXPERIENCE session and writes a JSON report.
 
 ### Fixed
+- Found by the differential harness on 3DEXPERIENCE R428 SP6 in French:
+  - `catia_shaft` and `catia_groove` failed on a non-English session. The
+    sketch axis was looked up by its English name
+    (`GeometricElements.Item("AbsoluteAxis")`, DISP_E_MEMBERNOTFOUND in
+    French). They fall back to `Sketch.AbsoluteAxis.VerticalReference`,
+    keeping the V5-6R2020 route first.
+  - Rectangular, circular and user patterns that change no material now
+    fail with `FEATURE_NO_EFFECT`. A 3 x 2 rectangular pattern whose
+    instances all landed outside the plate used to report success.
+  - The `symmetric` option of `catia_pad` and `catia_pocket` is documented
+    as `height` / `depth` on each side (live: a 20 mm symmetric pad is 40 mm
+    thick). The schema used to say total = height.
 - Topology on a non-English CATIA: `Selection.Search` queries follow the
   session language, keyword and type names alike, so `Topology.Face,sel`
   failed with E_FAIL on a French 3DEXPERIENCE R428 SP6, and every `Face.N` /

@@ -65,11 +65,10 @@ CASES: tuple[Case, ...] = (
     ),
     Case(
         "pad_symmetric",
-        "50 x 50 square padded 20 symmetric: 50000 mm3 over z -10..10, as the "
-        "catia_pad schema documents (total = height).",
+        "50 x 50 square padded 20 symmetric: 20 on each side, 100000 mm3 over "
+        "z -20..20 (live R428; the schema used to say total = height).",
         (Sketch("xy", (Rect(50, 50),)), Pad(20, symmetric=True)),
         checks=("volume", "area", "cog", "bbox"),
-        hypothesis="catia_pad symmetric: total length = height (schema wording)",
         tags=("pad",),
     ),
     Case(
@@ -93,6 +92,36 @@ CASES: tuple[Case, ...] = (
         ),
         checks=("volume", "area", "cog", "bbox"),
         hypothesis="catia_rect_pattern default directions: dir1 = +X, dir2 = +Y",
+        tags=("pocket", "pattern"),
+    ),
+    Case(
+        "rect_pattern_dir1",
+        "Plate with a pocket at its centre, patterned 2 x 1 at 20 mm: the copy at "
+        "x = +20 moves the COG to x < 0; at x = -20 the COG sign flips.",
+        (
+            Sketch("xy", (Rect(100, 60),)),
+            Pad(10),
+            Sketch("xy", (Circle(4),)),
+            Pocket(5),
+            RectPattern(2, 20),
+        ),
+        checks=("volume", "area", "cog", "bbox"),
+        hypothesis="catia_rect_pattern dir1 = +X (the COG shows the actual direction)",
+        tags=("pocket", "pattern"),
+    ),
+    Case(
+        "rect_pattern_dir2",
+        "Plate with a pocket at its centre, patterned 1 x 2 at 20 mm: the copy at "
+        "y = +20 moves the COG to y < 0; at y = -20 the COG sign flips.",
+        (
+            Sketch("xy", (Rect(100, 60),)),
+            Pad(10),
+            Sketch("xy", (Circle(4),)),
+            Pocket(5),
+            RectPattern(1, 0, 2, 20),
+        ),
+        checks=("volume", "area", "cog", "bbox"),
+        hypothesis="catia_rect_pattern dir2 = +Y (the COG shows the actual direction)",
         tags=("pocket", "pattern"),
     ),
     Case(

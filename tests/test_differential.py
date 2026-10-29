@@ -27,9 +27,11 @@ CLOSED_FORM_MM3 = {
     "xy_offset_pad": 40 * 20 * 15,
     "yz_offset_pad": 40 * 20 * 30,
     "zx_offset_pad": 40 * 20 * 30,
-    "pad_symmetric": 50 * 50 * 20,
+    "pad_symmetric": 50 * 50 * 40,
     "circular_pockets": 240000 - 4 * math.pi * 4**2 * 20,
     "rect_pattern_pockets": 100 * 60 * 10 - 6 * math.pi * 4**2 * 5,
+    "rect_pattern_dir1": 100 * 60 * 10 - 2 * math.pi * 4**2 * 5,
+    "rect_pattern_dir2": 100 * 60 * 10 - 2 * math.pi * 4**2 * 5,
     "shaft_ring": 2 * math.pi * 20 * (10 * 30),
     "groove_on_cylinder": math.pi * 20**2 * 60 - math.pi * (20**2 - 17**2) * 10,
     "hole_from_sketch": 240000 - math.pi * 4**2 * 25,
@@ -66,7 +68,7 @@ def test_reference_refuses_a_pocket_with_material_on_both_sides():
     from scripts.differential.reference import CaseError, expected
 
     straddling = Case("straddling", "", (
-        Sketch("xy", (Rect(10, 10),)), Pad(10, symmetric=True),
+        Sketch("xy", (Rect(10, 10),)), Pad(5, symmetric=True),
         Sketch("xy", (Rect(2, 2),)), Pocket(3),
     ))
     with pytest.raises(CaseError, match="both sides"):

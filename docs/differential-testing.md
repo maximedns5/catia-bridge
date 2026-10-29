@@ -47,14 +47,22 @@ differently, for example with seam edges on cylinders.
 ## Hypotheses the cases check
 
 A case whose `hypothesis` is set encodes an assumption about CATIA. If it
-fails, check the hypothesis first.
+fails, check the hypothesis first. Live results on 3DEXPERIENCE R428 SP6
+(French, B428_Cloud):
 
-| Case | Hypothesis |
-|------|------------|
-| `xy_offset_pad`, `yz_offset_pad`, `zx_offset_pad` | Sketch axes and normals of the origin planes follow the build123d convention: xy is H=+X, V=+Y, normal +Z; yz is H=+Y, V=+Z, normal +X; zx is H=+Z, V=+X, normal +Y |
-| `pad_symmetric` | `catia_pad` with `symmetric` gives a total length equal to `height`, as its schema says |
-| `rect_pattern_pockets` | `catia_rect_pattern` without edges patterns along +X and +Y |
-| `shaft_ring`, `groove_on_cylinder` | Shaft and groove revolve about the sketch V axis |
+| Case | Hypothesis | R428 SP6 |
+|------|------------|----------|
+| `xy_offset_pad`, `yz_offset_pad`, `zx_offset_pad` | Sketch axes and normals of the origin planes follow the build123d convention: xy is H=+X, V=+Y, normal +Z; yz is H=+Y, V=+Z, normal +X; zx is H=+Z, V=+X, normal +Y | Confirmed |
+| `pad_symmetric` | A symmetric pad puts `height` on each side (total 2 × height) | Confirmed. The catia_pad schema used to say total = height; it now says per side |
+| `rect_pattern_pockets` | `catia_rect_pattern` without edges patterns along +X and +Y | Refuted: the instances landed outside the plate, and the tool reported success with the volume unchanged. It now fails with `FEATURE_NO_EFFECT` |
+| `rect_pattern_dir1`, `rect_pattern_dir2` | Same, one direction at a time, with the seed at the centre so every direction stays inside the plate: the COG shows the actual direction | Not yet run |
+| `shaft_ring`, `groove_on_cylinder` | Shaft and groove revolve about the sketch V axis | Not yet measured: both failed before revolving, because the sketch axis was looked up by its English name. Fixed |
+
+`boolean_remove` also showed that after a Remove, the body-level topology
+search returns vertices of the consumed tool body (24 instead of 16): the
+volume, area and COG match, but the vertex-sweep bounding box reaches the
+tool's far side (x = 60 instead of 50). This affects every `Face.N` /
+`Edge.N` / `Vertex.N` index after a Remove and is under investigation.
 
 ## Writing a case
 

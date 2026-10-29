@@ -94,7 +94,7 @@ class Reference:
     def _pad(self, op: ops.Pad) -> None:
         _, profile = self._profile()
         if op.symmetric:
-            tool = extrude(profile, amount=op.height / 2, both=True)
+            tool = extrude(profile, amount=op.height, both=True)
         else:
             tool = extrude(profile, amount=op.height)
         self._apply(tool, "add")
