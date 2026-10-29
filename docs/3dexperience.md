@@ -17,7 +17,10 @@ below), and are covered by offline contract tests with COM doubles
 Shape), 0 failed. A front view of a Physical Product and a right projection
 view of it were also created through the tools on that release. Section,
 detail and isometric views are bound from the documented signatures but not
-yet run live. Treat other releases as unvalidated until the smoke test
+yet run live. The same smoke test also passes, 51 passed, 2 expected skips, 0 failed, on a
+French R428 SP6 (B428_Cloud) session with the student Mechanical & Shape Designer
+role, which needs the localized topology search (see Non-English CATIA
+sessions). Treat other releases as unvalidated until the smoke test
 passes there, and report what fails.
 
 CATIA V5 behavior is unchanged, with one fix: component positions are now
@@ -124,6 +127,30 @@ face 6000 mm², its bounding box 100/60/40), and `DistanceMinTo` returns mm
 (50 mm and 10 mm on known construction geometry). Results carry a
 `units_note`. On another release, the smoke test settles it: a ratio of 1e9
 or 1e-9 in the report means the convention differs.
+
+## Non-English CATIA sessions
+
+`Selection.Search` queries use the session language for both the keyword and
+the type names. The topology search behind every `Face.N` / `Edge.N` /
+`Vertex.N` tool knows English and French, and keeps the language that works
+for the rest of the session:
+
+| Language | Face | Edge | Vertex |
+|----------|------|------|--------|
+| English | `Topology.Face` | `Topology.Edge` | `Topology.Vertex` |
+| French (live-checked on R428 SP6) | `Topologie.Face` | `Topologie.Arête` | `Topologie.Sommet` |
+
+On a French session the English queries, and `Topologie.Edge` /
+`Topologie.Vertex`, fail with E_FAIL. For another language, open CATIA's
+Search (Ctrl+F), build topology queries for a face, an edge and a vertex, and
+start the server with `CATIA_MCP_TOPOLOGY_NAMES=<keyword>,<Face>,<Edge>,<Vertex>`
+spelled as they appear there (French would be `Topologie,Face,Arête,Sommet`).
+
+Tree-name searches need no translation: `catia_measure_distance` resolves a
+name with `Name=<name>,all`, and on the French R428 SP6 session that finds
+default French names with spaces and accents unquoted (`Congé arête.1`,
+`Répétition circulaire.1`) as well as user names (`P1`). Single quotes work
+too; double quotes find nothing, without an error.
 
 ## Discovering the API on your release
 

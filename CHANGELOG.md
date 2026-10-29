@@ -58,6 +58,19 @@ All notable changes to this project are documented here.
   live V5 or 3DEXPERIENCE session and writes a JSON report.
 
 ### Fixed
+- Topology on a non-English CATIA: `Selection.Search` queries follow the
+  session language, keyword and type names alike, so `Topology.Face,sel`
+  failed with E_FAIL on a French 3DEXPERIENCE R428 SP6, and every `Face.N` /
+  `Edge.N` / `Vertex.N` tool failed with it (bounding box, list faces/edges,
+  element measures, distances, fillet, chamfer...). The search now tries
+  English and French names (`Topologie.Face`, `Topologie.Arête`,
+  `Topologie.Sommet`, live-checked: 14 faces, 26 edges and 12 vertices on
+  the smoke block), remembers the language that works, and
+  `CATIA_MCP_TOPOLOGY_NAMES` adds another language. When none works the call
+  fails with `UNSUPPORTED_CAPABILITY`.
+- `catia_list_faces` and `catia_list_edges` returned "Could not enumerate..."
+  as an ordinary result (MCP `isError` false) when the search failed. They now
+  fail with a structured error.
 - First live 3DEXPERIENCE run (R428 SP6) fixes; the smoke test went from
   46 passed / 4 failed to 51 passed / 2 expected skips / 0 failed:
   - `catia_measure_distance` (3DEXPERIENCE): measured through a V5-style

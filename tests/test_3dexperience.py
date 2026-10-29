@@ -539,10 +539,10 @@ def _cells(kind, refs):
     return {kind: [SimpleNamespace(Reference=ref) for ref in refs]}
 
 
-def test_3dx_topology_comes_from_the_body_when_the_last_feature_is_a_hole():
-    """Live R428: with a Hole last, the last-shape search returns only the
-    hole's own cells (2 faces); the body search returns the final solid
-    (14 faces for a block with 4 holes)."""
+def _block_with_holes_app():
+    """3DEXPERIENCE session on a 100 x 60 x 40 block with 4 holes: the body
+    holds the final solid's cells (14 faces), the last shape (a Hole) only
+    its own."""
     part = make_part()
     body = part.MainBody
     corners = [(x, y, z) for x in (0.0, 100.0) for y in (0.0, 60.0) for z in (0.0, 40.0)]
@@ -559,8 +559,14 @@ def test_3dx_topology_comes_from_the_body_when_the_last_feature_is_a_hole():
     }))
     points = SimpleNamespace(GetMeasurable=lambda ref, code: SimpleNamespace(
         GetPoint=None, _outs_GetPoint=lambda: list(ref)))
-    app = _app_with_part(part, PLATFORM_3DX, {"MeasurableService": points})
+    return _app_with_part(part, PLATFORM_3DX, {"MeasurableService": points})
 
+
+def test_3dx_topology_comes_from_the_body_when_the_last_feature_is_a_hole():
+    """Live R428: with a Hole last, the last-shape search returns only the
+    hole's own cells (2 faces); the body search returns the final solid
+    (14 faces for a block with 4 holes)."""
+    app = _block_with_holes_app()
     faces = run(call(server_on(app), "catia_list_faces"))
     assert len(json.loads(text(faces))) == 14
     edges = run(call(server_on(app), "catia_list_edges"))
@@ -569,6 +575,69 @@ def test_3dx_topology_comes_from_the_body_when_the_last_feature_is_a_hole():
     assert json.loads(text(box))["dimensions"] == {"length_x": 100.0, "length_y": 60.0, "length_z": 40.0}
     assert topology_reference(_connected(app), "Face", 14) == "body-face-14"
 
+
+
+@pytest.fixture(autouse=True)
+def _fresh_topology_language(monkeypatch):
+    """The working search language is remembered per process: start each test
+    without one."""
+    monkeypatch.setattr("catia_mcp.references._working_language", None)
+    monkeypatch.delenv("CATIA_MCP_TOPOLOGY_NAMES", raising=False)
+
+
+_FRENCH = {"keyword": "Topologie", "Face": "Face", "Edge": "Arête", "Vertex": "Sommet"}
+
+
+class _RecordingSelection(Selection):
+    def __init__(self, language):
+        super().__init__()
+        self.language = language
+        self.queries: list[str] = []
+
+    def Search(self, query):  # noqa: N802
+        self.queries.append(query)
+        super().Search(query)
+
+
+def test_french_session_searches_topology_with_french_names():
+    """Live R428 SP6 in French: 'Topology.Face,sel' fails with E_FAIL;
+    'Topologie.Face', 'Topologie.Arête' and 'Topologie.Sommet' work, while
+    'Topologie.Edge' and 'Topologie.Vertex' fail."""
+    app = _block_with_holes_app()
+    sel = app.ActiveEditor.Selection = _RecordingSelection(_FRENCH)
+    faces = run(call(server_on(app), "catia_list_faces"))
+    assert not faces.isError, text(faces)
+    assert len(json.loads(text(faces))) == 14
+    assert sel.queries == ["Topology.Face,sel", "Topologie.Face,sel"]
+
+    sel.queries.clear()
+    edges = run(call(server_on(app), "catia_list_edges"))
+    assert len(json.loads(text(edges))) == 20
+    assert sel.queries == ["Topologie.Arête,sel"]  # the working language is tried first
+    box = run(call(server_on(app), "catia_get_bounding_box"))
+    assert json.loads(text(box))["dimensions"] == {"length_x": 100.0, "length_y": 60.0, "length_z": 40.0}
+    assert sel.queries[-1] == "Topologie.Sommet,sel"
+    assert topology_reference(_connected(app), "Edge", 20) == "body-edge-20"
+
+
+def test_unknown_session_language_is_a_typed_error_not_a_listing(monkeypatch):
+    app = _block_with_holes_app()
+    other = {"keyword": "TopoX", "Face": "FaceX", "Edge": "EdgeX", "Vertex": "VertexX"}
+    app.ActiveEditor.Selection = _RecordingSelection(other)
+    for tool in ("catia_list_faces", "catia_list_edges"):
+        result = run(call(server_on(app), tool))
+        assert result.isError, tool
+        assert result.structuredContent["code"] == "UNSUPPORTED_CAPABILITY"
+        assert result.structuredContent["effects"]["modified"] is False
+        assert "CATIA_MCP_TOPOLOGY_NAMES" in result.structuredContent["message"]
+
+    monkeypatch.setenv("CATIA_MCP_TOPOLOGY_NAMES", "TopoX, FaceX, EdgeX, VertexX")
+    edges = run(call(server_on(app), "catia_list_edges"))
+    assert len(json.loads(text(edges))) == 20
+
+    monkeypatch.setenv("CATIA_MCP_TOPOLOGY_NAMES", "TopoX,FaceX")
+    malformed = run(call(server_on(app), "catia_list_faces"))
+    assert malformed.structuredContent["code"] == "INVALID_ARGUMENT"
 
 # ── Part Design: hole effect, user pattern seeds ──
 

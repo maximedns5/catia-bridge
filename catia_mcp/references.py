@@ -13,12 +13,13 @@ the search root differs per platform (see there).
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
 from catia_mcp.automation import iter_items
 from catia_mcp.connection import CATIAConnection
-from catia_mcp.errors import InvalidArgument, ObjectNotFound
+from catia_mcp.errors import InvalidArgument, ObjectNotFound, UnsupportedCapability
 
 # Origin plane aliases
 PLANE_MAP = {
@@ -85,6 +86,68 @@ def topology_index(name: str, kind: str) -> int:
     return match[1]
 
 
+# Selection.Search queries follow the language of the CATIA session, both the
+# workbench keyword and the type names. Live on 3DEXPERIENCE R428 SP6 in
+# French: "Topology.Face,sel" fails with E_FAIL, while "Topologie.Face,sel",
+# "Topologie.Arête,sel" and "Topologie.Sommet,sel" find the smoke block's 14
+# faces, 26 edges and 12 vertices ("Topologie.Edge" and "Topologie.Vertex"
+# fail). CATIA_MCP_TOPOLOGY_NAMES adds another language as
+# "<keyword>,<Face>,<Edge>,<Vertex>", spelled as CATIA's Search shows them.
+TOPOLOGY_LANGUAGES: dict[str, dict[str, str]] = {
+    "en": {"keyword": "Topology", "Face": "Face", "Edge": "Edge", "Vertex": "Vertex"},
+    "fr": {"keyword": "Topologie", "Face": "Face", "Edge": "Arête", "Vertex": "Sommet"},
+}
+_working_language: str | None = None
+
+
+def topology_languages() -> list[tuple[str, dict[str, str]]]:
+    """Languages to try, the one that last worked in this process first."""
+    languages = dict(TOPOLOGY_LANGUAGES)
+    custom = os.environ.get("CATIA_MCP_TOPOLOGY_NAMES", "").strip()
+    if custom:
+        names = [name.strip() for name in custom.split(",")]
+        if len(names) != 4 or not all(names):
+            raise InvalidArgument(
+                f"CATIA_MCP_TOPOLOGY_NAMES must be '<keyword>,<Face>,<Edge>,<Vertex>' "
+                f"as CATIA's Search spells them (French: 'Topologie,Face,Arête,Sommet'), "
+                f"got {custom!r}."
+            )
+        languages = {"custom": dict(zip(("keyword", "Face", "Edge", "Vertex"), names)), **languages}
+    order = list(languages)
+    if _working_language in languages:
+        order.remove(_working_language)
+        order.insert(0, _working_language)
+    return [(language, languages[language]) for language in order]
+
+
+def _search_topology(sel: Any, root: Any, kind: str) -> int:
+    """Replace `sel` with the `kind` cells under `root`, in whichever language
+    the session searches, and return how many there are."""
+    global _working_language
+    failures = []
+    for language, names in topology_languages():
+        # A failed search may leave the selection in any state: start over.
+        sel.Clear()
+        sel.Add(root)
+        query = f"{names['keyword']}.{names[kind]},sel"
+        try:
+            sel.Search(query)
+        except Exception as error:
+            failures.append((query, error))
+            continue
+        _working_language = language
+        return sel.Count
+    tried = ", ".join(f"'{query}'" for query, _ in failures)
+    raise UnsupportedCapability(
+        f"CATIA rejected every topology search ({tried}; last error: "
+        f"{failures[-1][1]}). Search queries follow the CATIA session language: "
+        "open CATIA's Search (Ctrl+F), build topology queries for a face, an edge "
+        "and a vertex, and set CATIA_MCP_TOPOLOGY_NAMES to "
+        "'<keyword>,<Face>,<Edge>,<Vertex>' as they appear there. The part's "
+        "window must also be the active one."
+    )
+
+
 def search_final_topology(
     sel: Any, body: Any, kind: str, last_shape: Any | None = None, *, is_3dx: bool
 ) -> int:
@@ -109,10 +172,7 @@ def search_final_topology(
             last_shape = body.Shapes.Item(body.Shapes.Count)
         roots = (last_shape, body)
     for root in roots:
-        sel.Clear()
-        sel.Add(root)
-        sel.Search(f"Topology.{kind},sel")
-        if sel.Count:
+        if _search_topology(sel, root, kind):
             break
     return sel.Count
 
