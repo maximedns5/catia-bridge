@@ -1,7 +1,7 @@
 """Preflight: refuse a whole tree before touching CATIA.
 
-Mirrors the Fusion path's analyze/refusal: a model is refused if any part is
-unread, uses a feature this builder does not support yet, or is malformed.
+A model is refused as a whole if any part is unread, uses a feature this
+builder does not support yet, or is malformed.
 Each reason is reported once, with its count and the model lines it comes from.
 """
 

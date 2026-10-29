@@ -24,7 +24,8 @@ All notable changes to this project are documented here.
     other way.
   - A mirror must put the centre of gravity on its plane, and a split must
     keep it on the kept side, flipped once otherwise.
-  - The reference reproduces Fab's sample Shaft and split Housing exactly.
+  - The reference matches the source build123d models exactly on a revolved
+    shaft and a split housing.
 - **Feature tree replay** (`python -m catia_mcp.tree check|reference|build`):
   replays a CAD feature tree (version 1) as native CATIA features, for a
   bridge that receives trees as data. Milestone 1 covers sketches (lines,

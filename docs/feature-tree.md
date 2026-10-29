@@ -17,7 +17,7 @@ python -m catia_mcp.tree build TREE.json --plm-type 3DShape
 - **`reference`:** the expected per-part volume, area and centre of gravity, built with build123d (`pip install -e ".[differential]"`).
 - **`build`:** builds the tree in CATIA. It attaches to a running CATIA and never starts one: on 3DEXPERIENCE a fresh start needs an interactive login. Each part goes into a new part, a 3D Shape by default on 3DEXPERIENCE. Nothing is saved.
   - **Checks:** each part's volume is compared with build123d's when build123d is installed. Editability is proved by lengthening the first pad by 1 mm, checking that the volume moves, and restoring it.
-  - **Report:** written to `tree_report.json`, in the same shape as Fab's Send to Fusion report.
+  - **Report:** written to `tree_report.json`, with `success`, `native_history`, `editable`, `parts_detail` and `error`.
   - **Prefixes:** `--part ID --until FEATURE_ID` builds a prefix of one part, for development.
 
 Keep the new part's window active during a build. The build stops if the
@@ -61,6 +61,6 @@ each path.
   - splits along a normal and on a tilted plane;
   - a countersink.
 
-The build123d reference reproduces Fab's sample models exactly on the parts
-milestones 1 and 2 cover: sample 1's Shaft (2764.6015 mm3) and sample 2's
-Housing, split included (68131.7169 mm3).
+The build123d reference reproduces the source build123d models exactly on
+the parts milestones 1 and 2 cover, such as a revolved shaft and a split
+housing.
