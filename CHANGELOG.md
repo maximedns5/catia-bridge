@@ -16,6 +16,17 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **Differential testing against build123d** (`python -m scripts.differential`):
+  each case is written once as a list of operations, built by build123d
+  (OpenCascade) for the expected values and through the MCP tools in CATIA,
+  then volume, area, centre of gravity and, for vertex-bounded solids, the
+  bounding box are compared with tolerances. 14 initial cases cover pads on
+  the three origin planes, symmetric pads, pockets, holes, rectangular and
+  circular patterns, shafts, grooves, mirror and add/remove/intersect
+  booleans. Some cases test a stated hypothesis about CATIA conventions
+  (sketch axes and normal of each origin plane, the symmetric pad length,
+  default pattern directions). `--reference-only` prints the expected values
+  without CATIA. See docs/differential-testing.md.
 - **CATIA 3DEXPERIENCE (V6) support (123 tools total).** The server detects
   CATIA V5 or CATIA 3DEXPERIENCE on connect (`--platform` /
   `CATIA_MCP_PLATFORM` to force it) and the same tools drive both. A
