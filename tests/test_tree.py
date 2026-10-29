@@ -420,8 +420,8 @@ def _shafts(part):
 
 
 def test_revolve_about_an_axis_off_the_sketch_origin_uses_a_3d_line(monkeypatch):
-    """Like Fab's sample 1 Shaft: a -XZ sketch revolved about a vertical axis
-    that is not the CATIA sketch's own axis."""
+    """A -XZ sketch revolved about a vertical axis that is not the CATIA
+    sketch's own axis."""
     part = _FakePart()
     report = _builder(part, monkeypatch).build(
         load("m2_shaft_axis_off_origin"),

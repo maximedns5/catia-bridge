@@ -45,7 +45,7 @@ class Sketch:
 class Pad:
     """Extrude the last sketch along its normal; symmetric means `height` on
     each side of the sketch plane (live on R428: CATIA's mirrored extent, and
-    Fab's feature tree uses the same convention)."""
+    the feature tree uses the same convention)."""
 
     height: float
     symmetric: bool = False
