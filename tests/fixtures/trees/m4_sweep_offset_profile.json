@@ -1,0 +1,155 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M4/OffsetSweep",
+   "name": "OffsetSweep",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        0.5,
+        -1.0
+       ],
+       "end": [
+        3.5,
+        -1.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        3.5,
+        -1.0
+       ],
+       "end": [
+        3.5,
+        1.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        3.5,
+        1.0
+       ],
+       "end": [
+        0.5,
+        1.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        0.5,
+        1.0
+       ],
+       "end": [
+        0.5,
+        -1.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "sweep",
+     "id": "sweep1",
+     "name": "Sweep1",
+     "sketch": "sketch1",
+     "frenet": false,
+     "transition": "Transition.TRANSFORMED",
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ],
+     "path": [
+      {
+       "type": "line",
+       "start": [
+        0,
+        0,
+        0
+       ],
+       "end": [
+        0,
+        0,
+        40
+       ]
+      },
+      {
+       "type": "arc",
+       "start": [
+        0,
+        0,
+        40
+       ],
+       "mid": [
+        4.3933982822017885,
+        0,
+        50.60660171779821
+       ],
+       "end": [
+        15,
+        0,
+        55
+       ]
+      },
+      {
+       "type": "line",
+       "start": [
+        15,
+        0,
+        55
+       ],
+       "end": [
+        35,
+        0,
+        55
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

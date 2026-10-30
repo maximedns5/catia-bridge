@@ -18,8 +18,14 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
   angle). Mirrors joined straight back are CATIA Mirrors (checked by the
   centre of gravity landing on the plane); splits are checked by which side
   of the plane the centre of gravity ends on, with one flip.
-- Nothing is retried: the first failure stops the part and is reported with
-  its feature, and the document may then hold a partial model.
+- Lofts are Multi-sections Solids between sections redrawn with the vertices
+  build123d pairs them by (catia_mcp/tree/loft.py), coupled vertex to vertex
+  from matching closing points, and checked against the ruled solid's volume
+  and centre of gravity; a twisted result is deleted and rebuilt once with the
+  second section's orientation reversed. Sweeps are Ribs along the path drawn
+  as a sketch in its own plane, checked by Pappus.
+- Nothing else is retried: the first failure stops the part and is reported
+  with its feature, and the document may then hold a partial model.
 """
 
 from __future__ import annotations
@@ -58,7 +64,9 @@ from catia_mcp.tree.geometry import (
     scale,
     unit,
 )
+from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.preflight import check
+from catia_mcp.tree.sweep import path_sketch, sweep_expectation
 
 # Origin planes and the sketch frame CATIA gives them (H, V; normal = H x V).
 ORIGIN_PLANES = {
@@ -73,6 +81,9 @@ CONSTRUCTION_SET = "Tree_Construction"
 FEATURE_REL_TOL = 1e-3
 PART_REL_TOL = 1e-4
 EPS = 1e-9
+# HybridShapeLoft.SectionCoupling: 1 ratio, 2 tangency, 3 tangency then
+# curvature, 4 vertices.
+LOFT_VERTEX_COUPLING = 4
 
 
 class BuildFailed(Exception):
@@ -291,7 +302,32 @@ class TreeBuilder:
                 self._verified_pad(tool, cylinder, -(top - bottom), False, entry)
                 self._combine(self.bodies[target], tool, "cut", entry)
 
+    def _feature_loft(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        sections = [self.sketches[name] for name in feature["sections"]]
+        plan = plan_loft(*sections)
+        self._into_body(feature, entry,
+                        lambda body: self._verified_loft(body, sections, plan, entry))
+
+    def _feature_sweep(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        sketch = self.sketches[feature["sketch"]]
+        self._into_body(feature, entry,
+                        lambda body: self._verified_rib(body, sketch, feature["path"], entry))
+
     # ── Bodies, pads, combines ──
+
+    def _into_body(self, feature: dict[str, Any], entry: dict[str, Any],
+                   make: Callable[[Any], Any]) -> None:
+        """Build a solid with `make` in a body of its own: the new body of a
+        new_body feature, or a tool combined into the feature's target."""
+        if feature["operation"] == "new_body":
+            body = self._new_body(use_main=True)
+            make(body)
+            self.bodies[feature["creates"][0]] = body
+            return
+        (target,) = feature["bodies"]
+        tool = self._new_body(use_main=False)
+        make(tool)
+        self._combine(self.bodies[target], tool, feature["operation"], entry)
 
     def _new_body(self, use_main: bool) -> Any:
         if use_main and not self.main_body_used:
@@ -380,6 +416,85 @@ class TreeBuilder:
             entry.setdefault("notes", []).append(f"{shaft.Name}: angle swapped to turn as the tree")
         return shaft
 
+    def _verified_loft(self, body: Any, sections: list[dict[str, Any]], plan: LoftPlan,
+                       entry: dict[str, Any]) -> Any:
+        drawn = []
+        for sketch, segments, height in ((sections[0], plan.first, 0.0),
+                                         (sections[1], plan.second, plan.height)):
+            redrawn = section_sketch(sketch, segments, plan.common, height)
+            catia_sketch, _, _ = self._draw(body, redrawn, Frame.from_tree(sketch["plane"]))
+            closing = plan.common.world(segments[0].a[0], segments[0].a[1], height)
+            drawn.append((catia_sketch, self._construction_point(closing)))
+        want = plan.expectation
+        size = math.sqrt(max(want.volume, 1e-9) ** (2 / 3))
+        tol = max(1e-3, FEATURE_REL_TOL * size)
+        part = self.part
+        found = rejected = None
+        for orientation in (1, -1):
+            _force_solid_inwork(part, drawn[0][0])
+            part.InWorkObject = body
+            loft = part.ShapeFactory.AddNewLoft()
+            try:
+                shape = loft.HybridShape
+            except Exception:  # some releases take the sections on the Loft itself
+                shape = loft
+            if not _set_prop(shape, "SectionCoupling", LOFT_VERTEX_COUPLING):
+                raise BuildFailed(f"CATIA refused vertex coupling on '{loft.Name}'")
+            for (catia_sketch, closing), sense in zip(drawn, (1, orientation), strict=True):
+                shape.AddSectionToLoft(part.CreateReferenceFromObject(catia_sketch), sense,
+                                       closing)
+            try:
+                part.UpdateObject(loft)
+                volume, cog = self._volume(body), self._cog(body)
+                found = (volume, cog)
+                if abs(volume - want.volume) <= max(1e-3, FEATURE_REL_TOL * want.volume) \
+                        and distance(cog, want.cog) <= tol:
+                    entry["catia"].append(str(loft.Name))
+                    if orientation < 0:
+                        entry.setdefault("notes", []).append(
+                            f"{loft.Name}: second section reversed to match the tree")
+                    return loft
+            except Exception as error:  # CATIA rejects a twisted, self-crossing loft
+                rejected = error
+            self._delete(loft)
+        got = (f"{found[0]:.4f} mm3 with its centre of gravity at {_fmt(found[1])}"
+               if found else f"nothing CATIA would update ({rejected})")
+        raise BuildFailed(f"the loft gives {got}, expected {want.volume:.4f} mm3 at "
+                          f"{_fmt(want.cog)}, with either section orientation")
+
+    def _verified_rib(self, body: Any, sketch: dict[str, Any], path: list[dict[str, Any]],
+                      entry: dict[str, Any]) -> Any:
+        frame, want = sweep_expectation(sketch, path)
+        profile, _, _ = self._draw(body, sketch, Frame.from_tree(sketch["plane"]))
+        center, _, _ = self._draw(body, path_sketch(path, frame), frame)
+        part = self.part
+        _force_solid_inwork(part, profile)
+        part.InWorkObject = body
+        rib = part.ShapeFactory.AddNewRib(profile, center)
+        entry["catia"].append(str(rib.Name))
+        part.UpdateObject(rib)
+        volume = self._volume(body)
+        if abs(volume - want) > max(1e-3, FEATURE_REL_TOL * want):
+            raise BuildFailed(f"'{rib.Name}' measures {volume:.4f} mm3, expected {want:.4f} "
+                              "mm3 (profile area times the length its centroid travels)")
+        return rib
+
+    def _delete(self, feature: Any) -> None:
+        selection = self.conn.hso
+        selection.Clear()
+        selection.Add(feature)
+        selection.Delete()
+        selection.Clear()
+        self.part.Update()
+
+    def _construction_point(self, point: Vec) -> Any:
+        """A reference to a 3D point in the construction set."""
+        part = self.part
+        created = part.HybridShapeFactory.AddNewPointCoord(*point)
+        self._construction_set().AppendHybridShape(created)
+        part.UpdateObject(created)
+        return part.CreateReferenceFromObject(created)
+
     def _axis_reference(self, catia_sketch: Any, catia_frame, axis_origin: Vec,
                         axis_direction: Vec) -> Any:
         """The revolve axis: the sketch's own H or V axis when the tree's axis is
@@ -392,16 +507,10 @@ class TreeBuilder:
             return part.CreateReferenceFromObject(_sketch_v_direction(catia_sketch))
         if through_origin and _parallel(axis_direction, h):
             return part.CreateReferenceFromObject(_sketch_h_direction(catia_sketch))
-        hsf = part.HybridShapeFactory
-        geoset = self._construction_set()
-        points = []
-        for point in (axis_origin, add(axis_origin, scale(axis_direction, 100.0))):
-            created = hsf.AddNewPointCoord(*point)
-            geoset.AppendHybridShape(created)
-            part.UpdateObject(created)
-            points.append(part.CreateReferenceFromObject(created))
-        line = hsf.AddNewLinePtPt(*points)
-        geoset.AppendHybridShape(line)
+        points = [self._construction_point(point)
+                  for point in (axis_origin, add(axis_origin, scale(axis_direction, 100.0)))]
+        line = part.HybridShapeFactory.AddNewLinePtPt(*points)
+        self._construction_set().AppendHybridShape(line)
         part.UpdateObject(line)
         return part.CreateReferenceFromObject(line)
 

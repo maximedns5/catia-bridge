@@ -11,10 +11,13 @@ from collections import OrderedDict
 from typing import Any
 
 from catia_mcp.tree.geometry import Frame, dot, profile_area_centroid, revolve_expectation, unit
+from catia_mcp.tree.loft import plan_loft
+from catia_mcp.tree.sweep import sweep_expectation
 
-# Milestones 1-2: sketches, extrudes, revolves, combines, holes, mirrors
-# joined back into their source, and splits.
-SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split")
+# Milestones 1, 2 and 4: sketches, extrudes, revolves, combines, holes,
+# mirrors joined back into their source, splits, lofts and sweeps.
+SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
+             "sweep")
 ENTITY_TYPES = ("line", "circle", "arc")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
 COMBINE_OPERATIONS = ("join", "cut", "intersect")
@@ -80,6 +83,10 @@ def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
                 _check_extrude(feature, sketches, bodies, refuse, f"{pid} {where}")
             elif kind == "revolve":
                 _check_revolve(feature, sketches, bodies, refuse, f"{pid} {where}")
+            elif kind == "loft":
+                _check_loft(feature, sketches, bodies, refuse, f"{pid} {where}")
+            elif kind == "sweep":
+                _check_sweep(feature, sketches, bodies, refuse, f"{pid} {where}")
             elif kind == "mirror":
                 following = features[index + 1] if index + 1 < len(features) else None
                 _check_mirror(feature, following, bodies, refuse, f"{pid} {where}")
@@ -155,6 +162,45 @@ def _check_revolve(feature, sketches, bodies, refuse, where) -> None:
                 except (KeyError, ValueError) as error:
                     refuse(f"revolve profile is invalid ({error})", where)
     _check_operation(feature, bodies, refuse, where, "revolve")
+
+
+def _check_loft(feature, sketches, bodies, refuse, where) -> None:
+    sections = feature.get("sections") or []
+    if any(not isinstance(section, str) for section in sections):
+        refuse("lofts to a point are not supported yet", where)
+    elif len(sections) != 2:
+        refuse("lofts through more than two sections are not supported yet"
+               if len(sections) > 2 else "a loft needs two sections", where)
+    elif any(name not in sketches for name in sections):
+        refuse("loft refers to an unknown sketch", where)
+    else:
+        try:
+            plan_loft(sketches[sections[0]], sketches[sections[1]])
+        except (KeyError, ValueError) as error:
+            refuse(f"loft sections are not supported ({error})", where)
+    if feature.get("correspondence_rails"):
+        refuse("lofts with correspondence rails are not supported yet", where)
+    _check_operation(feature, bodies, refuse, where, "loft")
+
+
+def _check_sweep(feature, sketches, bodies, refuse, where) -> None:
+    sketch = sketches.get(feature.get("sketch"))
+    if feature.get("sections"):
+        refuse("sweeps through several sections are not supported yet", where)
+    elif sketch is None:
+        refuse("sweep refers to an unknown sketch", where)
+    elif len(sketch.get("profiles") or []) != 1:
+        refuse("a sweep profile must be a sketch with exactly one profile", where)
+    else:
+        try:
+            sweep_expectation(sketch, feature.get("path") or [])
+        except (KeyError, TypeError, ValueError) as error:
+            refuse(f"sweep is not supported ({error})", where)
+    if feature.get("frenet"):
+        refuse("Frenet sweeps are not supported yet", where)
+    if feature.get("cylindrical_guide"):
+        refuse("sweeps with a cylindrical guide are not supported yet", where)
+    _check_operation(feature, bodies, refuse, where, "sweep")
 
 
 def _check_mirror(feature, following, bodies, refuse, where) -> None:
