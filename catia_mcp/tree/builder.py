@@ -49,6 +49,9 @@ from catia_mcp.tree.geometry import (
     cross,
     distance,
     dot,
+    frame_axes,
+    hole_profile_sketch,
+    hole_segments,
     prism_expectation,
     profile_area_centroid,
     revolve_expectation,
@@ -56,7 +59,6 @@ from catia_mcp.tree.geometry import (
     unit,
 )
 from catia_mcp.tree.preflight import check
-from catia_mcp.tree.reference import frame_axes, hole_profile_sketch, hole_segments
 
 # Origin planes and the sketch frame CATIA gives them (H, V; normal = H x V).
 ORIGIN_PLANES = {

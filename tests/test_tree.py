@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -410,6 +412,13 @@ def test_cli_check_reports_acceptance_and_refusal(tmp_path, capsys):
     path.write_text(json.dumps(refused))
     assert main(["check", str(path)]) == 1
     assert "'sweep' features are not supported yet" in capsys.readouterr().out
+
+
+def test_build_and_check_do_not_need_build123d():
+    """build123d is optional: only `reference` and `--expect auto` use it."""
+    code = ("import sys; sys.modules['build123d'] = None; "
+            "import catia_mcp.tree.builder, catia_mcp.tree.__main__")
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 # ── Milestone 2: revolve, mirror, split ──

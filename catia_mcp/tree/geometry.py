@@ -1,4 +1,4 @@
-"""Pure geometry for the tree: planes, 3-point arcs and sketch profiles.
+"""Pure geometry for the tree: planes, 3-point arcs, sketch and hole profiles.
 
 No CATIA here, so everything can be tested offline. Lengths are mm, sketch
 coordinates are (u, v) on a plane, and world = origin + u*x_dir + v*y_dir with
@@ -268,3 +268,52 @@ def revolve_expectation(frame: Frame, sketch: dict[str, Any], axis_origin: Vec,
         return add(add(axis_origin, along), scale(swing, distance_from_axis))
 
     return RevolveExpectation(volume, at(half), at(-half), min_radius)
+
+
+def hole_segments(feature: dict[str, Any]) -> list[tuple[float, float, float]]:
+    """(radius, top, bottom) along the hole frame's Z, as the contract's
+    revolved profiles give them (d = effective depth). Countersinks have a
+    cone, so they come from hole_profile instead."""
+    r = feature["diameter"] / 2
+    d = feature.get("effective_depth") or feature["depth"]
+    if feature["kind"] == "simple":
+        return [(r, d / 2, -d / 2)] if feature.get("depth") is None else [(r, 0.0, -d)]
+    if feature["kind"] == "counterbore":
+        h = feature["counterbore_depth"]
+        return [(feature["counterbore_diameter"] / 2, d, -h), (r, -h, -d)]
+    raise ValueError(f"no cylinder segments for '{feature['kind']}' holes")
+
+
+def hole_profile(feature: dict[str, Any]) -> list[tuple[float, float]]:
+    """Countersink: the (radius, height) profile revolved about the frame's Z,
+    as build123d's CounterSinkHole builds it: the hole below, a cone of the
+    given angle from the countersink radius at the surface, and clearance of
+    the countersink radius above."""
+    r, big = feature["diameter"] / 2, feature["countersink_diameter"] / 2
+    d = feature.get("effective_depth") or feature["depth"]
+    cone = (big - r) / math.tan(math.radians(feature["countersink_angle"]) / 2)
+    return [(0.0, d), (big, d), (big, 0.0), (r, -cone), (r, -d), (0.0, -d)]
+
+
+def hole_profile_sketch(feature: dict[str, Any], matrix) -> tuple[dict[str, Any], Any, Any]:
+    """The countersink profile as a tree sketch in the frame's (X, Z) plane,
+    with the revolve axis (origin, Z). The sketch normal is X x Z, so its V
+    axis (normal x H) is the frame's Z."""
+    origin, x_dir, z_dir = frame_axes(matrix)
+    points = hole_profile(feature)
+    entities = [{"type": "line", "start": list(points[i]),
+                 "end": list(points[(i + 1) % len(points)]), "id": f"p{i}"}
+                for i in range(len(points))]
+    sketch = {"plane": {"origin": list(origin), "x_dir": list(x_dir),
+                        "normal": list(cross(x_dir, z_dir))},
+              "entities": entities,
+              "profiles": [{"outer": [e["id"] for e in entities], "inner": []}]}
+    return sketch, origin, z_dir
+
+
+def frame_axes(matrix: list[list[float]]):
+    """Origin, X and Z of a 3x4 hole frame whose columns are X, Y, Z, origin."""
+    def column(j: int):
+        return tuple(float(matrix[i][j]) for i in range(3))
+
+    return column(3), column(0), column(2)
