@@ -10,7 +10,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from build123d import Axis, CenterOf, Edge, Face, Keep, Plane, Solid, Wire, extrude, revolve, split
+from build123d import (
+    Axis,
+    CenterOf,
+    Edge,
+    Face,
+    Keep,
+    Plane,
+    Solid,
+    Transition,
+    Wire,
+    extrude,
+    loft,
+    revolve,
+    split,
+    sweep,
+)
 
 from catia_mcp.tree.geometry import (
     Frame,
@@ -70,6 +85,24 @@ def _combine(target: Any, tool: Any, operation: str) -> Any:
     raise ReferenceError(f"unknown operation '{operation}'")
 
 
+def _path_edge(entity: dict[str, Any]) -> Edge:
+    """A sweep path entity, in world coordinates."""
+    kind = entity["type"]
+    if kind == "line":
+        return Edge.make_line(entity["start"], entity["end"])
+    if kind == "arc":
+        return Edge.make_three_point_arc(entity["start"], entity["mid"], entity["end"])
+    raise ReferenceError(f"no reference for sweep path entity '{kind}'")
+
+
+def _add_solid(bodies: dict[str, Any], feature: dict[str, Any], solid: Any) -> None:
+    if feature["operation"] == "new_body":
+        bodies[feature["creates"][0]] = solid
+    else:
+        (target,) = feature["bodies"]
+        bodies[target] = _combine(bodies[target], solid, feature["operation"])
+
+
 def build_part(part: dict[str, Any]) -> Any:
     sketches: dict[str, dict[str, Any]] = {}
     bodies: dict[str, Any] = {}
@@ -99,6 +132,16 @@ def build_part(part: dict[str, Any]) -> Any:
             else:
                 (target,) = feature["bodies"]
                 bodies[target] = _combine(bodies[target], solid, feature["operation"])
+        elif kind == "loft":
+            sections = [sketch_faces(sketches[name])[0] for name in feature["sections"]]
+            _add_solid(bodies, feature, loft(sections, ruled=bool(feature.get("ruled"))))
+        elif kind == "sweep":
+            path = Wire([_path_edge(entity) for entity in feature["path"]])
+            transition = getattr(Transition, feature.get("transition", "Transition.TRANSFORMED")
+                                 .split(".")[-1])
+            solid = sweep(sketch_faces(sketches[feature["sketch"]]), path=path,
+                          transition=transition, is_frenet=bool(feature.get("frenet")))
+            _add_solid(bodies, feature, solid)
         elif kind == "mirror":
             (source,), (created,) = feature["bodies"], feature["creates"]
             plane = feature["plane"]

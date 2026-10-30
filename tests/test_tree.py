@@ -29,7 +29,9 @@ from catia_mcp.tree.geometry import (
     revolve_expectation,
     unit,
 )
+from catia_mcp.tree.loft import loft_expectation, section_loop
 from catia_mcp.tree.preflight import analyze, refusal, truncate
+from catia_mcp.tree.sweep import sweep_expectation
 
 TREES = Path(__file__).parent / "fixtures" / "trees"
 
@@ -47,6 +49,13 @@ CLOSED_FORM_MM3 = {
     "m2_mirror_offset_plane": 2 * 20 * 10 * 10,
     "m2_split_keep_bottom": 70 * 50 * 20,
     "m2_split_tilted_keep_top": 80 * 50 * 20 / 2,
+    "m4_loft_frustum": math.pi * 30 / 3 * (10**2 + 10 * 4 + 4**2),
+    "m4_loft_rect_prismatoid": 30 / 6 * (20 * 10 + 4 * 15 * 8 + 10 * 6),
+    "m4_loft_join_circle_square": 60 * 60 * 10 + 5222.09875885885,  # build123d's loft
+    "m4_loft_cut_frustum": 80 * 50 * 20 - math.pi * 15 / 3 * (12**2 + 12 * 6 + 6**2),
+    "m4_sweep_pipe": math.pi * 3**2 * (40 + 15 * math.pi / 2),
+    "m4_sweep_offset_profile": 3 * 2 * (40 + (15 - 2) * math.pi / 2 + 20),
+    "m4_sweep_cut_groove": 60 * 40 * 20 - math.pi * 2**2 / 2 * (20 + 10 * math.pi / 2),
 }
 
 
@@ -103,12 +112,12 @@ def test_preflight_refuses_with_each_reason_once_and_where():
 
 def test_preflight_does_not_cascade_from_an_unsupported_feature():
     tree = {"version": 1, "parts": [{"id": "/P", "features": [
-        {"type": "loft", "id": "loft1", "creates": ["Body1"]},
+        {"type": "shell", "id": "shell1", "creates": ["Body1"]},
         {"type": "copy", "id": "copy1", "bodies": ["Body1"], "creates": ["Body2"]},
         {"type": "combine", "id": "combine1", "operation": "join",
          "targets": ["Body1"], "tools": ["Body2"]},
     ]}]}
-    assert list(analyze(tree)) == ["'loft' features are not supported yet",
+    assert list(analyze(tree)) == ["'shell' features are not supported yet",
                                    "'copy' features are not supported yet"]
 
 
@@ -192,9 +201,11 @@ class _FakePart:
     """Pads extrude the drawn profile along the fake sketch's normal (or the
     opposite when `pads_reversed`); booleans assume disjoint or nested solids."""
 
-    def __init__(self, pads_reversed=False, turns_reversed=False, split_reversed=False):
+    def __init__(self, pads_reversed=False, turns_reversed=False, split_reversed=False,
+                 lofts_reversed=False):
         self.Name, self.pads_reversed, self.pads = "Part1", pads_reversed, []
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
+        self.lofts_reversed, self.deleted = lofts_reversed, []
         self.MainBody = _Body("Corps principal")
         bodies = [self.MainBody]
         self.Bodies = SimpleNamespace(Add=lambda: bodies.append(_Body(f"Body.{len(bodies) + 1}")) or bodies[-1])
@@ -211,6 +222,8 @@ class _FakePart:
             AddNewPad=self._pad, AddNewShaft=self._shaft,
             AddNewMirror=lambda ref: self._feature("mirror", ref=ref),
             AddNewSplit=lambda ref, side: self._feature("split", ref=ref, SplitSide=side),
+            AddNewLoft=self._loft,
+            AddNewRib=lambda profile, center: self._feature("rib", sketch=profile, center=center),
             AddNewAdd=lambda t: self._boolean("add", t),
             AddNewRemove=lambda t: self._boolean("remove", t),
             AddNewIntersect=lambda t: self._boolean("intersect", t))
@@ -242,6 +255,18 @@ class _FakePart:
         self.pads.append(feature)
         return feature
 
+    def _loft(self):
+        loft = self._feature("loft")
+        sections = []
+        loft.HybridShape = SimpleNamespace(
+            SectionCoupling=1, sections=sections,
+            AddSectionToLoft=lambda ref, sense, closing: sections.append((ref, sense, closing)))
+        return loft
+
+    def delete(self, feature):
+        self.deleted.append(feature)
+        feature.body.solids = []
+
     def _boolean(self, kind, tool):
         target = self.InWorkObject
         feature = SimpleNamespace(Name=f"{kind}.{len(self.pads)}", kind=kind, tool=tool, target=target)
@@ -258,6 +283,10 @@ class _FakePart:
             volume, cog = _mass(obj.body.solids)
             off = dot(tuple(c - o for c, o in zip(cog, origin)), n)
             obj.body.solids = [(2 * volume, tuple(c - off * n[i] for i, c in enumerate(cog)))]
+        elif kind == "loft":
+            obj.body.solids = [self._lofted(obj)]
+        elif kind == "rib":
+            obj.body.solids = [self._ribbed(obj)]
         elif kind == "split":
             origin, h, v = obj.ref
             n = cross(h, v)
@@ -306,6 +335,46 @@ class _FakePart:
         return want.volume, want.cog if turns_positive else want.cog_reversed
 
 
+    def _lofted(self, loft):
+        """Vertex coupling: each drawn section from the vertex at its closing
+        point, the second one run backwards when CATIA's orientation is."""
+        shape = loft.HybridShape
+        assert shape.SectionCoupling == builder_module.LOFT_VERTEX_COUPLING
+        (s1, _, c1), (s2, sense2, c2) = shape.sections
+        common = Frame.from_tree(_tree_sketch(s1)["plane"])
+        loops = []
+        for sketch, closing, sense in ((s1, c1, 1), (s2, c2, sense2)):
+            loop = section_loop(_tree_sketch(sketch), common)
+            if (sense < 0) != (self.lofts_reversed and sketch is s2):
+                loop = [seg.reversed() for seg in reversed(loop)]
+            offset = tuple(c - o for c, o in zip(closing[1], common.origin))
+            at = (dot(offset, common.x_dir), dot(offset, common.y_dir))
+            (start,) = [i for i, seg in enumerate(loop) if math.dist(seg.a, at) < 1e-6]
+            loops.append(loop[start:] + loop[:start])
+        if len(loops[0]) != len(loops[1]):
+            raise RuntimeError("vertex coupling needs as many vertices on each section")
+        height = dot(tuple(a - b for a, b in zip(s2.ref[0], s1.ref[0])), common.normal)
+        want = loft_expectation(common, height, *loops)
+        return want.volume, want.cog
+
+    @staticmethod
+    def _ribbed(rib):
+        origin, h, v = rib.center.ref
+        world = lambda uv: [origin[i] + uv[0] * h[i] + uv[1] * v[i] for i in range(3)]
+        path = [{k: (world(e[k]) if k != "type" else e[k]) for k in e}
+                for e in rib.center.factory.entities]
+        _, volume = sweep_expectation(_tree_sketch(rib.sketch), path)
+        return volume, tuple(origin)
+
+
+def _tree_sketch(sketch):
+    """A fake CATIA sketch's drawing as a tree sketch, in its own frame."""
+    origin, h, v = sketch.ref
+    entities = [dict(e, id=str(i)) for i, e in enumerate(sketch.factory.entities)]
+    return {"plane": {"origin": list(origin), "x_dir": list(h), "normal": list(cross(h, v))},
+            "entities": entities, "profiles": [{"outer": [e["id"] for e in entities], "inner": []}]}
+
+
 def _mass(solids):
     volume = sum(v for v, _ in solids)
     if not volume:
@@ -314,7 +383,10 @@ def _mass(solids):
 
 
 def _builder(part, monkeypatch, active=None):
-    conn = SimpleNamespace(is_3dx=True, app=None,
+    picked = []
+    selection = SimpleNamespace(Clear=picked.clear, Add=picked.append,
+                                Delete=lambda: [part.delete(f) for f in picked])
+    conn = SimpleNamespace(is_3dx=True, app=None, hso=selection,
                            get_active_part=lambda: active() if active else part)
     built = TreeBuilder(conn, log=lambda _: None)
     built.documents = SimpleNamespace(_new_part=lambda name, kind: None)
@@ -407,11 +479,11 @@ def test_cli_check_reports_acceptance_and_refusal(tmp_path, capsys):
     assert main(["check", str(TREES / "m1_holes.json")]) == 0
     assert "Accepted: 1 part(s), 5 feature(s)." in capsys.readouterr().out
     refused = load("m1_holes")
-    refused["parts"][0]["features"].append({"type": "sweep", "id": "sweep1"})
+    refused["parts"][0]["features"].append({"type": "shell", "id": "shell1"})
     path = tmp_path / "refused.json"
     path.write_text(json.dumps(refused))
     assert main(["check", str(path)]) == 1
-    assert "'sweep' features are not supported yet" in capsys.readouterr().out
+    assert "'shell' features are not supported yet" in capsys.readouterr().out
 
 
 def test_build_and_check_do_not_need_build123d():
@@ -480,3 +552,71 @@ def test_a_split_flips_once_when_catia_keeps_the_other_side(monkeypatch):
     (split,) = [f for f in part.pads if getattr(f, "kind", None) == "split"]
     assert split.SplitSide == 0  # asked for bottom (1), flipped after the check
     assert report["parts_detail"][0]["features"][2]["notes"] == ["split.2: side flipped to match the tree"]
+
+
+# ── Milestone 4: loft, sweep ──
+
+
+def _lofts(part):
+    return [f for f in part.pads if getattr(f, "kind", None) == "loft"]
+
+
+def test_a_loft_redraws_its_sections_with_paired_vertices_and_closing_points(monkeypatch):
+    """Circle to square: both sections are drawn with five vertices, coupled
+    from the circle's x_dir point and the square's mid-side."""
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(
+        load("m4_loft_join_circle_square"),
+        {"/M4/CircleSquare": {"volume_mm3": CLOSED_FORM_MM3["m4_loft_join_circle_square"]}},
+        check_editability=False)
+    assert report["success"], report.get("error")
+    (loft,) = _lofts(part)
+    (s1, _, c1), (s2, sense2, c2) = loft.HybridShape.sections
+    assert [len(s.factory.entities) for s in (s1, s2)] == [5, 5]
+    assert c1[1] == pytest.approx((10, 0, 10)) and c2[1] == pytest.approx((4, 0, 40))
+    assert sense2 == 1 and not part.deleted
+
+
+def test_a_twisted_loft_is_rebuilt_once_with_the_second_section_reversed(monkeypatch):
+    part = _FakePart(lofts_reversed=True)
+    report = _builder(part, monkeypatch).build(load("m4_loft_rect_prismatoid"),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    first, second = _lofts(part)
+    assert part.deleted == [first] and second.HybridShape.sections[1][1] == -1
+    assert report["parts_detail"][0]["features"][2]["notes"] == [
+        f"{second.Name}: second section reversed to match the tree"]
+    assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(3700.0)
+
+
+def test_sweeps_are_ribs_along_the_path_drawn_in_its_plane(monkeypatch):
+    # The fake's booleans assume nested solids, so the half-buried groove is
+    # checked for its Rib and its cut, and its volume by the reference.
+    for name, expected in (("m4_sweep_pipe", True), ("m4_sweep_cut_groove", False)):
+        part = _FakePart()
+        tree = load(name)
+        want = {tree["parts"][0]["id"]: {"volume_mm3": CLOSED_FORM_MM3[name]}} if expected else None
+        report = _builder(part, monkeypatch).build(tree, want, check_editability=False)
+        assert report["success"], report.get("error")
+        (rib,) = [f for f in part.pads if getattr(f, "kind", None) == "rib"]
+        assert [e["type"] for e in rib.center.factory.entities] == ["line", "arc"]
+    assert [f.kind for f in part.pads if hasattr(f, "tool")] == ["remove"]
+
+
+def test_preflight_refuses_lofts_and_sweeps_it_cannot_pair_or_follow():
+    tree = load("m4_loft_frustum")
+    features = tree["parts"][0]["features"]
+    features[1]["entities"] = [  # a hexagon turned 30 deg from a hexagon: two twists fit
+        {"type": "line", "start": [8 * math.cos(a), 8 * math.sin(a)],
+         "end": [8 * math.cos(a + math.pi / 3), 8 * math.sin(a + math.pi / 3)], "id": f"h{i}"}
+        for i, a in enumerate(math.pi / 6 + k * math.pi / 3 for k in range(6))]
+    features[1]["profiles"] = [{"outer": [f"h{i}" for i in range(6)], "inner": []}]
+    features[0]["entities"] = [
+        {"type": "line", "start": [8 * math.cos(a), 8 * math.sin(a)],
+         "end": [8 * math.cos(a + math.pi / 3), 8 * math.sin(a + math.pi / 3)], "id": f"g{i}"}
+        for i, a in enumerate(k * math.pi / 3 for k in range(6))]
+    features[0]["profiles"] = [{"outer": [f"g{i}" for i in range(6)], "inner": []}]
+    assert "the sections pair equally well in two ways" in next(iter(analyze(tree)))
+    pipe = load("m4_sweep_pipe")
+    pipe["parts"][0]["features"][1]["path"][1]["end"] = [15, 5, 55]
+    assert "not planar" in next(iter(analyze(pipe)))

@@ -1,0 +1,246 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M4/CircleSquare",
+   "name": "CircleSquare",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30.0,
+        -30.0
+       ],
+       "end": [
+        30.0,
+        -30.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30.0,
+        -30.0
+       ],
+       "end": [
+        30.0,
+        30.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        30.0,
+        30.0
+       ],
+       "end": [
+        -30.0,
+        30.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -30.0,
+        30.0
+       ],
+       "end": [
+        -30.0,
+        -30.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 10.0,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Sketch2",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       10
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 10,
+       "id": "e1"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch3",
+     "name": "Sketch3",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       40
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -4,
+        4
+       ],
+       "end": [
+        -4,
+        -4
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        -4,
+        -4
+       ],
+       "end": [
+        4,
+        -4
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        4,
+        -4
+       ],
+       "end": [
+        4,
+        4
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        4,
+        4
+       ],
+       "end": [
+        -4,
+        4
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "loft",
+     "id": "loft1",
+     "name": "Loft1",
+     "sections": [
+      "sketch2",
+      "sketch3"
+     ],
+     "ruled": false,
+     "operation": "join",
+     "bodies": [
+      "Body1"
+     ]
+    }
+   ]
+  }
+ ]
+}

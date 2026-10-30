@@ -16,6 +16,19 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **Feature tree replay, milestone 4:** `loft` between two sections in
+  parallel planes and `sweep` of one profile along a planar,
+  tangent-continuous path of lines and arcs, for every operation.
+  - Lofts reproduce build123d's own section pairing
+    (`catia_mcp/tree/loft.py`, after OpenCascade's
+    `BRepFill_CompatibleWires`): each section is redrawn with the paired
+    vertices and coupled vertex to vertex from matching closing points.
+    Pairings that depend on OpenCascade's internal vertex order are refused.
+  - Lofts are checked against the ruled solid's volume and centre of
+    gravity, and rebuilt once with the second section reversed if CATIA
+    twisted them. Sweeps are Ribs checked by Pappus.
+  - The reference matches the source build123d models exactly on a
+    circle-to-square loft and a swept pipe.
 - **Feature tree replay, milestone 2:** `revolve` (any axis in the sketch
   plane, any angle, every operation), `mirror` joined straight back into its
   source, `split`, and countersink holes.
@@ -93,6 +106,8 @@ All notable changes to this project are documented here.
   live V5 or 3DEXPERIENCE session and writes a JSON report.
 
 ### Fixed
+- `python -m catia_mcp.tree build` and `check` no longer need build123d,
+  which only the reference uses.
 - Found by the differential harness on 3DEXPERIENCE R428 SP6 in French:
   - `catia_shaft` and `catia_groove` failed on a non-English session. The
     sketch axis was looked up by its English name
