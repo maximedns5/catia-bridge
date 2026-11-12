@@ -34,7 +34,7 @@ active editor.
 
 | Tree feature | CATIA |
 |--------------|-------|
-| `sketch` (`line`, `circle`, 3-point `arc`) | A sketch on the origin plane, or on an offset or equation plane in a `Tree_Construction` geometrical set |
+| `sketch` (`line`, `circle`, 3-point `arc`, `spline`) | A sketch on the origin plane, or on an offset or equation plane in a `Tree_Construction` geometrical set. Splines: see [Spline sketch entities](#spline-sketch-entities) |
 | `extrude` `new_body` | Pad in the part's main body, then in new bodies |
 | `extrude` `join` / `cut` / `intersect` | Pad in a tool body, then Add / Remove / Intersect into the target |
 | `extrude` with `taper` (degrees, build123d's sign: positive narrows the solid), one-sided or symmetric, along the normal or a `direction` | One Multi-sections Solid per loop, from the loop to its 2D offset, as build123d builds it: inner loops get the opposite offset (holes widen when the outer loop shrinks) and are removed, the pieces are joined |
@@ -60,13 +60,14 @@ hollowing it), lofts through more than two sections, to a point, between
 sections that are not parallel or with correspondence rails, Frenet sweeps,
 sweeps along 3D paths or paths with corners, tapers whose offset changes the
 profile's topology (a loop collapsing or crossing itself or another) or that
-meet an arc at a corner without tangency, and parts placed by a parent
-location (`part.placement`). For those, `catia_mcp/tree/placement.py` is ready
-to move every 3D coordinate of a part's features into the world (sketch
-planes, revolve axes, sweep paths, hole frames, mirror and split planes, and
-any anchor point or direction), but it is not used until the contract says
-whether a placed part's features are in its own frame or already in world
-coordinates.
+meet an arc at a corner without tangency, `spline` entities in loft sections,
+sweep profiles and sweep paths (only extrudes and revolves take spline
+sketches), and parts placed by a parent location (`part.placement`). For
+those, `catia_mcp/tree/placement.py` is ready to move every 3D coordinate of a
+part's features into the world (sketch planes, revolve axes, sweep paths, hole
+frames, mirror and split planes, and any anchor point or direction), but it
+is not used until the contract says whether a placed part's features are in
+its own frame or already in world coordinates.
 
 ## How the build stays faithful
 
@@ -84,6 +85,7 @@ coordinates.
 - **Taper checks:** build123d tapers by lofting each loop to its offset by `-|vector|·tan(taper)` (sharp corners between lines, concentric arcs), the opposite offset for inner loops. `catia_mcp/tree/extrude.py` builds the same offsets with each vertex paired with its own offset, so every section along the extrude is an exact offset and its area is quadratic: the volume is the prismatoid `h/6·(A0 + 4·Am + A1)` (on the `m5_*` fixtures, build123d matches the closed forms to 1e-9, and the plan's centre of gravity to 1e-5 mm). Each loft is checked as a loft, and the whole extrude against the prismatoid's volume and centre of gravity. A Pad and a Draft would keep the taper angle editable, but need a reference to every side face and a pulling direction whose sign CATIA's API does not document, and build123d itself uses this loft whenever the profile has holes or the taper is negative.
 - **Oblique checks:** the Pad must give the profile's area times the height (`|direction·normal|`) and a centre of gravity half the vector away. If the first volume shows CATIA measured the length along the normal rather than the line, the length becomes the height, once; a reversed Pad is flipped once.
 - **Sweep checks:** a sweep is checked by Pappus: the profile's area times the length its centroid travels along the path.
+- **Spline checks:** see below.
 - **Combine checks:** a combine is checked against what its operation can give.
 - **Fillets, chamfers and shells** (`catia_mcp/tree/anchors.py`, `catia_mcp/tree/dressup.py`): the tree names edges and faces by geometry, as they are when the feature applies, never by index.
   - **Enumeration:** the body's edges or faces come from the localized topology search (`Topologie.Arête,sel` in French). On a body with booleans that search also returns the cells of the tool bodies nested under them: after a Remove, the tool body's own edges come back with the final ones, and a tool edge lying on the final shape (the floor of a blind pocket) then matches an anchor twice.
@@ -94,6 +96,62 @@ coordinates.
   - **Checks:** the volume must change, within bounds (a fillet removes or adds at most 3 r² per mm of its chains' edges, a chamfer d1·d2/2; an inside shell leaves at most its area times the thickness). The strict check is the per-part volume against build123d, which applies the same anchors with the same matching.
   - **Asymmetric chamfers:** on straight edges both orientations give the same volume. The chamfer is built both ways round and keeps the one whose centre of gravity, along the reference face's normal, sits where `distance` on that face puts it: lower when `distance2` < `distance`, as the cut (or added) prism then lies nearer that face. The part's centre of gravity is then also compared with build123d's.
 - **No other retries:** the first failure stops the build with its part and feature, and the document may then hold a partial model.
+
+## Spline sketch entities
+
+A `spline` is an exact rational NURBS: `degree`, 2D `poles`, `weights`,
+`knots` (the full knot vector, multiplicities expanded) and `periodic`.
+`catia_mcp/tree/nurbs.py` reads it in pure Python (no build123d or numpy at
+build time) into rational Bezier spans by knot insertion. For periodic curves
+it accepts the knots in any of three forms: textbook (`len(knots) =
+len(poles) + degree + 1`), OpenCascade's flat knot sequence (the first poles
+wrap around), or one period of knots, first and last one period apart.
+
+- **Areas, centroids and revolves** use a polygon whose chords stay within
+  1e-7 of the curve's size (at least 8 chords per span). The area error is
+  under 1e-6 relative, against OpenCascade's in the tests, two orders below
+  the part tolerance.
+- **Circles and ellipses are drawn exactly.** A degree-2 rational spline
+  whose spans are all elliptical arcs (standard-form weight below 1) of the
+  same ellipse, turning the same way, is drawn as one `CreateClosedCircle`,
+  `CreateCircle`, `CreateClosedEllipse` or `CreateEllipse`. This covers
+  build123d's `Ellipse`, `EllipticalArc` and circles traced as splines. The
+  feature check is the usual one.
+- **Degree-1 splines** are drawn as lines.
+- **Other splines are approximated.** CATIA's Automation has no call that
+  takes poles, weights and knots. The curve is drawn as sketch splines
+  (`CreateControlPoint` + `CreateSpline`) through points on it: one spline
+  per smooth piece (split at corners), and a closed curve as two halves.
+  Between two points the tangent turns by at most 2°, with at least 4
+  intervals per span. Even straight chords between those points enclose the
+  area to about turn²/12 (2e-4 relative for a round loop); an interpolating
+  spline through them errs as turn⁴ (OpenCascade's interpolation, in the
+  tests, is 20 times inside the chord bound and under 1e-5).
+  - The feature's `notes` say how many sketch splines and points were used.
+  - The pad or revolve volume check, and the part check, allow the bound on
+    the area between the curve and the chords, swept: times the pad length,
+    or times the angle and the profile's largest radius. The part report
+    gives the total as `spline_allowance_mm3`. A spline CATIA misdraws (one
+    through a quarter of the points, in the tests) still fails its check.
+- **Refused:** splines in loft sections (the vertex pairing reproduces
+  OpenCascade's for lines and arcs only), in sweep profiles (the Rib check
+  has no allowance yet) and in sweep paths.
+- **Reference:** build123d builds the same curve as an OpenCascade B-spline
+  (re-knotted clamped, exactly). Its volume is integrated with Gauss-Kronrod,
+  because OpenCascade's default integration is 1.7e-3 off on an extruded
+  ellipse. Its centre of gravity uses the default integration and can be off
+  by about 1e-3 mm on spline faces.
+
+Not yet validated live:
+- That `CreateSpline` passes through its control points. The Automation
+  help calls them poles. If CATIA used them as poles, the curve would move by
+  about twice the chord bound, which the checks may not catch: check one
+  spline's shape by eye.
+- Passing the control points to `CreateSpline` as a Python tuple of COM
+  objects.
+- The argument order of `CreateClosedEllipse(cx, cy, majorX, majorY,
+  majorRadius, minorRadius)` and `CreateEllipse(..., start, end)`, and that
+  the angles are eccentric angles, counter-clockwise from the major axis.
 
 ## Live status
 
@@ -112,7 +170,8 @@ each path.
 - **Milestone 5** (`m5_*`):
   - tapers: a rectangle, a ring joined onto a block (its hole widens), a symmetric slot on a tilted plane with a negative taper, a tapered pocket cut downwards, and an oblique taper on the YZ plane;
   - oblique extrudes: a rectangle with a hole, and a symmetric cut whose distance is the direction's height;
-  - a block placed by a rotation and a translation, with a split and a through hole. Tests also place eleven earlier fixtures and check that the reference volume stays and its centre of gravity moves with the placement.
+  - a block placed by a rotation and a translation, with a split and a through hole, which the preflight refuses for now. Tests place it and eleven earlier fixtures through `place_part` and check that the reference volume stays and its centre of gravity moves with the placement.
+- **Splines** (`m6_*`): a rotated ellipse with a round hole on an offset plane, a free-form periodic cubic padded backwards on `-XZ`, a clamped rational cubic revolved about the sketch's V axis, and a prolate spheroid (half an ellipse, two spans) revolved as a cut.
 
 The build123d reference reproduces the source build123d models exactly on
 the parts these milestones cover, such as a revolved shaft, a split housing,

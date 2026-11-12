@@ -1,0 +1,134 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M6/SplineRevolve",
+   "name": "SplineRevolve",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "spline",
+       "degree": 3,
+       "poles": [
+        [
+         0,
+         20
+        ],
+        [
+         6,
+         22
+        ],
+        [
+         12,
+         14
+        ],
+        [
+         4,
+         8
+        ],
+        [
+         11,
+         2
+        ],
+        [
+         0,
+         0
+        ]
+       ],
+       "weights": [
+        1,
+        0.8,
+        1.5,
+        1,
+        0.7,
+        1
+       ],
+       "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.3,
+        0.6,
+        1,
+        1,
+        1,
+        1
+       ],
+       "periodic": false,
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        0,
+        0
+       ],
+       "end": [
+        0,
+        20
+       ],
+       "id": "e2"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "revolve",
+     "id": "revolve1",
+     "name": "Revolve1",
+     "sketch": "sketch1",
+     "angle": 360,
+     "axis": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "direction": [
+       0,
+       1,
+       0
+      ]
+     },
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

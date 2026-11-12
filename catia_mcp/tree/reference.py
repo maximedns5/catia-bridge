@@ -47,6 +47,7 @@ from catia_mcp.tree.geometry import (
     norm,
     scale,
 )
+from catia_mcp.tree.nurbs import Nurbs, clamped
 from catia_mcp.tree.placement import place_part
 
 
@@ -68,7 +69,17 @@ def _edge(entity: dict[str, Any], frame: Frame) -> Edge:
         )
     if kind == "circle":
         return Edge.make_circle(entity["radius"], _plane(frame, frame.world(*entity["center"])))
+    if kind == "spline":
+        return _spline_edge(entity, frame)
     raise ReferenceError(f"no reference for sketch entity '{kind}'")
+
+
+def _spline_edge(entity: dict[str, Any], frame: Frame) -> Edge:
+    """The exact rational NURBS as an OpenCascade B-spline edge: the same
+    curve, re-knotted clamped (nurbs.clamped), with its poles in world
+    coordinates."""
+    degree, poles, weights, knots = clamped(Nurbs.from_entity(entity))
+    return Edge.make_bspline([frame.world(u, v) for u, v in poles], knots, degree, weights)
 
 
 def _wire(ids: list[str], by_id: dict[str, Any], frame: Frame) -> Wire:
@@ -237,8 +248,21 @@ def build_part(part: dict[str, Any]) -> Any:
 
 def properties(solid: Any) -> dict[str, Any]:
     cog = solid.center(CenterOf.MASS)
-    return {"volume_mm3": float(solid.volume), "area_mm2": float(solid.area),
+    return {"volume_mm3": _volume(solid), "area_mm2": float(solid.area),
             "cog_mm": [float(cog.X), float(cog.Y), float(cog.Z)]}
+
+
+def _volume(solid: Any) -> float:
+    """The volume by adaptive Gauss-Kronrod integration. OpenCascade's
+    default integration is exact on planes, cylinders and cones but not on
+    B-spline faces (spline sketches): 1.7e-3 off on an extruded ellipse, where
+    this agrees with the closed form to 1e-10."""
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+
+    props = GProp_GProps()
+    BRepGProp.VolumePropertiesGK_s(solid.wrapped, props, 1e-9)
+    return float(props.Mass())
 
 
 def expected(tree: dict[str, Any]) -> dict[str, dict[str, Any]]:

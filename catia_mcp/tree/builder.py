@@ -36,6 +36,10 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
   (catia_mcp/tree/dressup.py), one CATIA feature per tree feature, checked by
   bounds on the volume change; an asymmetric chamfer is oriented by its centre
   of gravity, and its part's centre of gravity is compared with the reference.
+- Spline sketch entities (exact rational NURBS, catia_mcp/tree/nurbs.py) are
+  drawn exactly when they are circles or ellipses, else as sketch splines
+  through sampled points: the feature's notes say so, and its volume checks,
+  and the part's, allow the area between the curve and those points' chords.
 - Nothing else is retried: the first failure stops the part and is reported
   with its feature, and the document may then hold a partial model.
 """
@@ -66,6 +70,7 @@ from catia_mcp.tree.geometry import (
     Frame,
     Vec,
     add,
+    approximation_area,
     cross,
     distance,
     dot,
@@ -79,6 +84,7 @@ from catia_mcp.tree.geometry import (
     unit,
 )
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
+from catia_mcp.tree.nurbs import Nurbs, drawing
 from catia_mcp.tree.placement import place_part
 from catia_mcp.tree.preflight import check
 from catia_mcp.tree.sweep import path_sketch, sweep_expectation
@@ -117,6 +123,9 @@ class PartRecord:
     features: list[dict[str, Any]] = field(default_factory=list)
     editable: bool | None = None
     editability_note: str = ""
+    # What approximated splines may move the volume by (mm3), added to the
+    # part check's tolerance.
+    spline_allowance_mm3: float = 0.0
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -184,6 +193,7 @@ class TreeBuilder:
         else:
             self.documents._new_part(record.name, "auto")
         self.part = self.conn.get_active_part()
+        self.record = record
         record.catia_name = str(self.part.Name)
         self.main_body_used = False
         self.bodies: dict[str, Any] = {}
@@ -217,7 +227,7 @@ class TreeBuilder:
 
     def _check_part_volume(self, record: PartRecord) -> None:
         want, got = record.expected_volume_mm3, record.volume_mm3
-        if abs(got - want) > max(1e-3, PART_REL_TOL * abs(want)):
+        if abs(got - want) > max(1e-3, PART_REL_TOL * abs(want)) + record.spline_allowance_mm3:
             raise BuildFailed(
                 f"the part measures {got:.4f} mm3 in CATIA, expected {want:.4f} mm3",
                 record.id)
@@ -407,7 +417,10 @@ class TreeBuilder:
         frame = Frame.from_tree(sketch["plane"])
         area, centroid = profile_area_centroid(sketch)
         want_volume, want_cog = prism_expectation(frame, area, centroid, dist, symmetric)
-        catia_sketch, along, _ = self._draw(body, sketch, frame)
+        catia_sketch, along, _ = self._draw(body, sketch, frame, entry)
+        approximation = approximation_area(sketch)
+        allowance = approximation * abs(dist) * (2 if symmetric else 1)
+        self.record.spline_allowance_mm3 += allowance
         part = self.part
         _force_solid_inwork(part, catia_sketch)
         part.InWorkObject = body
@@ -421,8 +434,8 @@ class TreeBuilder:
         part.UpdateObject(pad)
         volume, cog = self._volume(body), self._cog(body)
         size = math.sqrt(area) + abs(dist)
-        tol = max(1e-3, FEATURE_REL_TOL * size)
-        if abs(volume - want_volume) > max(1e-3, FEATURE_REL_TOL * want_volume):
+        tol = max(1e-3, FEATURE_REL_TOL * size) + approximation / area * size
+        if abs(volume - want_volume) > max(1e-3, FEATURE_REL_TOL * want_volume) + allowance:
             raise BuildFailed(
                 f"'{pad.Name}' measures {volume:.4f} mm3, expected {want_volume:.4f} mm3: "
                 "the sketch profile was not read as drawn")
@@ -519,7 +532,10 @@ class TreeBuilder:
                         axis_direction: Vec, angle: float, entry: dict[str, Any]) -> Any:
         frame = Frame.from_tree(sketch["plane"])
         want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
-        catia_sketch, _, catia_frame = self._draw(body, sketch, frame)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry)
+        approximation = approximation_area(sketch)
+        allowance = approximation * math.radians(angle) * want.max_radius
+        self.record.spline_allowance_mm3 += allowance
         part = self.part
         axis_ref = self._axis_reference(catia_sketch, catia_frame, axis_origin, axis_direction)
         _force_solid_inwork(part, catia_sketch)
@@ -533,8 +549,8 @@ class TreeBuilder:
         part.UpdateObject(shaft)
         volume, cog = self._volume(body), self._cog(body)
         size = math.sqrt(max(want.volume, 1e-9) ** (2 / 3))
-        tol = max(1e-3, FEATURE_REL_TOL * size)
-        if abs(volume - want.volume) > max(1e-3, FEATURE_REL_TOL * want.volume):
+        tol = max(1e-3, FEATURE_REL_TOL * size) + allowance / max(want.volume, 1e-9) * size
+        if abs(volume - want.volume) > max(1e-3, FEATURE_REL_TOL * want.volume) + allowance:
             raise BuildFailed(
                 f"'{shaft.Name}' measures {volume:.4f} mm3, expected {want.volume:.4f} mm3 "
                 "(Pappus): the profile or the axis was not read as the tree gives them")
@@ -749,10 +765,12 @@ class TreeBuilder:
         data = call_fill_array(self.conn.app, sketch, "GetAbsoluteAxisData", 9)
         return tuple(data[0:3]), unit(tuple(data[3:6])), unit(tuple(data[6:9]))
 
-    def _draw(self, body: Any, sketch: dict[str, Any], frame: Frame):
+    def _draw(self, body: Any, sketch: dict[str, Any], frame: Frame,
+              entry: dict[str, Any] | None = None):
         """Draw the tree sketch in a new CATIA sketch of `body`. Returns the
         sketch, +1 / -1 for whether its normal agrees with the tree's, and the
-        CATIA sketch frame (origin, H, V)."""
+        CATIA sketch frame (origin, H, V). Approximated splines are noted in
+        `entry`."""
         ref, known = self._support(frame)
         catia_sketch = body.Sketches.Add(ref)
         origin, h, v = self._sketch_frame(catia_sketch, known)
@@ -778,6 +796,10 @@ class TreeBuilder:
             elif kind == "circle":
                 cu, cv = local(entity["center"])
                 factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
+            elif kind == "spline":
+                note = _draw_spline(factory, entity, local)
+                if note and entry is not None:
+                    entry.setdefault("notes", []).append(note)
             else:
                 arc = Arc.through(local(entity["start"]), local(entity["mid"]), local(entity["end"]))
                 factory.CreateCircle(arc.center[0], arc.center[1], arc.radius, arc.start, arc.end)
@@ -825,6 +847,43 @@ class TreeBuilder:
         record.editability_note = (
             f"{pad.Name} length {original:g} -> {original + 1:g} -> {original:g} mm: volume "
             f"{before:.1f} -> {moved:.1f} -> {restored:.1f} mm3")
+
+
+def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
+    """Draw a tree spline, read in the CATIA sketch's own frame (an isometry
+    of the tree's, so a conic stays the same conic). Returns a note when it is
+    approximated. Factory2D conventions: CreateClosedEllipse(cx, cy, major
+    direction x, y, major radius, minor radius) and CreateEllipse(..., start,
+    end) with counter-clockwise angles from the major axis, as CreateCircle
+    takes them; CreateSpline takes the control points it passes through. Not
+    yet validated live."""
+    plan = drawing(Nurbs.from_entity(entity, transform=local))
+    for item in plan.items:
+        kind = item[0]
+        if kind == "line":
+            (u0, v0), (u1, v1) = item[1], item[2]
+            factory.CreateLine(u0, v0, u1, v1)
+        elif kind == "circle":
+            (cu, cv), r = item[1], item[2]
+            factory.CreateClosedCircle(cu, cv, r)
+        elif kind == "arc":
+            (cu, cv), r, start, end = item[1:]
+            factory.CreateCircle(cu, cv, r, start, end)
+        elif kind == "ellipse":
+            (cu, cv), (mx, my), a, b = item[1:]
+            factory.CreateClosedEllipse(cu, cv, mx, my, a, b)
+        elif kind == "elliptic_arc":
+            (cu, cv), (mx, my), a, b, start, end = item[1:]
+            factory.CreateEllipse(cu, cv, mx, my, a, b, start, end)
+        else:
+            points = tuple(factory.CreateControlPoint(u, v) for u, v in item[1])
+            factory.CreateSpline(points)
+    if plan.exact:
+        return None
+    count = sum(len(item[1]) for item in plan.items)
+    return (f"spline {entity.get('id', '?')}: approximated by {len(plan.items)} CATIA sketch "
+            f"spline(s) through {count} points (chords within {plan.deviation_area:.2g} mm2 "
+            "of the curve)")
 
 
 def _sketch_h_direction(sketch: Any) -> Any:
