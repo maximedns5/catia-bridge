@@ -157,8 +157,39 @@ Not yet validated live:
 
 ## Live status
 
-Not yet run against CATIA. `tests/fixtures/trees/` holds synthetic trees for
-each path.
+**First live run: 3DEXPERIENCE R2026x (R428 SP6, cloud), French, student
+Mechanical & Shape Designer role.** 29 of the 40 builds (38 fixtures and two
+sample files) matched build123d to the fourth decimal on the first run:
+- sketches on origin, offset, equation and reversed planes, arcs, holes of
+  the three kinds;
+- revolves about every axis kind, mirrors, splits;
+- shells open at one and at two faces;
+- frustum lofts (circle sections) and a tapered ring;
+- the three sweeps (`AddNewRib` with a path sketch);
+- oblique extrudes (`SetDirection` on a 3D line);
+- ellipse and spline sketches;
+- a split housing.
+
+The other 11 failed for three reasons, fixed since:
+- **Fillets and chamfers, wrong cells kept.** The body search also returns
+  each sketch's own wire edges (`Selection_WireREdge`), which are now dropped.
+  Those are the extra cells first taken for the tool body's: a block gives its
+  12 edges plus its sketch's 4, a Remove 24 plus 8. Every remaining cell names
+  the last feature's result, but by CATIA's internal, English name (`Pad.1`,
+  `Remove.1`, `Add.1`) while the feature shows as `Extrusion.1` or
+  `Enlever.1`. A single such result is now taken as the last feature's.
+- **Fillets and chamfers, no edge points.** 3DEXPERIENCE's curve measurable
+  has no `GetPointsOnCurve`. Edges are now matched by their length and their
+  distance to construction points at the anchor's sample points
+  (`DistanceMinTo`, which works).
+- **Lofts with polygon sections.** `AddSectionToLoft` refused a 3D point as the
+  closing point where two sketch elements meet: a polygon corner, or a circle
+  split into arcs. It took one on a whole circle. The closing point is now the
+  section sketch's own vertex there, found by a topology search, then a 3D
+  point, then CATIA's own choice; the volume and centre of gravity decide.
+
+These three fixes have not been run live yet. `tests/fixtures/trees/` holds
+synthetic trees for each path.
 - **Milestone 1** (`m1_*`): an offset plane, a reversed-normal plane, arcs with a negative distance, join, cut and intersect, the three hole kinds, and a tilted plane (the equation-plane path).
 - **Milestone 2** (`m2_*`):
   - revolves about an axis off the sketch origin (3D line), about the sketch's V axis, and about its H axis with a partial cut;
@@ -180,23 +211,19 @@ the parts these milestones cover, such as a revolved shaft, a split housing,
 a circle-to-square loft, a swept pipe, a plate with filleted corners and a
 chamfered top, and an open-top shell.
 
-Not yet validated live: the Multi-sections Solid calls (`AddNewLoft`,
-`HybridShape.SectionCoupling` = 4 for vertex coupling, `AddSectionToLoft` with
-a closing point and an orientation of 1 or -1), deleting a twisted loft
-through the selection, `AddNewRib` with a path sketch as its centre
-curve, `Prism.SetDirection` with a 3D line (and whether CATIA then measures
-the Pad's length along the line or along the sketch normal), and lofts drawn
-on sketches in equation planes for tilted parts.
+Validated live on R428: `AddNewLoft` with vertex coupling and a closing point
+on a whole circle, `AddNewRib` with a path sketch as its centre curve,
+`Prism.SetDirection` with a 3D line, `AddNewShell` with faces matched by area
+and centre of gravity. Not yet: closing points on a sketch vertex, deleting a
+twisted loft through the selection, and lofts drawn on sketches in equation
+planes for tilted parts.
 
 Not yet validated live, for fillets, chamfers and shells:
-- the cause of the tool body cells and the ownership filter: whether
-  DisplayName carries a `<feature>_ResultOUT` context on 3DEXPERIENCE R428
-  and V5, and whether it names the body's last feature as `Shapes.Item(Count).Name`
-  spells it (French names included);
+- the ownership filter on V5, where the result names may differ;
 - `CreateReferenceFromBRepName` with labels made from DisplayName, and the
   `MFBRepVersion_CXR15` flag on R428;
-- edge measures on 3DEXPERIENCE (`GetPointsOnCurve` on the curve measurable,
-  the length unit) and face measures (area, `GetCOfG`);
+- edge matching on 3DEXPERIENCE by distance to construction points, and the
+  length unit of the curve measurable (told apart from the anchors' lengths);
 - the enum values (tangency propagation, two-length mode, reverse orientation)
   when the type library cannot be read, `AddObjectToFillet`,
   `AddElementToChamfer`, `Chamfer.Orientation`, `AddFaceToRemove`;

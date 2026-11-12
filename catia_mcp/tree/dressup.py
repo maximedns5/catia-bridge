@@ -5,17 +5,24 @@ A tree fillet, chamfer or shell names its edges and faces by anchors
 
 1. Enumerates the edges or faces of the body's final shape with the
    repository's localized topology search (references.search_final_topology).
-2. Keeps only the cells the body's last feature owns. On a body with booleans
-   the search also returns the cells of the tool bodies nested under them:
-   after a Remove, the tool body's own result comes back alongside the final
-   shape (the "tool body cells after Remove" bug). Each cell's
+2. Drops the sketches' own wire cells (Selection_WireREdge, WireFVertex):
+   the body search returns the edges and vertices of every sketch in the
+   body too (live on R428: a block gives its 12 edges plus its sketch's 4).
+   Those were the extra cells first taken for the tool body's after a
+   Remove. Then keeps the cells the body's last feature owns: each cell's
    Reference.DisplayName ends with the result it belongs to
-   ("...;Remove.1_ResultOUT;Z0;G1234)"); cells naming another feature are
-   dropped. Not yet validated live, so the filter is switchable (auto, strict,
-   off) and the census of what it saw goes into the build report.
-3. Measures every kept cell (an edge's length and start, middle and end
-   points; a face's area and centre of gravity) and matches each anchor to
-   exactly one cell, with the contract's tolerances.
+   ("...;Remove.1_ResultOUT;Z0;G1234)"), named by CATIA's internal,
+   English feature name (Pad.1 for a pad shown as Extrusion.1 in French), so
+   when no cell names the displayed name and they all name one same result,
+   that result is the last feature's. The filter is switchable (auto,
+   strict, off) and its census goes into the build report.
+3. Measures every kept cell and matches each anchor to exactly one cell,
+   with the contract's tolerances. V5: an edge's length and start, middle
+   and end points. 3DEXPERIENCE has no GetPointsOnCurve (R428): an edge's
+   length, then, for the edges of an anchor's length only, its distance to
+   construction points at the anchor's sample points (the contract's test);
+   the matched edge's ends are the anchor's. A face: area and centre of
+   gravity.
 4. Builds the references from the cells' DisplayName with
    Part.CreateReferenceFromBRepName (also unvalidated live), checks that each
    resolved reference still measures as the anchor says, and falls back to
@@ -48,6 +55,7 @@ from catia_mcp.tree.anchors import (
     EdgeCandidate,
     FaceCandidate,
     edge_from_points,
+    edge_length_tol,
     match_edge,
     match_edges,
     match_face,
@@ -65,6 +73,8 @@ OWNERSHIP_ENV = "CATIA_MCP_TOPOLOGY_OWNERSHIP"
 # result context, append these flags. Undocumented; MFBRepVersion may vary.
 BREP_FLAGS = ";WithPermanentBody;WithoutBuildError;WithSelectingFeatureSupport;MFBRepVersion_CXR15)"
 _CONTEXT = re.compile(r";([^;()]+?)_ResultOUT(?=[;)])")
+# A sketch's own cells, which the body search returns with the solid's.
+_WIRE = re.compile(r"^(Selection_)?Wire")
 # Declared order of the enums (CAA V5 help), used when the type library
 # cannot be read.
 FALLBACK_ENUMS = {
@@ -78,6 +88,10 @@ FALLBACK_ENUMS = {
 # per mm of a filleted edge (r^2 (cot(a/2) - (pi - a)/2), 0.215 at 90 deg).
 FILLET_SECTION_MAX = 3.0
 M_TO_MM, M2_TO_MM2 = 1000.0, 1e6
+
+
+def is_sketch_wire(display_name: str) -> bool:
+    return bool(_WIRE.match(display_name or ""))
 
 
 def context_of(display_name: str) -> str | None:
@@ -138,6 +152,10 @@ class DressUps:
         self.ownership = ownership_mode(ownership)
         self.brep_references = brep_references
         self._enums: dict[str, dict[str, int]] = {}
+        # 3DEXPERIENCE: what an edge length reads in (m or mm), and the
+        # construction points at anchor samples, by position.
+        self._length_factor = 1.0
+        self._sample_points: dict[tuple[float, ...], Any] = {}
 
     # ── Features ──
 
@@ -145,8 +163,17 @@ class DressUps:
         """The tangent chains of the feature's edges, and a reference to one
         anchored edge of each."""
         everything = self.edge_candidates(body, entry)
+        if self.builder.conn.is_3dx:
+            self._scale_lengths(everything, feature["edges"])
         matched = self._match(feature["edges"], everything, match_edges)
-        chains = tangent_chains(matched, everything)
+        if self.builder.conn.is_3dx:
+            # Only the matched edges' ends are known (the anchors'): chains
+            # are found among them, and propagation adds the rest.
+            matched = [self._from_anchor(candidate, anchor)
+                       for candidate, anchor in zip(matched, feature["edges"], strict=True)]
+            chains = tangent_chains(matched, matched)
+        else:
+            chains = tangent_chains(matched, everything)
         refs = [self._edge_reference(candidate, anchor, body, entry)
                 for candidate, anchor in self._anchors_of(representatives(matched, chains),
                                                           matched, feature["edges"])]
@@ -273,16 +300,26 @@ class DressUps:
     def owned_cells(self, body: Any, kind: str, entry: dict[str, Any]) -> list[Cell]:
         """The cells of the body's last feature, with the census logged and
         recorded in the entry."""
-        found = self.cells(body, kind)
+        everything = self.cells(body, kind)
+        found = [cell for cell in everything if not is_sketch_wire(cell.display_name)]
         last = self.last_feature_name(body)
         census = Counter(cell.context or "<no context>" for cell in found)
-        record = {"kind": kind, "found": len(found), "last_feature": last,
+        record = {"kind": kind, "found": len(everything),
+                  "sketch_wires": len(everything) - len(found), "last_feature": last,
                   "contexts": dict(census), "filter": self.ownership}
         kept = found
         if self.ownership != "off":
             owned = [cell for cell in found if last is not None and cell.context == last]
+            contexts = set(census)
             if owned:
                 kept = owned
+            elif len(contexts) == 1 and "<no context>" not in contexts:
+                # CATIA names results by its internal, English feature name
+                # (Pad.1 for Extrusion.1): one result for every cell is the
+                # last feature's.
+                record["note"] = (f"every {kind.lower()} names the result "
+                                  f"'{next(iter(contexts))}', taken as the last feature "
+                                  f"'{last}' under its internal name")
             else:
                 why = (f"no {kind.lower()} found names the body's last feature '{last}' "
                        f"(contexts seen: {dict(census)})")
@@ -291,7 +328,8 @@ class DressUps:
                 record["note"] = f"filter not applied: {why}"
         record["kept"] = len(kept)
         entry.setdefault("topology", []).append(record)
-        self.builder.log(f"    {kind.lower()} cells: {len(found)} found, {len(kept)} kept "
+        self.builder.log(f"    {kind.lower()} cells: {len(everything)} found, "
+                         f"{record['sketch_wires']} sketch wire(s) dropped, {len(kept)} kept "
                          f"(last feature {last}, contexts {dict(census)})")
         if not kept:
             raise DressUpFailed(f"the topology search found no {kind.lower()} on the body")
@@ -318,6 +356,11 @@ class DressUps:
         return candidates
 
     def edge_candidate(self, reference: Any, handle: Any = None) -> EdgeCandidate:
+        if self.builder.conn.is_3dx:
+            return EdgeCandidate(handle if handle is not None else reference,
+                                 self._edge_length_raw(reference) * self._length_factor,
+                                 self._distance_to(reference),
+                                 label=getattr(handle, "display_name", ""))
         length, start, mid, end, center = self._edge_geometry(reference)
         return edge_from_points(handle if handle is not None else reference, length, start, mid,
                                 end, center=center, label=getattr(handle, "display_name", ""))
@@ -327,7 +370,60 @@ class DressUps:
         return FaceCandidate(handle if handle is not None else reference, area, centroid,
                              getattr(handle, "display_name", ""))
 
+    def _scale_lengths(self, candidates: list[EdgeCandidate], anchors) -> None:
+        """3DEXPERIENCE edge lengths read without points to tell m from mm:
+        keep the unit under which more anchors find an edge of their length."""
+        def fits(factor: float) -> int:
+            return sum(any(abs(c.length * factor - float(a["length"])) <= edge_length_tol(
+                float(a["length"])) for c in candidates) for a in anchors)
+
+        factor = max((1.0, M_TO_MM), key=fits)
+        for candidate in candidates:
+            candidate.length *= factor
+        self._length_factor = factor
+
+    def _distance_to(self, reference: Any):
+        """The distance (mm) from a point to the edge, measured against a
+        construction point there; only called for edges of an anchor's length."""
+        def measure(point: Vec) -> float:
+            return self._point_distance(reference, point)
+
+        return measure
+
+    def _sample_point(self, point: Vec) -> Any:
+        key = tuple(round(float(c), 9) for c in point)
+        if key not in self._sample_points:
+            self._sample_points[key] = self.builder._construction_point(key)
+        return self._sample_points[key]
+
+    @staticmethod
+    def _from_anchor(candidate: EdgeCandidate, anchor: dict[str, Any]) -> EdgeCandidate:
+        """A matched edge with the anchor's ends, which it fits within the
+        contract's tolerance."""
+        def point(key: str) -> Vec | None:
+            value = anchor.get(key)
+            return tuple(float(c) for c in value) if value else None
+
+        start, mid, end = point("start"), point("point"), point("end")
+        if start is None or mid is None or end is None:
+            return candidate  # ends unknown: a chain of its own
+        radius = float(anchor["radius"]) if anchor.get("radius") else None
+        return edge_from_points(candidate.handle, candidate.length, start, mid, end,
+                                center=point("center"), radius=radius, normal=point("normal"),
+                                label=candidate.label)
+
     # ── Measures (COM) ──
+
+    def _edge_length_raw(self, reference: Any) -> float:
+        """3DEXPERIENCE: an edge's length as the curve measurable reads it."""
+        measurable = self.builder.measure.measurable_3dx(reference, "curve")
+        return self.builder.measure.scalar(measurable, ("GetLength", "Length"))
+
+    def _point_distance(self, reference: Any, point: Vec) -> float:
+        """3DEXPERIENCE: the distance (mm) from `point` to the cell, measured
+        against a construction point there (DistanceMinTo, live on R428)."""
+        return float(self.builder.measure.min_distance(
+            reference, self._sample_point(point))["distance_mm"])
 
     def _edge_geometry(self, reference: Any) -> tuple[float, Vec, Vec, Vec, Vec | None]:
         """Length (mm), start, middle and end points, and the centre when

@@ -122,6 +122,8 @@ class Probe:
             self.attempt(out, "point", lambda: self.builder.measure.point_mm(reference))
         elif kind.endswith("Edge"):
             def edge():
+                if self.builder.conn.is_3dx:  # no GetPointsOnCurve on R428
+                    return {"length_raw": self.dress._edge_length_raw(reference)}
                 length, start, mid, end, center = self.dress._edge_geometry(reference)
                 return {"length": length, "start": list(start), "mid": list(mid),
                         "end": list(end), "center": list(center) if center else None}
@@ -226,9 +228,10 @@ class Probe:
         part, main = self.builder.part, self.builder.bodies["Body1"]
         out: dict[str, Any] = {}
         last = self.dress._context_feature(main)
-        last_name = self.dress.last_feature_name(main)
-        cells = [c for c in self.dress.cells(main, "Edge") if c.context == last_name]
+        census: dict[str, Any] = {}
+        cells = self.dress.owned_cells(main, "Edge", census)
         out["owned_edges"] = len(cells)
+        out["census"] = census.get("topology")
         # The notch's top edge at x = 10: from (10, -10, 20) to (10, 10, 20).
         anchor = {"type": "edge", "geometry": "line", "length": 20.0,
                   "samples": [[10.0, y, 20.0] for y in (-6.0, 1.0, 4.0)]}
@@ -236,6 +239,9 @@ class Probe:
         for cell in cells:
             with contextlib.suppress(Exception):
                 candidates.append(self.dress.edge_candidate(cell.reference, cell))
+        if self.builder.conn.is_3dx:
+            self.dress._scale_lengths(candidates, [anchor])
+            out["length_factor"] = self.dress._length_factor
         try:
             cell = match_edge(anchor, candidates).handle
         except AnchorError as error:
@@ -341,7 +347,9 @@ class Probe:
         part, main = self.builder.part, self.builder.bodies["Body1"]
         hsf = part.HybridShapeFactory
         out: dict[str, Any] = {"cells": []}
-        cells = self.dress.cells(main, "Edge")
+        census: dict[str, Any] = {}
+        cells = self.dress.owned_cells(main, "Edge", census)
+        out["census"] = census.get("topology")
         candidates = []
         for cell in cells[:MAX_MEASURED]:
             record: dict[str, Any] = {"index": cell.index, "context": cell.context}
@@ -355,18 +363,24 @@ class Probe:
                 self.builder._construction_set().AppendHybridShape(created)
                 part.UpdateObject(created)
                 try:
-                    length, *_ = self.dress._edge_geometry(part.CreateReferenceFromObject(created))
+                    ref = part.CreateReferenceFromObject(created)
+                    if self.builder.conn.is_3dx:
+                        length = self.dress._edge_length_raw(ref)
+                    else:
+                        length, *_ = self.dress._edge_geometry(ref)
                 finally:
                     self.builder._delete(created)
                 return length
 
             self.attempt(record, "extract_length", extract)
             out["cells"].append(record)
-        out["comparison"] = compare_with_reference(tree, candidates)
+        out["comparison"] = compare_with_reference(
+            tree, candidates, self.dress if self.builder.conn.is_3dx else None)
         return out
 
 
-def compare_with_reference(tree: dict[str, Any], candidates: list[Any]) -> dict[str, Any]:
+def compare_with_reference(tree: dict[str, Any], candidates: list[Any],
+                           dress: Any = None) -> dict[str, Any]:
     """Which CATIA edges are build123d's edges of the part (matched), which
     are not (foreign) and which build123d edges CATIA did not return."""
     try:
@@ -374,10 +388,13 @@ def compare_with_reference(tree: dict[str, Any], candidates: list[Any]) -> dict[
     except ImportError:
         return {"skipped": "build123d is not installed"}
     solid = build_part(tree["parts"][0])
+    anchors = [{"length": float(edge.length),
+                "samples": [list(edge.position_at(t)) for t in (0.2, 0.45, 0.7)]}
+               for edge in solid.edges()]
+    if dress is not None:
+        dress._scale_lengths(candidates, anchors)
     matched, missing = [], []
-    for edge in solid.edges():
-        anchor = {"length": float(edge.length),
-                  "samples": [list(edge.position_at(t)) for t in (0.2, 0.45, 0.7)]}
+    for anchor in anchors:
         try:
             cell = match_edge(anchor, candidates).handle
             matched.append({"index": cell.index, "context": cell.context})

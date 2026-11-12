@@ -642,9 +642,18 @@ def _probe_3dpart(report: dict[str, Any], conn: Any) -> bool:
     try:
         editor = session.create("3DPart")
     except Exception as error:  # noqa: BLE001 -- the outcome is the result
-        status = UNAVAILABLE if _refused_by_licence(error) else UNKNOWN
-        set_capability(report, "plm.create.3dpart", status, f"PLMCreate 3DPart: {error}",
-                       "risky")
+        # Live on R428 (student role): PLMCreate failed without a licence
+        # message while the licence query, which answers, said E70 is not
+        # authorized. Either one makes the refusal a licence refusal.
+        licences = report.get("licences") or {}
+        answers = licences.get("authorized") or {}
+        unentitled = licences.get("name_form") is not None and not any(
+            answers.get(name) is True for name in ("E70", "VMX"))
+        status = UNAVAILABLE if _refused_by_licence(error) or unentitled else UNKNOWN
+        reason = f"PLMCreate 3DPart: {error}"
+        if unentitled and not _refused_by_licence(error):
+            reason += " (and the licence query says E70 and VMX are not authorized)"
+        set_capability(report, "plm.create.3dpart", status, reason, "risky")
         return True
     set_capability(report, "plm.create.3dpart", VERIFIED, "a scratch 3D Part was created",
                    "risky")
