@@ -154,19 +154,30 @@ def test_reference_matches_the_closed_form_of_the_fixtures():
 
 
 class _Factory:
+    """Sketch drawing: each curve is recorded as a tree entity, and returned
+    as an object whose StartPoint / EndPoint a connected contour sets."""
+
     def __init__(self):
-        self.entities = []
+        self.entities, self.points = [], []
+
+    def _curve(self, entity):
+        self.entities.append(entity)
+        return SimpleNamespace(entity=entity, StartPoint=None, EndPoint=None)
 
     def CreateLine(self, u0, v0, u1, v1):
-        self.entities.append({"type": "line", "start": [u0, v0], "end": [u1, v1]})
+        return self._curve({"type": "line", "start": [u0, v0], "end": [u1, v1]})
 
     def CreateClosedCircle(self, cu, cv, r):
-        self.entities.append({"type": "circle", "center": [cu, cv], "radius": r})
+        return self._curve({"type": "circle", "center": [cu, cv], "radius": r})
 
     def CreateCircle(self, cu, cv, r, a0, a1):
         point = lambda a: [cu + r * math.cos(a), cv + r * math.sin(a)]
-        self.entities.append({"type": "arc", "start": point(a0), "mid": point((a0 + a1) / 2),
-                              "end": point(a1)})
+        return self._curve({"type": "arc", "start": point(a0), "mid": point((a0 + a1) / 2),
+                            "end": point(a1)})
+
+    def CreatePoint(self, u, v):
+        self.points.append(SimpleNamespace(uv=(u, v)))
+        return self.points[-1]
 
 
 def _localized(name):
@@ -722,3 +733,19 @@ def test_no_closing_point_is_passed_as_vbscript_nothing():
     ((code, function, params),) = calls
     assert "o.AddSectionToLoft r, s, Nothing" in code
     assert function == "catia_mcp_loft_section" and params == ["shape", "section", 1]
+
+
+def test_loft_sections_are_drawn_as_connected_contours(monkeypatch):
+    """Live on R428 a rectangle of four lines that only touch made every loft
+    fail to update: each corner is one sketch point both lines end on."""
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(load("m4_loft_rect_prismatoid"),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    (loft,) = _lofts(part)
+    for sketch, _, _ in loft.HybridShape.sections:
+        assert len(sketch.factory.points) == 4  # one shared point per corner
+    # A pad's sketch is left as drawn.
+    part = _FakePart()
+    _builder(part, monkeypatch).build(load("m1_offset_block"), check_editability=False)
+    assert all(not pad.sketch.factory.points for pad in part.pads if hasattr(pad, "sketch"))

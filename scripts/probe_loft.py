@@ -3,6 +3,11 @@
 The tree replay builds lofts between circles on 3DEXPERIENCE R428 but not
 between sections with corners: a closing point given as a 3D point gives a
 loft CATIA cannot update, and every later try in the same part is refused.
+The first run of this probe showed every rectangle loft failing to update,
+whatever the coupling, closing points or orientation, while circles worked:
+the rectangles were four lines that only touch. Connected contours (one
+sketch point shared by the lines at each corner) are now tried first.
+
 This probe tries each way of building a rectangle-to-rectangle loft, each in
 a fresh part so that one failure cannot spoil the next, and records which
 one gives the expected solid (20 x 10 mm to 10 x 6 mm, 30 mm apart, corners
@@ -77,8 +82,9 @@ class Probe:
         self.builder = TreeBuilder(conn, plm_type=plm_type, log=print)
         self.count = 0
 
-    def fresh(self, sections: str):
-        """A new part with the two section sketches in its main body."""
+    def fresh(self, sections: str, connect: bool = False):
+        """A new part with the two section sketches in its main body, drawn as
+        connected contours (shared corner points) or as touching curves."""
         b = self.builder
         self.count += 1
         name = f"LoftProbe_{self.count:02d}"
@@ -88,7 +94,8 @@ class Probe:
         body = b.part.MainBody
         drawn = []
         for sketch, corner in SECTIONS[sections][:2]:
-            catia_sketch, _, frame = b._draw(body, sketch, Frame.from_tree(sketch["plane"]))
+            catia_sketch, _, frame = b._draw(body, sketch, Frame.from_tree(sketch["plane"]),
+                                             connect=connect)
             drawn.append((catia_sketch, frame, corner))
         return name, body, drawn
 
@@ -122,18 +129,20 @@ class Probe:
         raise RuntimeError(f"no vertex at {corner} among {len(refs)}")
 
     def attempt(self, label: str, sections: str = "rect", coupling: int | None = None,
-                closing: str = "none", orientation2: int = 1) -> dict[str, Any]:
+                closing: str = "none", orientation2: int = 1,
+                connect: bool = False) -> dict[str, Any]:
         from catia_mcp.introspect import method_params, type_name
         from catia_mcp.tools.part_design import _force_solid_inwork, _read_prop, _set_prop
         from catia_mcp.tree.builder import _add_loft_section
 
         record: dict[str, Any] = {"label": label, "sections": sections, "coupling": coupling,
                                   "closing": closing, "orientation2": orientation2,
+                                  "connected": connect,
                                   "expected_mm3": SECTIONS[sections][2]}
         print(f"  {label}")
         b = self.builder
         try:
-            name, body, drawn = self.fresh(sections)
+            name, body, drawn = self.fresh(sections, connect)
             record["part"] = name
             part = b.part
             if closing == "none":
@@ -198,6 +207,19 @@ class Probe:
 
 ATTEMPTS = [
     {"label": "control: circles, nothing set", "sections": "circle"},
+    # Second run: the first found every rectangle loft failing to update
+    # whatever was set; connected contours (shared corner points) come first.
+    {"label": "connected rect, coupling unset, no closing point", "connect": True},
+    {"label": "connected rect, coupling 4, 3D points", "coupling": 4, "closing": "3d point",
+     "connect": True},
+    {"label": "connected rect, coupling 4, vertex from body", "coupling": 4,
+     "closing": "vertex from body", "connect": True},
+    {"label": "connected rect, coupling 4, sketch points", "coupling": 4,
+     "closing": "sketch point", "connect": True},
+    {"label": "connected rect, no closing point, orientation -1", "orientation2": -1,
+     "connect": True},
+    {"label": "connected rect, no closing point, orientation 2", "orientation2": 2,
+     "connect": True},
     {"label": "rect, coupling unset, no closing point"},
     {"label": "rect, coupling 1, no closing point", "coupling": 1},
     {"label": "rect, coupling 2, no closing point", "coupling": 2},

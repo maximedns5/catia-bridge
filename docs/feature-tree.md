@@ -211,6 +211,14 @@ Two things did not hold:
   - CATIA's own closing points need VBScript's `Nothing`, which Python cannot
     pass: that call now runs in VBScript.
 
+  `scripts/probe_loft.py` then tried every variant on a rectangle-to-rectangle
+  loft, each in a fresh part: coupling unset or 1 to 4, no closing point, 3D
+  points, sketch points, and orientation 1, -1 or 2. Every one failed to
+  update, while the circle control worked. The cause is the sections
+  themselves: four lines whose ends only touch. A Pad finds that contour; a
+  Multi-sections Solid does not. Loft sections are now drawn connected, with
+  one sketch point shared by the curves at each corner.
+
 `tests/fixtures/trees/` holds synthetic trees for each path.
 - **Milestone 1** (`m1_*`): an offset plane, a reversed-normal plane, arcs with a negative distance, join, cut and intersect, the three hole kinds, and a tilted plane (the equation-plane path).
 - **Milestone 2** (`m2_*`):

@@ -647,7 +647,8 @@ class TreeBuilder:
         for sketch, segments, height in ((sections[0], plan.first, 0.0),
                                          (sections[1], plan.second, plan.height)):
             redrawn = section_sketch(sketch, segments, plan.common, height)
-            catia_sketch, _, _ = self._draw(body, redrawn, Frame.from_tree(sketch["plane"]))
+            catia_sketch, _, _ = self._draw(body, redrawn, Frame.from_tree(sketch["plane"]),
+                                            connect=True)
             closing = plan.common.world(segments[0].a[0], segments[0].a[1], height)
             drawn.append((catia_sketch, closing))
         want = plan.expectation
@@ -884,11 +885,15 @@ class TreeBuilder:
         return tuple(data[0:3]), unit(tuple(data[3:6])), unit(tuple(data[6:9]))
 
     def _draw(self, body: Any, sketch: dict[str, Any], frame: Frame,
-              entry: dict[str, Any] | None = None):
+              entry: dict[str, Any] | None = None, connect: bool = False):
         """Draw the tree sketch in a new CATIA sketch of `body`. Returns the
         sketch, +1 / -1 for whether its normal agrees with the tree's, and the
         CATIA sketch frame (origin, H, V). Approximated splines are noted in
-        `entry`."""
+        `entry`. With `connect`, lines and arcs meeting at a point share one
+        sketch point as their ends, as a connected contour: a Multi-sections
+        Solid needs that (live on R428 a rectangle of four lines that only
+        touch made every loft fail to update, a whole circle worked), while a
+        Pad finds the contour itself."""
         ref, known = self._support(frame)
         catia_sketch = body.Sketches.Add(ref)
         origin, h, v = self._sketch_frame(catia_sketch, known)
@@ -906,11 +911,13 @@ class TreeBuilder:
             factory = catia_sketch.OpenEdition()
             if factory is None:
                 raise BuildFailed("CATIA could not open the sketch for edition")
+        ends: list[tuple[Any, tuple[float, float], tuple[float, float]]] = []
         for entity in sketch["entities"]:
             kind = entity["type"]
             if kind == "line":
                 (u0, v0), (u1, v1) = local(entity["start"]), local(entity["end"])
-                factory.CreateLine(u0, v0, u1, v1)
+                line = factory.CreateLine(u0, v0, u1, v1)
+                ends.append((line, (u0, v0), (u1, v1)))
             elif kind == "circle":
                 cu, cv = local(entity["center"])
                 factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
@@ -920,7 +927,13 @@ class TreeBuilder:
                     entry.setdefault("notes", []).append(note)
             else:
                 arc = Arc.through(local(entity["start"]), local(entity["mid"]), local(entity["end"]))
-                factory.CreateCircle(arc.center[0], arc.center[1], arc.radius, arc.start, arc.end)
+                circle = factory.CreateCircle(arc.center[0], arc.center[1], arc.radius, arc.start,
+                                              arc.end)
+                (cu, cv), r = arc.center, arc.radius
+                ends.append((circle, (cu + r * math.cos(arc.start), cv + r * math.sin(arc.start)),
+                             (cu + r * math.cos(arc.end), cv + r * math.sin(arc.end))))
+        if connect:
+            _connect_ends(factory, ends)
         catia_sketch.CloseEdition()
         self.part.UpdateObject(catia_sketch)
         return catia_sketch, along, (origin, h, v)
@@ -1002,6 +1015,22 @@ def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
     return (f"spline {entity.get('id', '?')}: approximated by {len(plan.items)} CATIA sketch "
             f"spline(s) through {count} points (chords within {plan.deviation_area:.2g} mm2 "
             "of the curve)")
+
+
+def _connect_ends(factory: Any, ends) -> None:
+    """Give curves that meet one shared sketch point at each meeting place
+    (Curve2D.StartPoint / EndPoint, as CATIA's own macros do)."""
+    points: dict[tuple[float, float], Any] = {}
+
+    def shared(uv: tuple[float, float]) -> Any:
+        key = (round(uv[0], 6), round(uv[1], 6))
+        if key not in points:
+            points[key] = factory.CreatePoint(uv[0], uv[1])
+        return points[key]
+
+    for curve, start, end in ends:
+        curve.StartPoint = shared(start)
+        curve.EndPoint = shared(end)
 
 
 def _add_loft_section(app: Any, shape: Any, section: Any, sense: int, closing: Any) -> None:
