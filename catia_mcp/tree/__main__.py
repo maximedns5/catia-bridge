@@ -13,6 +13,8 @@ results of earlier capability probes) and refuses a tree that needs something
 found unavailable. CATIA runs on a guarded worker thread: a dialog that blocks
 the build ends it with a report naming the part, the feature and the dialog's
 text. --part and --until build a prefix of one part, for development.
+--step-dir DIR lets STEP files stand in for features with no native rule
+(CATIA V5 only; see docs/step.md).
 
 capabilities probes the running CATIA and prints what it can do. Read-only
 unless --create (a scratch part, closed without saving) or --risky (a 3D Part
@@ -39,7 +41,16 @@ def _load(args) -> dict[str, Any]:
     return tree
 
 
-def _expected(tree: dict[str, Any], mode: str) -> dict[str, Any] | None:
+def _step_source(args):
+    if not args.step_dir:
+        return None
+    from catia_mcp.connection import normalize_platform
+    from catia_mcp.tree.step_source import StepSource
+
+    return StepSource(args.step_dir, normalize_platform(args.platform))
+
+
+def _expected(tree: dict[str, Any], mode: str, step_dir: str | None = None) -> dict[str, Any] | None:
     if mode == "none":
         return None
     if mode != "auto":
@@ -47,27 +58,45 @@ def _expected(tree: dict[str, Any], mode: str) -> dict[str, Any] | None:
             return json.load(handle)
     try:
         from catia_mcp.tree.reference import expected
+        if step_dir:
+            from catia_mcp.tree.step_fallback import expected_with_steps
     except ImportError:
         print("build123d is not installed: building without expected volumes "
               '(pip install -e ".[differential]")')
         return None
-    return expected(tree)
+    return expected_with_steps(tree, step_dir) if step_dir else expected(tree)
 
 
-def _check(tree) -> int:
-    reasons = analyze(tree)
+def _check(tree, step=None) -> int:
+    reasons = analyze(tree, step=step)
     if reasons:
         print(refusal(reasons))
         return 1
     print(f"Accepted: {len(tree['parts'])} part(s), "
           f"{sum(len(p['features']) for p in tree['parts'])} feature(s).")
+    if step is not None:
+        from catia_mcp.tree.preflight import SUPPORTED
+
+        dead = sum(f.get("type") not in SUPPORTED for p in tree["parts"] for f in p["features"])
+        if dead:
+            print(f"{dead} of them from STEP files in {step.directory}, as bodies without "
+                  "history (the build needs CATIA V5).")
     return 0
 
 
-def _reference(tree) -> int:
+def _report_dead(report: dict[str, Any]) -> None:
+    for dead in report.get("dead_bodies") or []:
+        print(f"  dead body {dead['body']} ({dead['part']} / {dead['feature']}, {dead['role']}, "
+              f"{dead['volume_mm3']} mm3) from {dead['file']}: no history")
+
+
+def _reference(tree, step_dir=None) -> int:
     from catia_mcp.tree.reference import expected
 
-    for part_id, props in expected(tree).items():
+    if step_dir:
+        from catia_mcp.tree.step_fallback import expected_with_steps
+    for part_id, props in (expected_with_steps(tree, step_dir) if step_dir
+                           else expected(tree)).items():
         cog = ", ".join(f"{c:.4f}" for c in props["cog_mm"])
         print(f"{part_id}: volume {props['volume_mm3']:.4f} mm3, area {props['area_mm2']:.4f} mm2, "
               f"cog ({cog})")
@@ -102,7 +131,7 @@ def _build(tree, args) -> int:
     from catia_mcp.tree.builder import TreeBuilder
 
     try:
-        expected = _expected(tree, args.expect)
+        expected = _expected(tree, args.expect, args.step_dir)
     except Exception as error:
         print(f"Cannot compute the expected volumes: {error}")
         return 2
@@ -124,12 +153,17 @@ def _build(tree, args) -> int:
     except SessionError as error:
         print(error)
         return 2
-    reasons = analyze(tree, capabilities, args.plm_type)
+    step = None
+    if args.step_dir:
+        from catia_mcp.tree.step_source import StepSource
+
+        step = StepSource(args.step_dir, "3dx" if conn.is_3dx else "v5")
+    reasons = analyze(tree, capabilities, args.plm_type, step=step)
     if reasons:
         print(refusal(reasons))
         return 1
     builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print,
-                          ownership=args.ownership)
+                          ownership=args.ownership, step_dir=args.step_dir)
     started = time.monotonic()
     try:
         report = worker.run_guarded(builder.build, tree, expected, not args.no_edit,
@@ -148,6 +182,7 @@ def _build(tree, args) -> int:
         versus = f" (build123d {want:.4f})" if want is not None else ""
         print(f"{part['id']}: {part['catia_name']}, volume {part['volume_mm3']}{versus}, "
               f"editable {part['editable']}")
+    _report_dead(report)
     if report["success"]:
         print(f"Built in {report['elapsed_s']} s. Report: {args.report}")
         return 0
@@ -202,6 +237,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--deadline", type=float, default=170.0, help="build budget in seconds")
     parser.add_argument("--report", help="JSON report path (default tree_report.json, "
                         "capabilities_report.json)")
+    parser.add_argument("--step-dir", help="folder of STEP files standing in for features with "
+                        "no native rule: <part folder>/<feature id>.step or "
+                        ".add.step / .remove.step (CATIA V5 only)")
     parser.add_argument("--create", action="store_true",
                         help="capabilities: build a scratch part, closed without saving")
     parser.add_argument("--risky", action="append", choices=["3dpart", "step_export"],
@@ -216,9 +254,9 @@ def main(argv: list[str] | None = None) -> int:
     args.report = args.report or "tree_report.json"
     tree = _load(args)
     if args.command == "check":
-        return _check(tree)
+        return _check(tree, _step_source(args))
     if args.command == "reference":
-        return _reference(tree)
+        return _reference(tree, args.step_dir)
     return _build(tree, args)
 
 

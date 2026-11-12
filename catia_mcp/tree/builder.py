@@ -40,6 +40,11 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
   drawn exactly when they are circles or ellipses, else as sketch splines
   through sampled points: the feature's notes say so, and its volume checks,
   and the part's, allow the area between the curve and those points' chords.
+- With --step-dir, a feature with no native rule (base_feature, or any
+  unsupported feature modifying one body) is built from STEP files: each is
+  imported (V5 only), pasted as a body without history, and added to or
+  removed from its target (catia_mcp/step.py, catia_mcp/tree/step_source.py).
+  The report lists those dead bodies apart from the native features.
 - Nothing else is retried: the first failure stops the part and is reported
   with its feature, and the document may then hold a partial model.
 """
@@ -56,6 +61,7 @@ from catia_mcp.automation import call_fill_array
 from catia_mcp.connection import CATIAConnection
 from catia_mcp.introspect import find_enum
 from catia_mcp.measure import Measurer
+from catia_mcp.step import DEAD_BODY_PREFIX, StepExchange
 from catia_mcp.tools.document import DocumentTools, _same
 from catia_mcp.tools.part_design import (
     _force_solid_inwork,
@@ -86,7 +92,8 @@ from catia_mcp.tree.geometry import (
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.nurbs import Nurbs, drawing
 from catia_mcp.tree.placement import place_part
-from catia_mcp.tree.preflight import check
+from catia_mcp.tree.preflight import SUPPORTED, check
+from catia_mcp.tree.step_source import StepSource
 from catia_mcp.tree.sweep import path_sketch, sweep_expectation
 
 # Origin planes and the sketch frame CATIA gives them (H, V; normal = H x V).
@@ -123,6 +130,7 @@ class PartRecord:
     features: list[dict[str, Any]] = field(default_factory=list)
     editable: bool | None = None
     editability_note: str = ""
+    dead_bodies: list[dict[str, Any]] = field(default_factory=list)
     # What approximated splines may move the volume by (mm3), added to the
     # part check's tolerance.
     spline_allowance_mm3: float = 0.0
@@ -137,8 +145,10 @@ def _parallel(a: Vec, b: Vec) -> float:
 class TreeBuilder:
     def __init__(self, conn: CATIAConnection, plm_type: str = "3DShape",
                  deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None,
-                 ownership: str | None = None) -> None:
+                 ownership: str | None = None, step_dir: str | None = None) -> None:
         self.conn = conn
+        self.step_dir = step_dir
+        self.step_source: StepSource | None = None
         self.measure = Measurer(conn)
         self.documents = DocumentTools(conn)
         self.plm_type = plm_type
@@ -151,7 +161,9 @@ class TreeBuilder:
 
     def build(self, tree: dict[str, Any], expected: dict[str, dict[str, Any]] | None = None,
               check_editability: bool = True) -> dict[str, Any]:
-        check(tree)
+        if self.step_dir:
+            self.step_source = StepSource(self.step_dir, "3dx" if self.conn.is_3dx else "v5")
+        check(tree, step=self.step_source)
         self.started = time.monotonic()
         report: dict[str, Any] = {"success": False, "native_history": False, "editable": None,
                                   "parts": len(tree["parts"]), "features": 0, "parts_detail": []}
@@ -171,7 +183,8 @@ class TreeBuilder:
                 if check_editability:
                     self._check_editability(record)
             report["success"] = True
-            report["native_history"] = True
+            dead = any(r.dead_bodies for r in report["parts_detail"])
+            report["native_history"] = "partial" if dead else True
             flags = [r.editable for r in report["parts_detail"]]
             report["editable"] = all(flags) if check_editability else None
         except BuildFailed as error:
@@ -179,6 +192,8 @@ class TreeBuilder:
                                "note": "The CATIA document may contain a partial model: check it "
                                        "before trying again."}
         report["features"] = sum(len(r.features) for r in report["parts_detail"])
+        report["dead_bodies"] = [dict(d, part=r.id) for r in report["parts_detail"]
+                                 for d in r.dead_bodies]
         report["elapsed_s"] = round(time.monotonic() - self.started, 2)
         report["parts_detail"] = [vars(r) for r in report["parts_detail"]]
         return report
@@ -187,13 +202,13 @@ class TreeBuilder:
 
     def _build_part(self, part: dict[str, Any], record: PartRecord) -> None:
         self.part_id, self.feature_id = part["id"], None
+        self.record = record
         self.log(f"part {part['id']}: creating")
         if self.conn.is_3dx:
             self.documents._new_part(record.name, self.plm_type)
         else:
             self.documents._new_part(record.name, "auto")
         self.part = self.conn.get_active_part()
-        self.record = record
         record.catia_name = str(self.part.Name)
         self.main_body_used = False
         self.bodies: dict[str, Any] = {}
@@ -210,7 +225,8 @@ class TreeBuilder:
             record.features.append(entry)
             self.log(f"  {feature['type']} {feature.get('id')}")
             try:
-                getattr(self, f"_feature_{feature['type']}")(feature, entry)
+                kind = feature["type"] if feature["type"] in SUPPORTED else "from_step"
+                getattr(self, f"_feature_{kind}")(feature, entry)
             except BuildFailed as error:
                 error.part, error.feature = part["id"], feature.get("id")
                 raise
@@ -387,6 +403,48 @@ class TreeBuilder:
             build(feature, entry)
         except DressUpFailed as error:
             raise BuildFailed(str(error)) from error
+
+    def _feature_from_step(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        """A feature preflight accepted because STEP files stand in for it:
+        each file is imported, pasted as a dead body and combined."""
+        exchange = self._exchange()
+        home = self.conn.active_document
+        entry["dead"] = True
+        for path, role in self.step_source.files(self.part_id, feature):
+            name = f"{DEAD_BODY_PREFIX}{feature['id']}" + ("" if role == "solid" else f"_{role}")
+            imported = exchange.import_file(path)
+            try:
+                body, volume, notes = exchange.paste_as_result(imported, self.part, home,
+                                                               home.Activate, name)
+            finally:
+                exchange.close(imported)
+                home.Activate()
+            entry["catia"].append(str(body.Name))
+            entry.setdefault("notes", []).extend(notes)
+            self.record.dead_bodies.append({"feature": feature["id"], "type": feature["type"],
+                                            "role": role, "file": path, "body": str(body.Name),
+                                            "volume_mm3": round(volume, 4)})
+            if role == "solid" and (feature.get("operation") or "new_body") == "new_body":
+                self.bodies[feature["creates"][0]] = body
+                continue
+            operation = feature["operation"] if role == "solid" else \
+                {"add": "join", "remove": "cut"}[role]
+            (target,) = feature["bodies"]
+            before = self._volume(self.bodies[target])
+            self._combine(self.bodies[target], body, operation, entry)
+            if role == "solid":
+                continue
+            # A delta is disjoint from its body (add) or inside it (remove),
+            # so the volume moves by the delta's, to 1 % of the delta.
+            want = before + volume if role == "add" else before - volume
+            got = self._volume(self.bodies[target])
+            if abs(got - want) > max(1e-3, 1e-2 * volume, 1e-6 * before):
+                raise BuildFailed(
+                    f"the {role} delta '{body.Name}' left {got:.4f} mm3, expected {want:.4f} "
+                    "mm3: CATIA's boolean on the delta's coincident faces went wrong")
+
+    def _exchange(self) -> StepExchange:
+        return StepExchange(self.conn, self.measure)
 
     # ── Bodies, pads, combines ──
 

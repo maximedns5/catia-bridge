@@ -68,6 +68,8 @@ part's features into the world (sketch planes, revolve axes, sweep paths, hole
 frames, mirror and split planes, and any anchor point or direction), but it
 is not used until the contract says whether a placed part's features are in
 its own frame or already in world coordinates.
+On CATIA V5, `--step-dir` lets STEP files stand in for a `base_feature` or an
+unsupported feature, as bodies without history: see [step.md](step.md).
 
 ## How the build stays faithful
 

@@ -393,7 +393,7 @@ def test_a_placed_part_keeps_its_volume_and_moves_its_centre_of_gravity():
 
 def test_the_builder_builds_a_placed_part_in_world_coordinates(monkeypatch):
     # The preflight refuses placed parts for now; the builder's path is kept ready.
-    monkeypatch.setattr(builder_module, "check", lambda tree: None)
+    monkeypatch.setattr(builder_module, "check", lambda tree, **_: None)
     rotation, translation = _rotation((0, 1, 1), -50), (5, 6, -7)
     tree = load("m2_shaft_axis_off_origin")
     tree["parts"][0]["placement"] = _placement(rotation, translation)

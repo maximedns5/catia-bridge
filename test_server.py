@@ -43,6 +43,7 @@ def test_tool_definitions():
     from catia_mcp.tools.measurement import MeasurementTools
     from catia_mcp.tools.export import ExportTools
     from catia_mcp.tools.plm import PLMTools
+    from catia_mcp.tools.step import StepTools
     from catia_mcp.tools.introspection import IntrospectionTools
 
     conn = CATIAConnection()
@@ -58,6 +59,7 @@ def test_tool_definitions():
         "Measurement": MeasurementTools(conn),
         "Export": ExportTools(conn),
         "PLM": PLMTools(conn),
+        "STEP": StepTools(conn),
         "Introspection": IntrospectionTools(conn),
     }
 

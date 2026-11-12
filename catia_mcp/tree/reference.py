@@ -167,7 +167,9 @@ def _dressup(feature: dict[str, Any], body: Any) -> Any:
         raise ReferenceError(f"{kind} {feature.get('id')}: {error}") from error
 
 
-def build_part(part: dict[str, Any]) -> Any:
+def build_part(part: dict[str, Any], external: Any = None) -> Any:
+    """The part's solid. `external(part, feature, bodies)` builds the features
+    this reference has no rule for, by updating `bodies` (the STEP fallback)."""
     part = place_part(part)
     sketches: dict[str, dict[str, Any]] = {}
     bodies: dict[str, Any] = {}
@@ -237,6 +239,8 @@ def build_part(part: dict[str, Any]) -> Any:
         elif kind in ("fillet", "chamfer", "shell"):
             (target,) = feature["bodies"]
             bodies[target] = _dressup(feature, bodies[target])
+        elif external is not None:
+            external(part, feature, bodies)
         else:
             raise ReferenceError(f"no reference for '{kind}' features")
     final = [bodies[name] for name in (part.get("bodies") or bodies)]
@@ -265,6 +269,6 @@ def _volume(solid: Any) -> float:
     return float(props.Mass())
 
 
-def expected(tree: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def expected(tree: dict[str, Any], external: Any = None) -> dict[str, dict[str, Any]]:
     """Per-part expected properties, keyed by part id."""
-    return {part["id"]: properties(build_part(part)) for part in tree["parts"]}
+    return {part["id"]: properties(build_part(part, external)) for part in tree["parts"]}
