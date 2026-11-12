@@ -26,6 +26,7 @@ from typing import Any
 from catia_mcp.automation import safe_get
 from catia_mcp.connection import CATIAConnection
 from catia_mcp.introspect import find_enum
+from catia_mcp.watchdog import public
 
 # Factory methods probed on an active Part document. These lists mirror
 # the methods the real tools call, so a probe that fails here fails the
@@ -169,6 +170,9 @@ class DiagnosticsTools:
         report: dict[str, Any] = {"python": self._python_info(app)}
         report["catia"] = self._catia_info(app)
         report["catia"]["platform"] = self.conn.platform_label
+        for key, value in self.conn.fingerprint().items():
+            report["catia"].setdefault(key, value)
+        report["dialog_watchdog"] = public(self.conn.watchdog.snapshot())
         if self.conn.is_3dx:
             report["plm"] = self._plm_probe(app)
             report["factories"] = self._factory_probe()
