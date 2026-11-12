@@ -1,0 +1,211 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M3/AsymmetricChamfer",
+   "name": "AsymmetricChamfer",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -20.0,
+        -15.0
+       ],
+       "end": [
+        20.0,
+        -15.0
+       ],
+       "id": "sketch1e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        20.0,
+        -15.0
+       ],
+       "end": [
+        20.0,
+        15.0
+       ],
+       "id": "sketch1e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        20.0,
+        15.0
+       ],
+       "end": [
+        -20.0,
+        15.0
+       ],
+       "id": "sketch1e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -20.0,
+        15.0
+       ],
+       "end": [
+        -20.0,
+        -15.0
+       ],
+       "id": "sketch1e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch1e1",
+        "sketch1e2",
+        "sketch1e3",
+        "sketch1e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 10,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "chamfer",
+     "id": "chamfer1",
+     "name": "Chamfer1",
+     "bodies": [
+      "Body1"
+     ],
+     "distance": 3,
+     "distance2": 1,
+     "face": {
+      "type": "face",
+      "geometry": "plane",
+      "point": [
+       0.0,
+       0.0,
+       10.0
+      ],
+      "normal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "area": 1200.0
+     },
+     "edges": [
+      {
+       "type": "edge",
+       "geometry": "line",
+       "point": [
+        0.0,
+        -15.0,
+        10.0
+       ],
+       "start": [
+        -20.0,
+        -15.0,
+        10.0
+       ],
+       "end": [
+        20.0,
+        -15.0,
+        10.0
+       ],
+       "samples": [
+        [
+         -12.0,
+         -15.0,
+         10.0
+        ],
+        [
+         -2.0,
+         -15.0,
+         10.0
+        ],
+        [
+         8.0,
+         -15.0,
+         10.0
+        ]
+       ],
+       "length": 40.0,
+       "closed": false
+      },
+      {
+       "type": "edge",
+       "geometry": "line",
+       "point": [
+        0.0,
+        15.0,
+        10.0
+       ],
+       "start": [
+        20.0,
+        15.0,
+        10.0
+       ],
+       "end": [
+        -20.0,
+        15.0,
+        10.0
+       ],
+       "samples": [
+        [
+         12.0,
+         15.0,
+         10.0
+        ],
+        [
+         2.0,
+         15.0,
+         10.0
+        ],
+        [
+         -8.0,
+         15.0,
+         10.0
+        ]
+       ],
+       "length": 40.0,
+       "closed": false
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

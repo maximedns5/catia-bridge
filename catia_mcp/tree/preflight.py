@@ -10,19 +10,22 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Any
 
+from catia_mcp.tree.anchors import edge_anchor_problem, face_anchor_problem, plane_of
 from catia_mcp.tree.geometry import Frame, dot, profile_area_centroid, revolve_expectation, unit
 from catia_mcp.tree.loft import plan_loft
 from catia_mcp.tree.sweep import sweep_expectation
 
-# Milestones 1, 2 and 4: sketches, extrudes, revolves, combines, holes,
-# mirrors joined back into their source, splits, lofts and sweeps.
+# Milestones 1 to 4: sketches, extrudes, revolves, combines, holes, mirrors
+# joined back into their source, splits, fillets, chamfers, shells, lofts and
+# sweeps.
 SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
-             "sweep")
+             "sweep", "fillet", "chamfer", "shell")
 ENTITY_TYPES = ("line", "circle", "arc")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
 COMBINE_OPERATIONS = ("join", "cut", "intersect")
 HOLE_KINDS = ("simple", "counterbore", "countersink")
 SPLIT_SIDES = ("top", "bottom")
+SHELL_JOINS = ("Kind.ARC", "Kind.INTERSECTION")
 # Points closer than this to a plane or an axis are on it (mm).
 ON_TOL = 1e-6
 
@@ -96,6 +99,12 @@ def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
                 _check_combine(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "hole":
                 _check_hole(feature, bodies, refuse, f"{pid} {where}")
+            elif kind == "fillet":
+                _check_fillet(feature, bodies, refuse, f"{pid} {where}")
+            elif kind == "chamfer":
+                _check_chamfer(feature, bodies, refuse, f"{pid} {where}")
+            elif kind == "shell":
+                _check_shell(feature, bodies, refuse, f"{pid} {where}")
     return reasons
 
 
@@ -280,6 +289,111 @@ def _check_hole(feature, bodies, refuse, where) -> None:
             refuse("countersink hole needs a diameter and an angle in (0, 180) degrees", where)
         elif feature["countersink_diameter"] <= feature.get("diameter", 0):
             refuse("countersink diameter must exceed the hole diameter", where)
+
+
+def _positive(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
+def _check_edges(feature, refuse, where, kind) -> bool:
+    edges = feature.get("edges")
+    if not isinstance(edges, list) or not edges:
+        refuse(f"{kind} has no edge", where)
+        return False
+    problems = [edge_anchor_problem(edge) for edge in edges]
+    for problem in dict.fromkeys(p for p in problems if p):
+        refuse(problem, where)
+    return not any(problems)
+
+
+def _corner_count(edges: list[dict[str, Any]]) -> int:
+    """The most anchored edges meeting at one end point."""
+    ends: list[tuple[float, ...]] = []
+    for edge in edges:
+        if edge.get("closed"):
+            continue
+        for key in ("start", "end"):
+            if edge.get(key) is not None:
+                ends.append(tuple(float(c) for c in edge[key]))
+    most = 0
+    for point in ends:
+        most = max(most, sum(1 for other in ends
+                             if max(abs(a - b) for a, b in zip(point, other)) <= 1e-6))
+    return most
+
+
+def _check_dressed_body(feature, bodies, refuse, where, kind) -> None:
+    if len(feature.get("bodies") or []) != 1 or feature["bodies"][0] not in bodies:
+        refuse(f"{kind} must modify exactly one known body", where)
+
+
+def _check_fillet(feature, bodies, refuse, where) -> None:
+    _check_dressed_body(feature, bodies, refuse, where, "fillet")
+    radius = feature.get("radius")
+    if isinstance(radius, (list, dict)) or any(feature.get(key) is not None for key in
+                                               ("radii", "radius2", "end_radius", "variable")):
+        refuse("variable-radius fillets are not supported yet", where)
+    elif not _positive(radius):
+        refuse("fillet radius must be a positive number", where)
+    _check_edges(feature, refuse, where, "fillet")
+
+
+def _check_chamfer(feature, bodies, refuse, where) -> None:
+    _check_dressed_body(feature, bodies, refuse, where, "chamfer")
+    first, second = feature.get("distance"), feature.get("distance2")
+    if feature.get("angle") is not None and second is None:
+        refuse("chamfers given by an angle are not supported yet", where)
+        return
+    if not _positive(first) or (second is not None and not _positive(second)):
+        refuse("chamfer distances must be positive numbers", where)
+        return
+    if not _check_edges(feature, refuse, where, "chamfer"):
+        return
+    if second is None or abs(second - first) <= 1e-9:
+        return
+    # Asymmetric: `distance` is measured on `face`. The builder tells the
+    # two orientations apart by where the body's centre of gravity moves
+    # along that face's normal, so the face must be a plane holding every
+    # chamfered edge.
+    face = feature.get("face")
+    if face is None:
+        refuse("an asymmetric chamfer needs the face its first distance is measured on", where)
+        return
+    problem = face_anchor_problem(face)
+    plane = plane_of(face) if problem is None else None
+    if problem:
+        refuse(problem, where)
+    elif plane is None:
+        refuse("asymmetric chamfers measured on a face that is not a plane are not supported yet",
+               where)
+    elif any(abs(dot(tuple(float(c) - o for c, o in zip(p, plane[0])), plane[1])) > 1e-4
+             for edge in feature["edges"]
+             for p in [edge.get("start"), edge.get("end"), edge.get("point")] if p is not None):
+        refuse("an asymmetric chamfer's edges must all lie on its reference face", where)
+    if _corner_count(feature["edges"]) >= 3:
+        refuse("asymmetric chamfers on three edges meeting at a corner are not supported yet "
+               "(CATIA and OpenCascade set the corner back differently)", where)
+
+
+def _check_shell(feature, bodies, refuse, where) -> None:
+    _check_dressed_body(feature, bodies, refuse, where, "shell")
+    thickness = feature.get("thickness")
+    if not isinstance(thickness, (int, float)) or isinstance(thickness, bool) or not thickness:
+        refuse("shell thickness must be a non-zero number", where)
+    join = feature.get("join", "Kind.ARC")
+    if join not in SHELL_JOINS:
+        refuse(f"shell join '{join}' is not supported", where)
+    faces = feature.get("faces")
+    if not isinstance(faces, list):
+        refuse("shell has no list of removed faces", where)
+    elif not faces:
+        # build123d's offset() without openings shrinks or grows the solid
+        # rather than hollowing it, and AddNewShell needs a face to remove.
+        refuse("shells with no removed face (offset solids) are not supported yet", where)
+    else:
+        for problem in dict.fromkeys(face_anchor_problem(face) for face in faces):
+            if problem:
+                refuse(problem, where)
 
 
 def refusal(reasons: OrderedDict[str, list[str]]) -> str:

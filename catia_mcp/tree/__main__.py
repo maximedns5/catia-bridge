@@ -78,7 +78,8 @@ def _build(tree, args) -> int:
     except RuntimeError as error:
         print(error)
         return 2
-    builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print)
+    builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print,
+                          ownership=args.ownership)
     try:
         report = builder.build(tree, expected, check_editability=not args.no_edit)
     except TreeRefused as refused:
@@ -112,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="3DEXPERIENCE content type for each part (default 3DShape)")
     parser.add_argument("--expect", default="auto",
                         help="'auto' (build123d), 'none', or a JSON file {part id: {volume_mm3}}")
+    parser.add_argument("--ownership", choices=["auto", "strict", "off"],
+                        help="fillet/chamfer/shell topology ownership filter (default: "
+                             "$CATIA_MCP_TOPOLOGY_OWNERSHIP or auto)")
     parser.add_argument("--no-edit", action="store_true", help="skip the editability check")
     parser.add_argument("--deadline", type=float, default=170.0, help="build budget in seconds")
     parser.add_argument("--report", default="tree_report.json", help="JSON report path")
