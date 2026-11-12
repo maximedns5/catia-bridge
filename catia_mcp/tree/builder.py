@@ -24,6 +24,11 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
   and centre of gravity; a twisted result is deleted and rebuilt once with the
   second section's orientation reversed. Sweeps are Ribs along the path drawn
   as a sketch in its own plane, checked by Pappus.
+- Fillets, chamfers and shells find their edges and faces by the tree's
+  geometric anchors among the cells of the body's last feature
+  (catia_mcp/tree/dressup.py), one CATIA feature per tree feature, checked by
+  bounds on the volume change; an asymmetric chamfer is oriented by its centre
+  of gravity, and its part's centre of gravity is compared with the reference.
 - Nothing else is retried: the first failure stops the part and is reported
   with its feature, and the document may then hold a partial model.
 """
@@ -47,6 +52,7 @@ from catia_mcp.tools.part_design import (
     _set_prop,
     _sketch_v_direction,
 )
+from catia_mcp.tree.dressup import DressUpFailed, DressUps
 from catia_mcp.tree.geometry import (
     Arc,
     Frame,
@@ -112,13 +118,16 @@ def _parallel(a: Vec, b: Vec) -> float:
 
 class TreeBuilder:
     def __init__(self, conn: CATIAConnection, plm_type: str = "3DShape",
-                 deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None) -> None:
+                 deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None,
+                 ownership: str | None = None) -> None:
         self.conn = conn
         self.measure = Measurer(conn)
         self.documents = DocumentTools(conn)
         self.plm_type = plm_type
         self.deadline_s = deadline_s
         self.log = log
+        self.dressups = DressUps(self, ownership)
+        self.cog_checked = False
 
     # ── Entry point ──
 
@@ -138,6 +147,8 @@ class TreeBuilder:
                 if expected and part["id"] in expected:
                     record.expected_volume_mm3 = expected[part["id"]]["volume_mm3"]
                     self._check_part_volume(record)
+                    if self.cog_checked and expected[part["id"]].get("cog_mm"):
+                        self._check_part_cog(part, expected[part["id"]]["cog_mm"])
                 if check_editability:
                     self._check_editability(record)
             report["success"] = True
@@ -169,6 +180,7 @@ class TreeBuilder:
         self.sketches: dict[str, dict[str, Any]] = {}
         self.first_pad: tuple[Any, Any] | None = None
         self.pending_mirror: dict[str, Any] | None = None
+        self.cog_checked = False
         for feature in part["features"]:
             if time.monotonic() - self.started > self.deadline_s:
                 raise BuildFailed(f"the build exceeded its {self.deadline_s:.0f} s budget",
@@ -199,6 +211,18 @@ class TreeBuilder:
             raise BuildFailed(
                 f"the part measures {got:.4f} mm3 in CATIA, expected {want:.4f} mm3",
                 record.id)
+
+    def _check_part_cog(self, part: dict[str, Any], want: list[float]) -> None:
+        """An asymmetric chamfer can be swapped without changing the volume:
+        compare the centre of gravity too."""
+        final = [self.bodies[name] for name in (part.get("bodies") or self.bodies)]
+        masses = [(self._volume(body), self._cog(body)) for body in final]
+        total = sum(volume for volume, _ in masses)
+        cog = tuple(sum(volume * c[i] for volume, c in masses) / total for i in range(3))
+        tol = max(1e-3, PART_REL_TOL * total ** (1 / 3))
+        if distance(cog, tuple(want)) > tol:
+            raise BuildFailed(f"the part's centre of gravity is at {_fmt(cog)} in CATIA, "
+                              f"expected {_fmt(tuple(want))}", part["id"])
 
     # ── Features ──
 
@@ -315,6 +339,22 @@ class TreeBuilder:
         sketch = self.sketches[feature["sketch"]]
         self._into_body(feature, entry,
                         lambda body: self._verified_rib(body, sketch, feature["path"], entry))
+
+    def _feature_fillet(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        self._dressup(self.dressups.fillet, feature, entry)
+
+    def _feature_chamfer(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        self._dressup(self.dressups.chamfer, feature, entry)
+
+    def _feature_shell(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        self._dressup(self.dressups.shell, feature, entry)
+
+    @staticmethod
+    def _dressup(build: Callable[..., None], feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        try:
+            build(feature, entry)
+        except DressUpFailed as error:
+            raise BuildFailed(str(error)) from error
 
     # ── Bodies, pads, combines ──
 

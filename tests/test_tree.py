@@ -99,25 +99,25 @@ def test_preflight_refuses_with_each_reason_once_and_where():
     tree = load("m1_offset_block")
     part = tree["parts"][0]
     part["features"] += [
-        {"type": "fillet", "id": "fillet1", "source": {"line": 7}},
-        {"type": "fillet", "id": "fillet2", "source": {"line": 9}},
+        {"type": "draft", "id": "draft1", "source": {"line": 7}},
+        {"type": "draft", "id": "draft2", "source": {"line": 9}},
         {"type": "base_feature", "id": "base1", "creates": ["Body2"]},
     ]
     reasons = analyze(tree)
     text = refusal(reasons)
-    assert "'fillet' features are not supported yet (2x): /M1/OffsetBlock model.py line 7, " \
+    assert "'draft' features are not supported yet (2x): /M1/OffsetBlock model.py line 7, " \
            "/M1/OffsetBlock model.py line 9" in text
     assert "base_feature" in text and text.endswith("the STEP download is not affected.")
 
 
 def test_preflight_does_not_cascade_from_an_unsupported_feature():
     tree = {"version": 1, "parts": [{"id": "/P", "features": [
-        {"type": "shell", "id": "shell1", "creates": ["Body1"]},
+        {"type": "draft", "id": "draft1", "creates": ["Body1"]},
         {"type": "copy", "id": "copy1", "bodies": ["Body1"], "creates": ["Body2"]},
         {"type": "combine", "id": "combine1", "operation": "join",
          "targets": ["Body1"], "tools": ["Body2"]},
     ]}]}
-    assert list(analyze(tree)) == ["'shell' features are not supported yet",
+    assert list(analyze(tree)) == ["'draft' features are not supported yet",
                                    "'copy' features are not supported yet"]
 
 
@@ -459,7 +459,7 @@ def test_builder_refuses_before_touching_catia():
     touched = []
     conn = SimpleNamespace(is_3dx=True, get_active_part=lambda: touched.append(1))
     tree = load("m1_offset_block")
-    tree["parts"][0]["features"].append({"type": "shell", "id": "shell1"})
+    tree["parts"][0]["features"].append({"type": "draft", "id": "draft1"})
     with pytest.raises(TreeRefused):
         TreeBuilder(conn).build(tree)
     assert touched == []
@@ -479,11 +479,11 @@ def test_cli_check_reports_acceptance_and_refusal(tmp_path, capsys):
     assert main(["check", str(TREES / "m1_holes.json")]) == 0
     assert "Accepted: 1 part(s), 5 feature(s)." in capsys.readouterr().out
     refused = load("m1_holes")
-    refused["parts"][0]["features"].append({"type": "shell", "id": "shell1"})
+    refused["parts"][0]["features"].append({"type": "draft", "id": "draft1"})
     path = tmp_path / "refused.json"
     path.write_text(json.dumps(refused))
     assert main(["check", str(path)]) == 1
-    assert "'shell' features are not supported yet" in capsys.readouterr().out
+    assert "'draft' features are not supported yet" in capsys.readouterr().out
 
 
 def test_build_and_check_do_not_need_build123d():

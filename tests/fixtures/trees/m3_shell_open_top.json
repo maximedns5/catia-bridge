@@ -1,0 +1,135 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M3/ShellOpenTop",
+   "name": "ShellOpenTop",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -20.0,
+        -15.0
+       ],
+       "end": [
+        20.0,
+        -15.0
+       ],
+       "id": "sketch1e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        20.0,
+        -15.0
+       ],
+       "end": [
+        20.0,
+        15.0
+       ],
+       "id": "sketch1e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        20.0,
+        15.0
+       ],
+       "end": [
+        -20.0,
+        15.0
+       ],
+       "id": "sketch1e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -20.0,
+        15.0
+       ],
+       "end": [
+        -20.0,
+        -15.0
+       ],
+       "id": "sketch1e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch1e1",
+        "sketch1e2",
+        "sketch1e3",
+        "sketch1e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 20,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "shell",
+     "id": "shell1",
+     "name": "Shell1",
+     "bodies": [
+      "Body1"
+     ],
+     "thickness": -2,
+     "join": "Kind.ARC",
+     "faces": [
+      {
+       "type": "face",
+       "geometry": "plane",
+       "point": [
+        0.0,
+        0.0,
+        20.0
+       ],
+       "normal": [
+        0.0,
+        0.0,
+        1.0
+       ],
+       "area": 1200.0
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

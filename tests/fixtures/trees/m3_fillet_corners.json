@@ -1,0 +1,271 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M3/FilletCorners",
+   "name": "FilletCorners",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30.0,
+        -20.0
+       ],
+       "end": [
+        30.0,
+        -20.0
+       ],
+       "id": "sketch1e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30.0,
+        -20.0
+       ],
+       "end": [
+        30.0,
+        20.0
+       ],
+       "id": "sketch1e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        30.0,
+        20.0
+       ],
+       "end": [
+        -30.0,
+        20.0
+       ],
+       "id": "sketch1e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -30.0,
+        20.0
+       ],
+       "end": [
+        -30.0,
+        -20.0
+       ],
+       "id": "sketch1e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch1e1",
+        "sketch1e2",
+        "sketch1e3",
+        "sketch1e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 10,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "fillet",
+     "id": "fillet1",
+     "name": "Fillet1",
+     "bodies": [
+      "Body1"
+     ],
+     "radius": 3,
+     "edges": [
+      {
+       "type": "edge",
+       "geometry": "line",
+       "point": [
+        -30.0,
+        -20.0,
+        5.0
+       ],
+       "start": [
+        -30.0,
+        -20.0,
+        0.0
+       ],
+       "end": [
+        -30.0,
+        -20.0,
+        10.0
+       ],
+       "samples": [
+        [
+         -30.0,
+         -20.0,
+         2.0
+        ],
+        [
+         -30.0,
+         -20.0,
+         4.5
+        ],
+        [
+         -30.0,
+         -20.0,
+         7.0
+        ]
+       ],
+       "length": 10.0,
+       "closed": false
+      },
+      {
+       "type": "edge",
+       "geometry": "line",
+       "point": [
+        30.0,
+        -20.0,
+        5.0
+       ],
+       "start": [
+        30.0,
+        -20.0,
+        10.0
+       ],
+       "end": [
+        30.0,
+        -20.0,
+        0.0
+       ],
+       "samples": [
+        [
+         30.0,
+         -20.0,
+         8.0
+        ],
+        [
+         30.0,
+         -20.0,
+         5.5
+        ],
+        [
+         30.0,
+         -20.0,
+         3.0
+        ]
+       ],
+       "length": 10.0,
+       "closed": false
+      },
+      {
+       "type": "edge",
+       "geometry": "line",
+       "point": [
+        30.0,
+        20.0,
+        5.0
+       ],
+       "start": [
+        30.0,
+        20.0,
+        10.0
+       ],
+       "end": [
+        30.0,
+        20.0,
+        0.0
+       ],
+       "samples": [
+        [
+         30.0,
+         20.0,
+         8.0
+        ],
+        [
+         30.0,
+         20.0,
+         5.5
+        ],
+        [
+         30.0,
+         20.0,
+         3.0
+        ]
+       ],
+       "length": 10.0,
+       "closed": false
+      },
+      {
+       "type": "edge",
+       "geometry": "line",
+       "point": [
+        -30.0,
+        20.0,
+        5.0
+       ],
+       "start": [
+        -30.0,
+        20.0,
+        10.0
+       ],
+       "end": [
+        -30.0,
+        20.0,
+        0.0
+       ],
+       "samples": [
+        [
+         -30.0,
+         20.0,
+         8.0
+        ],
+        [
+         -30.0,
+         20.0,
+         5.5
+        ],
+        [
+         -30.0,
+         20.0,
+         3.0
+        ]
+       ],
+       "length": 10.0,
+       "closed": false
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
