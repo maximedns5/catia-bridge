@@ -123,7 +123,10 @@ def test_preflight_does_not_cascade_from_an_unsupported_feature():
 
 def test_fixture_trees_pass_preflight():
     for path in TREES.glob("*.json"):
-        assert not analyze(json.loads(path.read_text())), path.name
+        tree = json.loads(path.read_text())
+        if any(part.get("placement") for part in tree["parts"]):
+            continue  # placed parts are refused for now (test_extrude_placement)
+        assert not analyze(tree), path.name
 
 
 def test_truncate_keeps_a_prefix_and_its_live_bodies():

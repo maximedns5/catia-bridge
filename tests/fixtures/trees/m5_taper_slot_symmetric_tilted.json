@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M5/TaperSlot",
+   "name": "TaperSlot",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       5,
+       -3,
+       2
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       -0.49999999999999994,
+       0.8660254037844387
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -10,
+        -4
+       ],
+       "end": [
+        10,
+        -4
+       ],
+       "id": "l1"
+      },
+      {
+       "type": "arc",
+       "start": [
+        10,
+        -4
+       ],
+       "mid": [
+        14,
+        0
+       ],
+       "end": [
+        10,
+        4
+       ],
+       "id": "a1"
+      },
+      {
+       "type": "line",
+       "start": [
+        10,
+        4
+       ],
+       "end": [
+        -10,
+        4
+       ],
+       "id": "l2"
+      },
+      {
+       "type": "arc",
+       "start": [
+        -10,
+        4
+       ],
+       "mid": [
+        -14,
+        0
+       ],
+       "end": [
+        -10,
+        -4
+       ],
+       "id": "a2"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "l1",
+        "a1",
+        "l2",
+        "a2"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "operation": "new_body",
+     "distance": 6,
+     "symmetric": true,
+     "taper": -3,
+     "creates": [
+      "Body1"
+     ]
+    }
+   ]
+  }
+ ]
+}

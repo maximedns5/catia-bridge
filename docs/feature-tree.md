@@ -30,13 +30,15 @@ Keep the new part's window active during a build. The build stops if the
 active window changes, because 3DEXPERIENCE measures and searches only in the
 active editor.
 
-## Supported features (milestones 1 to 4)
+## Supported features (milestones 1 to 5)
 
 | Tree feature | CATIA |
 |--------------|-------|
 | `sketch` (`line`, `circle`, 3-point `arc`) | A sketch on the origin plane, or on an offset or equation plane in a `Tree_Construction` geometrical set |
 | `extrude` `new_body` | Pad in the part's main body, then in new bodies |
 | `extrude` `join` / `cut` / `intersect` | Pad in a tool body, then Add / Remove / Intersect into the target |
+| `extrude` with `taper` (degrees, build123d's sign: positive narrows the solid), one-sided or symmetric, along the normal or a `direction` | One Multi-sections Solid per loop, from the loop to its 2D offset, as build123d builds it: inner loops get the opposite offset (holes widen when the outer loop shrinks) and are removed, the pieces are joined |
+| `extrude` with `direction` (the full vector, as build123d's `amount` along `dir`; a `distance`, if given, must be its length or its height) | Pad along a 3D line in `Tree_Construction` (`SetDirection`), symmetric or not |
 | `revolve` (any axis in the sketch plane, any angle up to 360) | Shaft in its own body, then combined like an extrude. The axis is the CATIA sketch's own H or V axis when the tree's axis is one of them, otherwise a 3D line in `Tree_Construction` |
 | `combine` | Add / Remove / Intersect |
 | `hole` `simple` / `counterbore` | Cylinders cut as the contract's hole profiles: through holes span ±`effective_depth`/2, and a counterbore clears `effective_depth` above |
@@ -56,7 +58,15 @@ edges or with three edges meeting at a corner, shells with no removed face
 (build123d's `offset` without openings shrinks or grows the solid rather than
 hollowing it), lofts through more than two sections, to a point, between
 sections that are not parallel or with correspondence rails, Frenet sweeps,
-sweeps along 3D paths or paths with corners, and tapered or oblique extrudes.
+sweeps along 3D paths or paths with corners, tapers whose offset changes the
+profile's topology (a loop collapsing or crossing itself or another) or that
+meet an arc at a corner without tangency, and parts placed by a parent
+location (`part.placement`). For those, `catia_mcp/tree/placement.py` is ready
+to move every 3D coordinate of a part's features into the world (sketch
+planes, revolve axes, sweep paths, hole frames, mirror and split planes, and
+any anchor point or direction), but it is not used until the contract says
+whether a placed part's features are in its own frame or already in world
+coordinates.
 
 ## How the build stays faithful
 
@@ -71,6 +81,8 @@ sweeps along 3D paths or paths with corners, and tapered or oblique extrudes.
   Where the result depends on the order OpenCascade visits the vertices in, which the tree does not give, the loft is refused rather than guessed. That happens for symmetric sections that pair equally well in two ways (a hexagon turned 30° from another), and for a vertex landing near a contested corner (a circle to a 2:1 rectangle). Each loft is then checked against the ruled solid's volume and centre of gravity, and deleted and rebuilt once with the second section reversed if CATIA twisted it.
 
   Known gap: with far-offset or irregular sections (a triangle well off another section's centre, for example), OpenCascade sometimes pairs the vertices in a reversed, twisted order that this module does not reproduce. Those lofts already look broken in build123d. The per-part volume check against the reference catches any such difference.
+- **Taper checks:** build123d tapers by lofting each loop to its offset by `-|vector|·tan(taper)` (sharp corners between lines, concentric arcs), the opposite offset for inner loops. `catia_mcp/tree/extrude.py` builds the same offsets with each vertex paired with its own offset, so every section along the extrude is an exact offset and its area is quadratic: the volume is the prismatoid `h/6·(A0 + 4·Am + A1)` (on the `m5_*` fixtures, build123d matches the closed forms to 1e-9, and the plan's centre of gravity to 1e-5 mm). Each loft is checked as a loft, and the whole extrude against the prismatoid's volume and centre of gravity. A Pad and a Draft would keep the taper angle editable, but need a reference to every side face and a pulling direction whose sign CATIA's API does not document, and build123d itself uses this loft whenever the profile has holes or the taper is negative.
+- **Oblique checks:** the Pad must give the profile's area times the height (`|direction·normal|`) and a centre of gravity half the vector away. If the first volume shows CATIA measured the length along the normal rather than the line, the length becomes the height, once; a reversed Pad is flipped once.
 - **Sweep checks:** a sweep is checked by Pappus: the profile's area times the length its centroid travels along the path.
 - **Combine checks:** a combine is checked against what its operation can give.
 - **Fillets, chamfers and shells** (`catia_mcp/tree/anchors.py`, `catia_mcp/tree/dressup.py`): the tree names edges and faces by geometry, as they are when the feature applies, never by index.
@@ -97,6 +109,10 @@ each path.
 - **Milestone 4** (`m4_*`):
   - lofts: a frustum, a rectangle prismatoid whose second section starts at another corner and runs the other way, a circle-to-square loft joined onto a box, and a loft cut;
   - sweeps: a pipe along a line and a tangent arc, an off-centre profile along a line, an arc and a line, and a half-buried groove cut.
+- **Milestone 5** (`m5_*`):
+  - tapers: a rectangle, a ring joined onto a block (its hole widens), a symmetric slot on a tilted plane with a negative taper, a tapered pocket cut downwards, and an oblique taper on the YZ plane;
+  - oblique extrudes: a rectangle with a hole, and a symmetric cut whose distance is the direction's height;
+  - a block placed by a rotation and a translation, with a split and a through hole. Tests also place eleven earlier fixtures and check that the reference volume stays and its centre of gravity moves with the placement.
 
 The build123d reference reproduces the source build123d models exactly on
 the parts these milestones cover, such as a revolved shaft, a split housing,
@@ -106,8 +122,10 @@ chamfered top, and an open-top shell.
 Not yet validated live: the Multi-sections Solid calls (`AddNewLoft`,
 `HybridShape.SectionCoupling` = 4 for vertex coupling, `AddSectionToLoft` with
 a closing point and an orientation of 1 or -1), deleting a twisted loft
-through the selection, and `AddNewRib` with a path sketch as its centre
-curve.
+through the selection, `AddNewRib` with a path sketch as its centre
+curve, `Prism.SetDirection` with a 3D line (and whether CATIA then measures
+the Pad's length along the line or along the sketch normal), and lofts drawn
+on sketches in equation planes for tilted parts.
 
 Not yet validated live, for fillets, chamfers and shells:
 - the cause of the tool body cells and the ownership filter: whether

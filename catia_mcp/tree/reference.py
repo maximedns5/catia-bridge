@@ -37,14 +37,17 @@ from catia_mcp.tree.anchors import (
     match_edges,
     match_faces,
 )
+from catia_mcp.tree.extrude import extrude_vector
 from catia_mcp.tree.geometry import (
     Frame,
     add,
     frame_axes,
     hole_profile_sketch,
     hole_segments,
+    norm,
     scale,
 )
+from catia_mcp.tree.placement import place_part
 
 
 class ReferenceError(Exception):
@@ -154,6 +157,7 @@ def _dressup(feature: dict[str, Any], body: Any) -> Any:
 
 
 def build_part(part: dict[str, Any]) -> Any:
+    part = place_part(part)
     sketches: dict[str, dict[str, Any]] = {}
     bodies: dict[str, Any] = {}
     for feature in part.get("features") or []:
@@ -162,11 +166,12 @@ def build_part(part: dict[str, Any]) -> Any:
             sketches[feature["id"]] = feature
         elif kind == "extrude":
             sketch = sketches[feature["sketch"]]
-            normal = Frame.from_tree(sketch["plane"]).normal
-            distance = float(feature["distance"])
-            direction = normal if distance > 0 else scale(normal, -1)
-            solid = extrude(sketch_faces(sketch), amount=abs(distance), dir=direction,
-                            both=bool(feature.get("symmetric")))
+            # The full vector the profile travels along, as build123d's
+            # extrude(amount, dir) moves it (amount along dir).
+            vector = extrude_vector(feature, Frame.from_tree(sketch["plane"]))
+            solid = extrude(sketch_faces(sketch), amount=norm(vector), dir=vector,
+                            both=bool(feature.get("symmetric")),
+                            taper=float(feature.get("taper") or 0.0))
             if feature["operation"] == "new_body":
                 bodies[feature["creates"][0]] = solid
             else:
