@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 from test_tree import CLOSED_FORM_MM3, _builder, _FakePart, _lofts, _mass, load
 
+from catia_mcp.tree import builder as builder_module
 from catia_mcp.tree.extrude import offset_loop, taper_plan
 from catia_mcp.tree.geometry import Frame, cross, dot, profile_area_centroid
 from catia_mcp.tree.loft import section_loop
@@ -346,15 +347,23 @@ def test_place_part_moves_every_world_coordinate_and_nothing_else():
     assert place_part({"id": "/Q", "features": []}) == {"id": "/Q", "features": []}
 
 
-def test_preflight_accepts_rigid_placements_only():
+def test_preflight_refuses_placed_parts_for_now():
+    assert list(analyze(load("m5_placed_block"))) == [
+        "parts placed by a parent location are not supported yet"]
+
+
+def test_place_part_accepts_rigid_placements_only():
     tree = load("m5_placed_block")
-    assert not analyze(tree)
-    tree["parts"][0]["placement"][0][0] = 2.0  # a scale
-    assert "part placement is invalid (the placement is not a rigid motion" in next(iter(analyze(tree)))
-    tree["parts"][0]["placement"] = _placement([[-1, 0, 0], [0, 1, 0], [0, 0, 1]], (0, 0, 0))
-    assert "mirrors the part" in next(iter(analyze(tree)))
-    tree["parts"][0]["placement"] = [[1, 0, 0]]
-    assert "not a 3x4 matrix" in next(iter(analyze(tree)))
+    part = tree["parts"][0]
+    part["placement"][0][0] = 2.0  # a scale
+    with pytest.raises(ValueError, match="not a rigid motion"):
+        place_part(part)
+    part["placement"] = _placement([[-1, 0, 0], [0, 1, 0], [0, 0, 1]], (0, 0, 0))
+    with pytest.raises(ValueError, match="mirrors the part"):
+        place_part(part)
+    part["placement"] = [[1, 0, 0]]
+    with pytest.raises(ValueError, match="not a 3x4 matrix"):
+        place_part(part)
 
 
 PLACED_FIXTURES = ("m1_holes", "m1_tilted_plane", "m2_shaft_axis_off_origin",
@@ -376,7 +385,6 @@ def test_a_placed_part_keeps_its_volume_and_moves_its_centre_of_gravity():
         tree = load(name)
         (plain,) = expected(tree).values()
         tree["parts"][0]["placement"] = _placement(rotation, translation)
-        assert not analyze(tree), name
         (placed,) = expected(tree).values()
         assert placed["volume_mm3"] == pytest.approx(plain["volume_mm3"], rel=1e-7), name
         assert placed["cog_mm"] == pytest.approx(
@@ -384,6 +392,8 @@ def test_a_placed_part_keeps_its_volume_and_moves_its_centre_of_gravity():
 
 
 def test_the_builder_builds_a_placed_part_in_world_coordinates(monkeypatch):
+    # The preflight refuses placed parts for now; the builder's path is kept ready.
+    monkeypatch.setattr(builder_module, "check", lambda tree: None)
     rotation, translation = _rotation((0, 1, 1), -50), (5, 6, -7)
     tree = load("m2_shaft_axis_off_origin")
     tree["parts"][0]["placement"] = _placement(rotation, translation)
