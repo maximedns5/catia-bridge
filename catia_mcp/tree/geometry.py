@@ -1,4 +1,5 @@
 """Pure geometry for the tree: planes, 3-point arcs, sketch and hole profiles.
+Splines (exact rational NURBS) are in nurbs.py.
 
 No CATIA here, so everything can be tested offline. Lengths are mm, sketch
 coordinates are (u, v) on a plane, and world = origin + u*x_dir + v*y_dir with
@@ -11,6 +12,8 @@ import math
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
+
+from catia_mcp.tree.nurbs import Nurbs, drawing
 
 Vec = tuple[float, float, float]
 
@@ -129,6 +132,8 @@ def _polyline(entity: dict[str, Any]) -> list[tuple[float, float]]:
         if math.dist(pts[0], entity["start"]) > math.dist(pts[-1], entity["start"]):
             pts.reverse()
         return pts
+    if kind == "spline":
+        return Nurbs.from_entity(entity).polygon()
     raise ValueError(f"no polyline for entity type '{kind}'")
 
 
@@ -184,6 +189,17 @@ def profile_loops(sketch: dict[str, Any]) -> list[tuple[int, list[tuple[float, f
     return loops
 
 
+def approximation_area(sketch: dict[str, Any]) -> float:
+    """A bound on the area (mm2) between the profiles' splines and what CATIA
+    is given for them: 0 for exact conics, else the area between each curve
+    and the chords of the points its sketch spline goes through."""
+    by_id = {e["id"]: e for e in sketch["entities"]}
+    used = {i for profile in sketch["profiles"]
+            for loop in [profile["outer"], *profile.get("inner", [])] for i in loop}
+    return sum(drawing(Nurbs.from_entity(by_id[i])).deviation_area
+               for i in sorted(used) if by_id[i]["type"] == "spline")
+
+
 def profile_area_centroid(sketch: dict[str, Any], profiles: list[dict[str, Any]] | None = None):
     """Total area (mm2) and centroid (u, v) of a sketch's profiles: each outer
     loop minus its inner loops."""
@@ -230,6 +246,7 @@ class RevolveExpectation:
     cog: Vec          # revolving by +angle, right-handed about the axis direction
     cog_reversed: Vec  # revolving the other way
     min_radius: float  # < 0 when the profile crosses the axis
+    max_radius: float = 0.0  # the profile's farthest point from the axis
 
 
 def revolve_expectation(frame: Frame, sketch: dict[str, Any], axis_origin: Vec,
@@ -244,13 +261,14 @@ def revolve_expectation(frame: Frame, sketch: dict[str, Any], axis_origin: Vec,
         raise ValueError("the profile's centroid lies on the revolve axis")
     e_r = unit(radial)
     area = s1 = s2 = st = 0.0
-    min_radius = math.inf
+    min_radius, max_radius = math.inf, 0.0
     for sign, polygon in profile_loops(sketch):
         local = []
         for u, v in polygon:
             rel = add(frame.world(u, v), scale(axis_origin, -1))
             local.append((dot(rel, e_r), dot(rel, d)))
             min_radius = min(min_radius, local[-1][0])
+            max_radius = max(max_radius, abs(local[-1][0]))
         a, sx, ixx, ixy = _polygon_moments(local)
         area += sign * a
         s1 += sign * sx
@@ -267,7 +285,7 @@ def revolve_expectation(frame: Frame, sketch: dict[str, Any], axis_origin: Vec,
         swing = add(scale(e_r, math.cos(phi)), scale(tangent, math.sin(phi)))
         return add(add(axis_origin, along), scale(swing, distance_from_axis))
 
-    return RevolveExpectation(volume, at(half), at(-half), min_radius)
+    return RevolveExpectation(volume, at(half), at(-half), min_radius, max_radius)
 
 
 def hole_segments(feature: dict[str, Any]) -> list[tuple[float, float, float]]:

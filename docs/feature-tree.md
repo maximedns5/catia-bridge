@@ -28,7 +28,7 @@ active editor.
 
 | Tree feature | CATIA |
 |--------------|-------|
-| `sketch` (`line`, `circle`, 3-point `arc`) | A sketch on the origin plane, or on an offset or equation plane in a `Tree_Construction` geometrical set |
+| `sketch` (`line`, `circle`, 3-point `arc`, `spline`) | A sketch on the origin plane, or on an offset or equation plane in a `Tree_Construction` geometrical set. Splines: see [Spline sketch entities](#spline-sketch-entities) |
 | `extrude` `new_body` | Pad in the part's main body, then in new bodies |
 | `extrude` `join` / `cut` / `intersect` | Pad in a tool body, then Add / Remove / Intersect into the target |
 | `revolve` (any axis in the sketch plane, any angle up to 360) | Shaft in its own body, then combined like an extrude. The axis is the CATIA sketch's own H or V axis when the tree's axis is one of them, otherwise a 3D line in `Tree_Construction` |
@@ -43,7 +43,9 @@ active editor.
 Everything else is refused by `check`, for now: fillet, chamfer and shell
 (milestone 3), lofts through more than two sections, to a point, between
 sections that are not parallel or with correspondence rails, Frenet sweeps,
-sweeps along 3D paths or paths with corners, and tapered or oblique extrudes.
+sweeps along 3D paths or paths with corners, tapered or oblique extrudes, and
+`spline` entities in loft sections, sweep profiles and sweep paths (only
+extrudes and revolves take spline sketches).
 
 ## How the build stays faithful
 
@@ -59,8 +61,65 @@ sweeps along 3D paths or paths with corners, and tapered or oblique extrudes.
 
   Known gap: with far-offset or irregular sections (a triangle well off another section's centre, for example), OpenCascade sometimes pairs the vertices in a reversed, twisted order that this module does not reproduce. Those lofts already look broken in build123d. The per-part volume check against the reference catches any such difference.
 - **Sweep checks:** a sweep is checked by Pappus: the profile's area times the length its centroid travels along the path.
+- **Spline checks:** see below.
 - **Combine checks:** a combine is checked against what its operation can give.
 - **No other retries:** the first failure stops the build with its part and feature, and the document may then hold a partial model.
+
+## Spline sketch entities
+
+A `spline` is an exact rational NURBS: `degree`, 2D `poles`, `weights`,
+`knots` (the full knot vector, multiplicities expanded) and `periodic`.
+`catia_mcp/tree/nurbs.py` reads it in pure Python (no build123d or numpy at
+build time) into rational Bezier spans by knot insertion. For periodic curves
+it accepts the knots in any of three forms: textbook (`len(knots) =
+len(poles) + degree + 1`), OpenCascade's flat knot sequence (the first poles
+wrap around), or one period of knots, first and last one period apart.
+
+- **Areas, centroids and revolves** use a polygon whose chords stay within
+  1e-7 of the curve's size (at least 8 chords per span). The area error is
+  under 1e-6 relative, against OpenCascade's in the tests, two orders below
+  the part tolerance.
+- **Circles and ellipses are drawn exactly.** A degree-2 rational spline
+  whose spans are all elliptical arcs (standard-form weight below 1) of the
+  same ellipse, turning the same way, is drawn as one `CreateClosedCircle`,
+  `CreateCircle`, `CreateClosedEllipse` or `CreateEllipse`. This covers
+  build123d's `Ellipse`, `EllipticalArc` and circles traced as splines. The
+  feature check is the usual one.
+- **Degree-1 splines** are drawn as lines.
+- **Other splines are approximated.** CATIA's Automation has no call that
+  takes poles, weights and knots. The curve is drawn as sketch splines
+  (`CreateControlPoint` + `CreateSpline`) through points on it: one spline
+  per smooth piece (split at corners), and a closed curve as two halves.
+  Between two points the tangent turns by at most 2°, with at least 4
+  intervals per span. Even straight chords between those points enclose the
+  area to about turn²/12 (2e-4 relative for a round loop); an interpolating
+  spline through them errs as turn⁴ (OpenCascade's interpolation, in the
+  tests, is 20 times inside the chord bound and under 1e-5).
+  - The feature's `notes` say how many sketch splines and points were used.
+  - The pad or revolve volume check, and the part check, allow the bound on
+    the area between the curve and the chords, swept: times the pad length,
+    or times the angle and the profile's largest radius. The part report
+    gives the total as `spline_allowance_mm3`. A spline CATIA misdraws (one
+    through a quarter of the points, in the tests) still fails its check.
+- **Refused:** splines in loft sections (the vertex pairing reproduces
+  OpenCascade's for lines and arcs only), in sweep profiles (the Rib check
+  has no allowance yet) and in sweep paths.
+- **Reference:** build123d builds the same curve as an OpenCascade B-spline
+  (re-knotted clamped, exactly). Its volume is integrated with Gauss-Kronrod,
+  because OpenCascade's default integration is 1.7e-3 off on an extruded
+  ellipse. Its centre of gravity uses the default integration and can be off
+  by about 1e-3 mm on spline faces.
+
+Not yet validated live:
+- That `CreateSpline` passes through its control points. The Automation
+  help calls them poles. If CATIA used them as poles, the curve would move by
+  about twice the chord bound, which the checks may not catch: check one
+  spline's shape by eye.
+- Passing the control points to `CreateSpline` as a Python tuple of COM
+  objects.
+- The argument order of `CreateClosedEllipse(cx, cy, majorX, majorY,
+  majorRadius, minorRadius)` and `CreateEllipse(..., start, end)`, and that
+  the angles are eccentric angles, counter-clockwise from the major axis.
 
 ## Live status
 
@@ -75,6 +134,7 @@ each path.
 - **Milestone 4** (`m4_*`):
   - lofts: a frustum, a rectangle prismatoid whose second section starts at another corner and runs the other way, a circle-to-square loft joined onto a box, and a loft cut;
   - sweeps: a pipe along a line and a tangent arc, an off-centre profile along a line, an arc and a line, and a half-buried groove cut.
+- **Splines** (`m6_*`): a rotated ellipse with a round hole on an offset plane, a free-form periodic cubic padded backwards on `-XZ`, a clamped rational cubic revolved about the sketch's V axis, and a prolate spheroid (half an ellipse, two spans) revolved as a cut.
 
 The build123d reference reproduces the source build123d models exactly on
 the parts these milestones cover, such as a revolved shaft, a split housing,

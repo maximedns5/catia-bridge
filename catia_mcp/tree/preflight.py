@@ -12,13 +12,14 @@ from typing import Any
 
 from catia_mcp.tree.geometry import Frame, dot, profile_area_centroid, revolve_expectation, unit
 from catia_mcp.tree.loft import plan_loft
+from catia_mcp.tree.nurbs import Nurbs
 from catia_mcp.tree.sweep import sweep_expectation
 
 # Milestones 1, 2 and 4: sketches, extrudes, revolves, combines, holes,
 # mirrors joined back into their source, splits, lofts and sweeps.
 SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
              "sweep")
-ENTITY_TYPES = ("line", "circle", "arc")
+ENTITY_TYPES = ("line", "circle", "arc", "spline")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
 COMBINE_OPERATIONS = ("join", "cut", "intersect")
 HOLE_KINDS = ("simple", "counterbore", "countersink")
@@ -109,6 +110,12 @@ def _check_sketch(feature, refuse, where) -> None:
         if entity.get("type") not in ENTITY_TYPES:
             refuse(f"sketch entity type '{entity.get('type')}' is not supported yet", where)
             return
+        if entity["type"] == "spline":
+            try:
+                Nurbs.from_entity(entity)
+            except ValueError as error:
+                refuse(f"sketch spline is invalid ({error})", where)
+                return
     if not feature.get("profiles"):
         refuse("sketch has no closed profile", where)
         return
@@ -116,6 +123,10 @@ def _check_sketch(feature, refuse, where) -> None:
         profile_area_centroid(feature)
     except (KeyError, ValueError) as error:
         refuse(f"sketch profile is not a closed region ({error})", where)
+
+
+def _has_spline(sketch: dict[str, Any]) -> bool:
+    return any(entity.get("type") == "spline" for entity in sketch.get("entities") or [])
 
 
 def _check_operation(feature, bodies, refuse, where, kind) -> None:
@@ -173,6 +184,10 @@ def _check_loft(feature, sketches, bodies, refuse, where) -> None:
                if len(sections) > 2 else "a loft needs two sections", where)
     elif any(name not in sketches for name in sections):
         refuse("loft refers to an unknown sketch", where)
+    elif any(_has_spline(sketches[name]) for name in sections):
+        # The vertex pairing (loft.py) reproduces OpenCascade's for lines and
+        # arcs only, and a section drawn as sketch splines has other vertices.
+        refuse("loft sections with spline entities are not supported yet", where)
     else:
         try:
             plan_loft(sketches[sections[0]], sketches[sections[1]])
@@ -191,6 +206,11 @@ def _check_sweep(feature, sketches, bodies, refuse, where) -> None:
         refuse("sweep refers to an unknown sketch", where)
     elif len(sketch.get("profiles") or []) != 1:
         refuse("a sweep profile must be a sketch with exactly one profile", where)
+    elif _has_spline(sketch):
+        # The Rib is checked by Pappus with no allowance for a profile drawn
+        # as approximating sketch splines. Spline paths are refused by
+        # sweep.path_plane: a Rib's centre curve would need its own check.
+        refuse("sweep profiles with spline entities are not supported yet", where)
     else:
         try:
             sweep_expectation(sketch, feature.get("path") or [])
