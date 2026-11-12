@@ -26,6 +26,7 @@ from typing import Any
 from catia_mcp.automation import safe_get
 from catia_mcp.connection import CATIAConnection
 from catia_mcp.introspect import find_enum
+from catia_mcp.watchdog import public
 
 # Factory methods probed on an active Part document. These lists mirror
 # the methods the real tools call, so a probe that fails here fails the
@@ -122,12 +123,43 @@ class DiagnosticsTools:
                     "properties": {},
                 },
             },
+            {
+                "name": "catia_capabilities",
+                "description": (
+                    "Tell what this CATIA (V5 or 3DEXPERIENCE) can do, in plain language: "
+                    "which content it can create, which Part Design / wireframe features "
+                    "it can build, whether STEP export works from automation, and the "
+                    "next step for what it cannot do. Each capability is verified, "
+                    "authorized (licence says yes), unavailable (with the reason) or "
+                    "unknown. Read-only: it reads the release, the licence inventory, the "
+                    "session services and factory names, plus the cached results of "
+                    "earlier scratch-part probes (run those with `python -m "
+                    "catia_mcp.tree capabilities --create`). Feature-tree builds are "
+                    "refused when they need something unavailable."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "refresh": {
+                            "type": "boolean",
+                            "description": "Ignore results cached by earlier probes",
+                        },
+                    },
+                },
+            },
         ]
 
     def execute(self, tool_name: str, arguments: dict[str, Any]) -> str:
         match tool_name:
             case "catia_diagnose":
                 return self._diagnose()
+            case "catia_capabilities":
+                from catia_mcp.capabilities import probe
+
+                report = probe(self.conn, use_cache=not arguments.get("refresh", False))
+                summary = {"summary": report.pop("summary")}
+                return json.dumps({**summary, **report}, indent=2, ensure_ascii=False,
+                                  default=str)
             case _:
                 raise ValueError(f"Unknown diagnostics tool: {tool_name}")
 
@@ -138,6 +170,9 @@ class DiagnosticsTools:
         report: dict[str, Any] = {"python": self._python_info(app)}
         report["catia"] = self._catia_info(app)
         report["catia"]["platform"] = self.conn.platform_label
+        for key, value in self.conn.fingerprint().items():
+            report["catia"].setdefault(key, value)
+        report["dialog_watchdog"] = public(self.conn.watchdog.snapshot())
         if self.conn.is_3dx:
             report["plm"] = self._plm_probe(app)
             report["factories"] = self._factory_probe()
