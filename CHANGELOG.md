@@ -16,6 +16,34 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
+  CATIA calls run on one guarded worker. A modal dialog ends a call with
+  `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that
+  never returns marks the session blocked until `catia_connect`. Busy CATIA
+  is retried briefly, several running CATIA processes are refused, and the
+  connection reports a release fingerprint. Dialogs are only dismissed when
+  an allowlist says so.
+- **Capability probe** (`catia_capabilities`, `python -m catia_mcp.tree
+  capabilities`): what this CATIA can do, from read-only checks up to opt-in
+  scratch parts and risky probes, cached per installation. The tree build
+  refuses a model that needs a capability found unavailable.
+- **Feature tree replay, milestone 3:** fillets, chamfers and shells. Edges
+  and faces are found by the tree's geometric anchors among the cells of the
+  body's last feature (filtering out the cells of nested tool bodies), one
+  CATIA feature per tree feature.
+- **Feature tree replay, milestone 5:** tapered extrudes (a loft from each
+  loop to its offset, as build123d builds them) and oblique extrudes (a Pad
+  along a 3D line). Part placement is implemented but still refused until the
+  contract says which frame a placed part's features are in.
+- **Spline sketch entities:** exact rational NURBS from the tree, drawn
+  exactly when they are circles or ellipses, otherwise as sketch splines
+  through sampled points, with the volume checks widened by the sampling
+  error bound.
+- **STEP fallback** (`catia_import_step`, `catia_paste_dead_body`,
+  `catia_list_dead_bodies`, `--step-dir`): on V5, STEP files can stand in for
+  features with no native rule, pasted as bodies without history; on
+  3DEXPERIENCE the user imports and the bridge adopts the result. The build
+  report lists dead bodies apart from the native features.
 - **Feature tree replay, milestone 4:** `loft` between two sections in
   parallel planes and `sweep` of one profile along a planar,
   tangent-continuous path of lines and arcs, for every operation.
@@ -106,6 +134,9 @@ All notable changes to this project are documented here.
   live V5 or 3DEXPERIENCE session and writes a JSON report.
 
 ### Fixed
+- `catia_new_part` in auto mode on 3DEXPERIENCE creates a 3D Shape, unless a
+  probe verified that this installation may create a 3D Part (on many roles
+  a 3D Part opens a blocking "Operation not authorized" dialog).
 - `python -m catia_mcp.tree build` and `check` no longer need build123d,
   which only the reference uses.
 - Found by the differential harness on 3DEXPERIENCE R428 SP6 in French:
