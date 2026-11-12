@@ -33,6 +33,7 @@ from catia_mcp.automation import (
 )
 from catia_mcp.connection import CATIAConnection
 from catia_mcp.errors import AmbiguousTarget, ObjectNotFound, UnsupportedCapability
+from catia_mcp.introspect import member_kind
 
 # Attributes read for search results and attribute reports. Not every type
 # carries every attribute; missing ones are skipped.
@@ -50,6 +51,9 @@ STANDARD_ATTRIBUTES = (
     "V_discipline",
     "V_usage",
 )
+
+# Not in the documented DatabaseSearch (DSYAutomation): probed, never assumed.
+SEARCH_RESET_METHODS = ("ClearCriteria", "RemoveAllCriteria", "ResetCriteria")
 
 CREATE_TYPES = {
     "3dpart": "3DPart",
@@ -149,19 +153,34 @@ class PLMSession:
         db_search = service.DatabaseSearch
         # The DatabaseSearch object may persist across searches in a session;
         # clear earlier criteria where the release exposes a way to.
-        for clear in ("ClearCriteria", "RemoveAllCriteria", "ResetCriteria"):
-            if name_exists(db_search, clear):
-                try:
-                    getattr(db_search, clear)()
-                except Exception:
-                    pass
-                break
+        clear = self.search_reset_method(db_search)
+        if clear:
+            try:
+                getattr(db_search, clear)()
+            except Exception:
+                pass
         db_search.BaseType = base_type
         db_search.AddEasyCriteria(attribute, value)
         for name, criterion in (extra_criteria or {}).items():
             db_search.AddEasyCriteria(name, criterion)
         service.Search()
         return list(iter_items(db_search.Results))
+
+    @staticmethod
+    def search_reset_method(db_search: Any) -> str | None:
+        """The member that clears earlier criteria, or None. The documented
+        DatabaseSearch has none; the names are tried in case a release adds
+        one. Read from the type library, which never invokes the member (a
+        late-bound getattr may call a zero-argument method as a property);
+        without type information, fall back to name resolution."""
+        for name in SEARCH_RESET_METHODS:
+            try:
+                kind = member_kind(db_search, name)
+            except Exception:  # noqa: BLE001 -- no type information: resolve the name
+                kind = "method" if name_exists(db_search, name) else None
+            if kind == "method":
+                return name
+        return None
 
     def pick_one(self, entities: list[Any], description: str, index: int | None) -> Any:
         if not entities:

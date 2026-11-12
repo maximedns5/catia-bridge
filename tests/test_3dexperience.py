@@ -192,7 +192,9 @@ def test_stale_active_body_fails_instead_of_switching_body():
 # ── Document tools ──
 
 
-def test_new_part_falls_back_to_3d_shape_and_sets_title():
+def test_new_part_auto_creates_a_3d_shape_and_sets_title():
+    """auto never tries a 3D Part unprobed: on many roles that opens a blocking
+    licence dialog (tests/test_capabilities.py covers a probed 3D Part)."""
     app = App3DX()
     service = NewService(app, refuse=("3DPart",))
     app.session_services["PLMNewService"] = service
@@ -200,7 +202,7 @@ def test_new_part_falls_back_to_3d_shape_and_sets_title():
     result = run(call(server, "catia_new_part", {"name": "Bracket"}))
     assert not result.isError, text(result)
     assert service.created == ["3DShape"]
-    assert "3DShape 'Bracket'" in text(result) and "not authorized" in text(result)
+    assert "3DShape 'Bracket'" in text(result) and "not authorized" not in text(result)
     assert app.ActiveEditor.ActiveObject.Parent.attributes["V_Name"] == "Bracket"
 
 
