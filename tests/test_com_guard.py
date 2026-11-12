@@ -332,7 +332,7 @@ def test_tree_build_blocked_by_a_dialog_writes_a_report_naming_part_and_feature(
     finally:
         release.set()
     assert code == 1
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["success"] is False
     error = report["error"]
     assert (error["part"], error["feature"], error["code"]) == ("/P", "pad1", "BLOCKED_BY_DIALOG")
