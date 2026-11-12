@@ -1,7 +1,9 @@
 """Preflight: refuse a whole tree before touching CATIA.
 
 A model is refused as a whole if any part is unread, uses a feature this
-builder does not support yet, or is malformed.
+builder does not support yet, or is malformed, and, given a capability probe
+report (catia_mcp.capabilities), if it needs something the probe found
+unavailable on this CATIA (never for "unknown").
 Each reason is reported once, with its count and the model lines it comes from.
 """
 
@@ -13,6 +15,7 @@ from typing import Any
 from catia_mcp.tree.anchors import edge_anchor_problem, face_anchor_problem, plane_of
 from catia_mcp.tree.geometry import Frame, dot, profile_area_centroid, revolve_expectation, unit
 from catia_mcp.tree.loft import plan_loft
+from catia_mcp.tree.requirements import refuse_unavailable
 from catia_mcp.tree.sweep import sweep_expectation
 
 # Milestones 1 to 4: sketches, extrudes, revolves, combines, holes, mirrors
@@ -43,8 +46,10 @@ def _where(feature: dict[str, Any]) -> str:
     return f"feature {feature.get('id', '?')}"
 
 
-def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
-    """Every reason to refuse the tree, mapped to where it occurs."""
+def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
+            plm_type: str | None = "3DShape") -> OrderedDict[str, list[str]]:
+    """Every reason to refuse the tree, mapped to where it occurs.
+    `capabilities` is a probe report; plm_type is the 3DEXPERIENCE container."""
     reasons: OrderedDict[str, list[str]] = OrderedDict()
 
     def refuse(reason: str, where: str) -> None:
@@ -105,6 +110,8 @@ def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
                 _check_chamfer(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "shell":
                 _check_shell(feature, bodies, refuse, f"{pid} {where}")
+    if capabilities is not None:
+        refuse_unavailable(tree, capabilities, plm_type, refuse, _where)
     return reasons
 
 
@@ -408,8 +415,9 @@ def refusal(reasons: OrderedDict[str, list[str]]) -> str:
     )
 
 
-def check(tree: dict[str, Any]) -> None:
-    reasons = analyze(tree)
+def check(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
+          plm_type: str | None = "3DShape") -> None:
+    reasons = analyze(tree, capabilities, plm_type)
     if reasons:
         raise TreeRefused(reasons)
 

@@ -11,7 +11,12 @@ and gives no agent access to CATIA.
 python -m catia_mcp.tree check TREE.json
 python -m catia_mcp.tree reference TREE.json
 python -m catia_mcp.tree build TREE.json --plm-type 3DShape
+python -m catia_mcp.tree capabilities [--create] [--risky 3dpart]
 ```
+
+`build` first probes what this CATIA can do and refuses a tree that needs
+something found unavailable; `capabilities` runs that probe on its own
+([capabilities.md](capabilities.md)).
 
 - **`check`:** the preflight only, with no CATIA. If any feature is unsupported or malformed, the whole tree is refused. Each reason is listed once, with its count and model lines.
 - **`reference`:** the expected per-part volume, area and centre of gravity, built with build123d (`pip install -e ".[differential]"`).

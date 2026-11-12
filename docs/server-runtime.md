@@ -22,14 +22,86 @@ not stop an already queued or executing COM operation. The worker completes it
 before starting another call. Cancellation does not establish model rollback;
 inspect the model before repeating a write.
 
-There is no global unknown-session latch in this runtime change. It does not
-introduce CAA tools, binaries, dependencies or native delivery-state handling.
-CAA-specific indeterminate writes and recovery belong to the separate adapter.
+## Dialogs, hangs and a busy CATIA
 
-No modal-dialog detection or COM-call cancellation is implemented. If a CATIA
-dialog blocks a call, the worker and shutdown wait for it. Close the dialog. If
-CATIA cannot recover, terminate CNEXT and restart MCP. This is a documented
-runtime limitation, not a bounded-shutdown guarantee.
+`catia_mcp/watchdog.py` looks at CATIA from outside COM, with plain Win32
+calls (ctypes) that keep working while the worker is stuck in a call: the
+CATIA processes, their visible top-level windows (title, class, child texts)
+and whether the main window is disabled, the generic sign that a modal dialog
+is open. On other platforms it reports itself unavailable and every check
+passes through. `catia_mcp/com_guard.py` runs the worker and waits for it:
+
+| Situation | Result | Session |
+|---|---|---|
+| A dialog is already open when a call arrives | `BLOCKED_BY_DIALOG`, dialog title and text, `modified=false`; nothing is sent to CATIA | unchanged: call again once it is closed |
+| A modal dialog stays open longer than `CATIA_MCP_DIALOG_GRACE` s (default 3) during a call | `BLOCKED_BY_DIALOG` with the dialog's text, `modified=null` | latched |
+| No answer within `CATIA_MCP_CALL_TIMEOUT` s (default 180, 0 = never) | `SESSION_BLOCKED` with what the watchdog sees, `modified=null` | latched |
+| CATIA rejects a call as busy (`RPC_E_CALL_REJECTED`, `RPC_E_SERVERCALL_RETRYLATER`) | the connection check and attach retry with backoff for `CATIA_MCP_BUSY_RETRY` s (default 10); inside a tool: `CATIA_BUSY`, `modified=null` | unchanged |
+
+A COM call cannot be cancelled in-process, so a call that ended in a latch
+keeps running in CATIA. While it is still stuck (`blocked`) every call,
+`catia_connect` included, is refused with `SESSION_BLOCKED` and a fresh
+snapshot of the screen. Once it has returned (`unknown`: its effect on the
+model was never reported) every call except `catia_connect` and
+`catia_disconnect` is refused; `catia_connect` clears the latch. What to do,
+as the error messages say: read and close the dialog in CATIA, check the
+model, call `catia_connect`. If CATIA is frozen, end it in Task Manager,
+restart it and call `catia_connect`; restart the server if the session
+still reports blocked. Shutdown does not wait for a stuck call (the worker
+is a daemon thread). A progress window (a child `msctls_progress32`) does
+not count as a blocking dialog; whether CATIA's own progress and dialog
+windows use standard Win32 classes is not verified live.
+
+Dialogs are only reported by default. `CATIA_MCP_DIALOG_AUTODISMISS` names a
+JSON allowlist, for example:
+
+```json
+[{"title": "Update diagnosis", "text": "", "button": "OK"},
+ {"title": "Operation not authorized", "button": "OK", "licence": true}]
+```
+
+Every given field must be contained (case insensitive) in the dialog's title
+or text. A rule applies to a dialog that mentions a licence, an
+authorization or a role only with `"licence": true`; save / discard prompts
+are never pressed. Dismissed dialogs are logged and listed in
+`dismissed_dialogs`.
+
+Other modules run CATIA work under the same guard with
+`catia_mcp.com_guard.run_guarded(fn, *args, timeout=..., label=...)`: inside
+a guarded call it runs inline on the worker, elsewhere on a process-wide
+worker. `python -m catia_mcp.tree build` runs connect and the whole build on
+its own guarded worker (timeout: `--deadline` + 60 s); a dialog ends the
+build with a report naming the part, the feature and the dialog's text.
+
+## Which CATIA
+
+CATIA V5 and 3DEXPERIENCE register the same `CATIA.Application` ProgID and
+`GetActiveObject` returns whichever instance registered first. `catia_connect`
+therefore counts the CATIA processes that show a window (default executable
+names `CNEXT.exe` and `3DEXPERIENCE.exe`, the second unverified live;
+`CATIA_MCP_PROCESS_NAMES=a.exe,b.exe` overrides) and refuses with
+`AMBIGUOUS_TARGET` when more than one runs (`CATIA_MCP_ALLOW_SEVERAL_CATIA=1`
+attaches anyway). The connect message and `catia_diagnose` carry the
+release fingerprint: platform, Version, Release, ServicePack, caption,
+Windows UI language (CATIA follows it unless Tools > Options sets another),
+the topology language once known, the CATIA processes and the gen_py folder.
+`catia_diagnose` also includes the watchdog's snapshot.
+
+pywin32's makepy cache is a private folder per bridge and Python version
+(`%LOCALAPPDATA%\catia-mcp\gen_py\<version>-py<X.Y>`, set before
+`win32com.client` loads; `CATIA_MCP_GEN_PY` names another folder, `default`
+keeps pywin32's), so a stale `%TEMP%\gen_py` left by another tool cannot
+change how CATIA binds. The bridge binds late and never calls
+`gencache.EnsureDispatch`.
+
+Not validated on a live CATIA yet: the 3DEXPERIENCE executable name, whether
+licence and update dialogs disable the main window and expose their text to
+Win32, whether a busy CATIA answers with the two rejection codes, and
+whether pressing a dialog's button makes the blocked call return.
+`scripts/probe_dialog_watchdog.py` records all of this in a JSON report
+(`--trigger` shows one harmless VBScript message box through
+`SystemService.Evaluate` and checks detection, the latch and auto-dismiss
+on it; it never saves or closes documents).
 
 Install and run the offline regressions:
 

@@ -58,3 +58,25 @@ def after_mutation():
     except CATIAToolError as error:
         error.modified = None
         raise
+
+
+class SessionError(CATIAToolError):
+    """A failure about the CATIA session rather than the call's input; `data`
+    carries what the dialog watchdog saw on screen."""
+
+    def __init__(self, message: str, *, data: dict | None = None,
+                 modified: bool | None = False, code: str | None = None):
+        super().__init__(message, code=code, modified=modified)
+        self.data = data or {}
+
+
+class BlockedByDialog(SessionError):
+    code = "BLOCKED_BY_DIALOG"
+
+
+class SessionBlocked(SessionError):
+    code = "SESSION_BLOCKED"
+
+
+class CatiaBusy(SessionError):
+    code = "CATIA_BUSY"

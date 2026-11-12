@@ -64,7 +64,7 @@ late-bound COM.
 | Area | Behavior |
 |------|----------|
 | Sketcher, Part Design, GSD, Knowledgeware | Same factory APIs as V5 once the Part is resolved. |
-| `catia_new_part` | Tries a 3D Part, falls back to a 3D Shape when refused (`plm_type` forces one). Title goes to `V_Name`. In session only until saved. |
+| `catia_new_part` | A 3D Shape by default (`auto`); a 3D Part only with `plm_type` `3DPart`, or in `auto` once a capability probe verified it, because the refusal is a blocking dialog on many roles. Title goes to `V_Name`. In session only until saved. |
 | `catia_new_product` | Physical Product (`VPMReference`); refused without the matching licence/role. |
 | `catia_save_document` | Saves the **active editor's** content to the database. No Save As. |
 | `catia_close_document` | Closes the active window; unsaved changes are discarded unless `save=true`. |
@@ -115,7 +115,8 @@ Field reports agree that scripted creation of a 3D Part (`"3DPart"`) or a
 Physical Product (`"VPMReference"`) requires an extra licence (reported as
 E70 or VMX) and otherwise fails with "Operation not authorized"; 3D Shapes
 and Drawings can always be created. STEP export requires the ST1 exchange
-licence. `catia_diagnose` reports which services your session exposes.
+licence. `catia_diagnose` reports which services your session exposes, and
+`catia_capabilities` what this session can do ([capabilities.md](capabilities.md)).
 
 ## Measurement units
 

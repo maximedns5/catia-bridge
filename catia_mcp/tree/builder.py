@@ -137,6 +137,8 @@ class TreeBuilder:
         self.started = time.monotonic()
         report: dict[str, Any] = {"success": False, "native_history": False, "editable": None,
                                   "parts": len(tree["parts"]), "features": 0, "parts_detail": []}
+        # Read by the tree command when a dialog blocks the build mid-call.
+        self.report, self.feature_id = report, None
         try:
             for part in tree["parts"]:
                 record = PartRecord(part["id"], part.get("name", part["id"]))
@@ -165,7 +167,7 @@ class TreeBuilder:
     # ── Parts ──
 
     def _build_part(self, part: dict[str, Any], record: PartRecord) -> None:
-        self.part_id = part["id"]
+        self.part_id, self.feature_id = part["id"], None
         self.log(f"part {part['id']}: creating")
         if self.conn.is_3dx:
             self.documents._new_part(record.name, self.plm_type)
@@ -184,6 +186,7 @@ class TreeBuilder:
                 raise BuildFailed(f"the build exceeded its {self.deadline_s:.0f} s budget",
                                   part["id"], feature.get("id"))
             entry = {"id": feature.get("id"), "type": feature["type"], "catia": [], "ok": False}
+            self.feature_id = feature.get("id")
             record.features.append(entry)
             self.log(f"  {feature['type']} {feature.get('id')}")
             try:
