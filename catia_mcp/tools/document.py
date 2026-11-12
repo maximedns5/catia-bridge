@@ -13,6 +13,7 @@ import json
 from typing import Any
 
 from catia_mcp.automation import com_name, iter_items, resolves, safe_get
+from catia_mcp.capabilities import VERIFIED, cached_status
 from catia_mcp.connection import CATIAConnection
 from catia_mcp.errors import (
     AmbiguousTarget,
@@ -70,10 +71,10 @@ class DocumentTools:
                 "name": "catia_new_part",
                 "description": (
                     "Create a new empty Part for single-body 3D modeling (sketches + "
-                    "features). V5: a CATPart document. 3DEXPERIENCE: a 3D Part "
-                    "(product + shape, needs the matching licence/role) or a 3D Shape, "
-                    "created in session only; nothing reaches the database until "
-                    "catia_save_document."
+                    "features). V5: a CATPart document. 3DEXPERIENCE: a 3D Shape by "
+                    "default, or a 3D Part (product + shape, needs the matching "
+                    "licence/role), created in session only; nothing reaches the "
+                    "database until catia_save_document."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -86,8 +87,11 @@ class DocumentTools:
                             "type": "string",
                             "enum": ["auto", "3DPart", "3DShape"],
                             "description": (
-                                "3DEXPERIENCE only. 'auto' (default) tries a 3D Part and "
-                                "falls back to a 3D Shape when the licence refuses it."
+                                "3DEXPERIENCE only. 'auto' (default) creates a 3D Shape; "
+                                "it tries a 3D Part first only when an earlier capability "
+                                "probe verified that this installation allows it. "
+                                "'3DPart' on a role without the entitlement opens a "
+                                "blocking 'Operation not authorized' dialog in CATIA."
                             ),
                         },
                     },
@@ -254,7 +258,13 @@ class DocumentTools:
         return f"Created new Part document: '{part_name}'{rename_note}"
 
     def _new_part_3dx(self, name: str | None, plm_type: str) -> str:
-        attempts = ["3DPart", "3DShape"] if plm_type == "auto" else [plm_type]
+        if plm_type == "auto":
+            # Trying a 3D Part on a role without the entitlement opens a modal
+            # licence dialog that blocks automation until someone closes it.
+            proven = cached_status(self.conn, "plm.create.3dpart") == VERIFIED
+            attempts = ["3DPart", "3DShape"] if proven else ["3DShape"]
+        else:
+            attempts = [plm_type]
         errors: list[str] = []
         created = None
         for kind in attempts:
@@ -274,7 +284,7 @@ class DocumentTools:
         with after_mutation():
             part = self.conn.get_active_part()
             note = ""
-            if created == "3DShape" and plm_type == "auto":
+            if created == "3DShape" and plm_type == "auto" and errors:
                 note = (
                     " A 3D Part could not be created (" + errors[0] + "), so a 3D Shape was "
                     "created instead; it has no product node of its own."

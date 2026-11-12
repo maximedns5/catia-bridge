@@ -13,7 +13,8 @@ CATIA V5 (needs the STEP interface licence, ST1):
   3. list the dead bodies;
   4. read the STEP settings controller, if its name resolves;
   5. replay tests/fixtures/step/fillet_block.tree.json with its --step-dir
-     (a native pad, then the fillet as a "remove" delta body).
+     (a native pad, then the rounds, as a feature with no native rule, as a
+     "remove" delta body).
 
 CATIA 3DEXPERIENCE (no scripted import): records whether Documents.Open
 exists, prints the manual import steps, and with --adopt TITLE --target

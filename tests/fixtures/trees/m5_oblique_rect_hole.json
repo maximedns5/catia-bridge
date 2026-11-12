@@ -1,0 +1,126 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M5/ObliqueRectHole",
+   "name": "ObliqueRectHole",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -10.0,
+        -5.0
+       ],
+       "end": [
+        10.0,
+        -5.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        10.0,
+        -5.0
+       ],
+       "end": [
+        10.0,
+        5.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        10.0,
+        5.0
+       ],
+       "end": [
+        -10.0,
+        5.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -10.0,
+        5.0
+       ],
+       "end": [
+        -10.0,
+        -5.0
+       ],
+       "id": "e4"
+      },
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 2,
+       "id": "h"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": [
+        [
+         "h"
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "operation": "new_body",
+     "distance": 11.661903789690601,
+     "direction": [
+      6,
+      0,
+      10
+     ],
+     "creates": [
+      "Body1"
+     ]
+    }
+   ]
+  }
+ ]
+}

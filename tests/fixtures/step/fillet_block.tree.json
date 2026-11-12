@@ -100,14 +100,14 @@
      ]
     },
     {
-     "type": "fillet",
-     "id": "fillet1",
+     "type": "draft",
+     "id": "draft1",
      "bodies": [
       "Body1"
      ],
      "radius": 5,
      "edges": [],
-     "reason": "fillets have no native rule yet"
+     "reason": "drafts have no native rule yet"
     }
    ],
    "bodies": [

@@ -2,7 +2,7 @@
 
 Some features have no native rule in the tree replay. A `base_feature` is a
 solid that build123d only keeps as a B-rep (an imported STEP, raw OCP, a
-shear). A fillet, chamfer or shell is not replayed yet. The STEP fallback
+shear). Other features have no native rule yet (a draft, a thicken, text). The STEP fallback
 brings such geometry into CATIA anyway. A STEP file holds the solid, CATIA
 imports it, and the solid is pasted into the part as a **dead body**: an
 isolated solid with no history, added to or removed from a native body. The
@@ -94,7 +94,7 @@ anything other than letters, digits, `.`, `_` and `-` replaced by `_`, so
 `/Demo/Plate` becomes `Demo_Plate`. The files are:
 
 - **`<feature id>.step`** (or `.stp`): the solid of a `base_feature`, applied with the feature's own `operation`. `new_body` makes the pasted body the feature's body. `join` / `cut` / `intersect` combine it into its one target body.
-- **`<feature id>.add.step`** and/or **`<feature id>.remove.step`**: a **delta** for any feature that modifies exactly one known body. This covers a `base_feature` that joins or cuts, and unsupported features such as `fillet`, `chamfer` or `shell`.
+- **`<feature id>.add.step`** and/or **`<feature id>.remove.step`**: a **delta** for any feature that modifies exactly one known body. This covers a `base_feature` that joins or cuts, and unsupported features such as `draft` or `thicken`.
   - `add` is the material the feature adds (after - before).
   - `remove` is the material it removes (before - after).
   - The builder adds, then removes. Adding then removing gives exactly the body after the feature.
@@ -142,8 +142,8 @@ the build.
 
 `tests/fixtures/step/` holds a probe set made this way:
 - a 100 x 60 x 40 mm block with R5 vertical edges, 239141.5927 mm3 (`fillet_block.step`);
-- the same block as a tree, a pad plus a `fillet` feature (`fillet_block.tree.json`);
-- the fillet's remove delta, 858.4073 mm3 (`steps/Probe_FilletBlock/fillet1.remove.step`).
+- the same block as a tree, a pad plus a `draft` feature standing in for the rounds (`fillet_block.tree.json`; a feature with no native rule, so its result comes from STEP);
+- that feature's remove delta, 858.4073 mm3 (`steps/Probe_FilletBlock/draft1.remove.step`).
 
 ## Live checklist
 

@@ -24,6 +24,22 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
   and centre of gravity; a twisted result is deleted and rebuilt once with the
   second section's orientation reversed. Sweeps are Ribs along the path drawn
   as a sketch in its own plane, checked by Pappus.
+- Tapered extrudes are built as build123d builds them: each loop lofted
+  (with the verified loft above) to its 2D offset, inner loops cut, pieces
+  joined (catia_mcp/tree/extrude.py), checked by the prismatoid formula.
+  Oblique extrudes are Pads along a 3D line, checked like pads; whether
+  CATIA measures their length along the line or the normal is read from the
+  first volume. A placed part is moved into world coordinates first
+  (catia_mcp/tree/placement.py).
+- Fillets, chamfers and shells find their edges and faces by the tree's
+  geometric anchors among the cells of the body's last feature
+  (catia_mcp/tree/dressup.py), one CATIA feature per tree feature, checked by
+  bounds on the volume change; an asymmetric chamfer is oriented by its centre
+  of gravity, and its part's centre of gravity is compared with the reference.
+- Spline sketch entities (exact rational NURBS, catia_mcp/tree/nurbs.py) are
+  drawn exactly when they are circles or ellipses, else as sketch splines
+  through sampled points: the feature's notes say so, and its volume checks,
+  and the part's, allow the area between the curve and those points' chords.
 - With --step-dir, a feature with no native rule (base_feature, or any
   unsupported feature modifying one body) is built from STEP files: each is
   imported (V5 only), pasted as a body without history, and added to or
@@ -53,11 +69,14 @@ from catia_mcp.tools.part_design import (
     _set_prop,
     _sketch_v_direction,
 )
+from catia_mcp.tree.dressup import DressUpFailed, DressUps
+from catia_mcp.tree.extrude import TaperPlan, extrude_vector, oblique_expectation, taper_plan
 from catia_mcp.tree.geometry import (
     Arc,
     Frame,
     Vec,
     add,
+    approximation_area,
     cross,
     distance,
     dot,
@@ -71,6 +90,8 @@ from catia_mcp.tree.geometry import (
     unit,
 )
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
+from catia_mcp.tree.nurbs import Nurbs, drawing
+from catia_mcp.tree.placement import place_part
 from catia_mcp.tree.preflight import SUPPORTED, check
 from catia_mcp.tree.step_source import StepSource
 from catia_mcp.tree.sweep import path_sketch, sweep_expectation
@@ -110,6 +131,9 @@ class PartRecord:
     editable: bool | None = None
     editability_note: str = ""
     dead_bodies: list[dict[str, Any]] = field(default_factory=list)
+    # What approximated splines may move the volume by (mm3), added to the
+    # part check's tolerance.
+    spline_allowance_mm3: float = 0.0
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -121,7 +145,7 @@ def _parallel(a: Vec, b: Vec) -> float:
 class TreeBuilder:
     def __init__(self, conn: CATIAConnection, plm_type: str = "3DShape",
                  deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None,
-                 step_dir: str | None = None) -> None:
+                 ownership: str | None = None, step_dir: str | None = None) -> None:
         self.conn = conn
         self.step_dir = step_dir
         self.step_source: StepSource | None = None
@@ -130,6 +154,8 @@ class TreeBuilder:
         self.plm_type = plm_type
         self.deadline_s = deadline_s
         self.log = log
+        self.dressups = DressUps(self, ownership)
+        self.cog_checked = False
 
     # ── Entry point ──
 
@@ -137,18 +163,23 @@ class TreeBuilder:
               check_editability: bool = True) -> dict[str, Any]:
         if self.step_dir:
             self.step_source = StepSource(self.step_dir, "3dx" if self.conn.is_3dx else "v5")
-        check(tree, self.step_source)
+        check(tree, step=self.step_source)
         self.started = time.monotonic()
         report: dict[str, Any] = {"success": False, "native_history": False, "editable": None,
                                   "parts": len(tree["parts"]), "features": 0, "parts_detail": []}
+        # Read by the tree command when a dialog blocks the build mid-call.
+        self.report, self.feature_id = report, None
         try:
             for part in tree["parts"]:
+                part = place_part(part)  # features in world coordinates
                 record = PartRecord(part["id"], part.get("name", part["id"]))
                 report["parts_detail"].append(record)
                 self._build_part(part, record)
                 if expected and part["id"] in expected:
                     record.expected_volume_mm3 = expected[part["id"]]["volume_mm3"]
                     self._check_part_volume(record)
+                    if self.cog_checked and expected[part["id"]].get("cog_mm"):
+                        self._check_part_cog(part, expected[part["id"]]["cog_mm"])
                 if check_editability:
                     self._check_editability(record)
             report["success"] = True
@@ -170,7 +201,7 @@ class TreeBuilder:
     # ── Parts ──
 
     def _build_part(self, part: dict[str, Any], record: PartRecord) -> None:
-        self.part_id = part["id"]
+        self.part_id, self.feature_id = part["id"], None
         self.record = record
         self.log(f"part {part['id']}: creating")
         if self.conn.is_3dx:
@@ -184,11 +215,13 @@ class TreeBuilder:
         self.sketches: dict[str, dict[str, Any]] = {}
         self.first_pad: tuple[Any, Any] | None = None
         self.pending_mirror: dict[str, Any] | None = None
+        self.cog_checked = False
         for feature in part["features"]:
             if time.monotonic() - self.started > self.deadline_s:
                 raise BuildFailed(f"the build exceeded its {self.deadline_s:.0f} s budget",
                                   part["id"], feature.get("id"))
             entry = {"id": feature.get("id"), "type": feature["type"], "catia": [], "ok": False}
+            self.feature_id = feature.get("id")
             record.features.append(entry)
             self.log(f"  {feature['type']} {feature.get('id')}")
             try:
@@ -210,10 +243,22 @@ class TreeBuilder:
 
     def _check_part_volume(self, record: PartRecord) -> None:
         want, got = record.expected_volume_mm3, record.volume_mm3
-        if abs(got - want) > max(1e-3, PART_REL_TOL * abs(want)):
+        if abs(got - want) > max(1e-3, PART_REL_TOL * abs(want)) + record.spline_allowance_mm3:
             raise BuildFailed(
                 f"the part measures {got:.4f} mm3 in CATIA, expected {want:.4f} mm3",
                 record.id)
+
+    def _check_part_cog(self, part: dict[str, Any], want: list[float]) -> None:
+        """An asymmetric chamfer can be swapped without changing the volume:
+        compare the centre of gravity too."""
+        final = [self.bodies[name] for name in (part.get("bodies") or self.bodies)]
+        masses = [(self._volume(body), self._cog(body)) for body in final]
+        total = sum(volume for volume, _ in masses)
+        cog = tuple(sum(volume * c[i] for volume, c in masses) / total for i in range(3))
+        tol = max(1e-3, PART_REL_TOL * total ** (1 / 3))
+        if distance(cog, tuple(want)) > tol:
+            raise BuildFailed(f"the part's centre of gravity is at {_fmt(cog)} in CATIA, "
+                              f"expected {_fmt(tuple(want))}", part["id"])
 
     # ── Features ──
 
@@ -224,11 +269,24 @@ class TreeBuilder:
 
     def _feature_extrude(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         sketch = self.sketches[feature["sketch"]]
+        symmetric = bool(feature.get("symmetric"))
+        if feature.get("taper"):
+            plan = taper_plan(sketch, feature)
+            self._into_body(feature, entry, lambda body: self._verified_taper(body, plan, entry))
+            return
+        if feature.get("direction") is not None:
+            vector = extrude_vector(feature, Frame.from_tree(sketch["plane"]))
+
+            def make(body):
+                return self._verified_oblique_pad(body, sketch, vector, symmetric, entry)
+        else:
+            def make(body):
+                return self._verified_pad(body, sketch, float(feature["distance"]), symmetric,
+                                          entry)
         operation = feature["operation"]
         if operation == "new_body":
             body = self._new_body(use_main=True)
-            pad = self._verified_pad(body, sketch, float(feature["distance"]),
-                                     bool(feature.get("symmetric")), entry)
+            pad = make(body)
             self.bodies[feature["creates"][0]] = body
             if self.first_pad is None:
                 # Its body survives to the end, so editing it moves the part.
@@ -236,8 +294,7 @@ class TreeBuilder:
             return
         (target,) = feature["bodies"]
         tool = self._new_body(use_main=False)
-        self._verified_pad(tool, sketch, float(feature["distance"]),
-                           bool(feature.get("symmetric")), entry)
+        make(tool)
         self._combine(self.bodies[target], tool, operation, entry)
 
     def _feature_revolve(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -331,6 +388,22 @@ class TreeBuilder:
         self._into_body(feature, entry,
                         lambda body: self._verified_rib(body, sketch, feature["path"], entry))
 
+    def _feature_fillet(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        self._dressup(self.dressups.fillet, feature, entry)
+
+    def _feature_chamfer(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        self._dressup(self.dressups.chamfer, feature, entry)
+
+    def _feature_shell(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        self._dressup(self.dressups.shell, feature, entry)
+
+    @staticmethod
+    def _dressup(build: Callable[..., None], feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        try:
+            build(feature, entry)
+        except DressUpFailed as error:
+            raise BuildFailed(str(error)) from error
+
     def _feature_from_step(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         """A feature preflight accepted because STEP files stand in for it:
         each file is imported, pasted as a dead body and combined."""
@@ -402,7 +475,10 @@ class TreeBuilder:
         frame = Frame.from_tree(sketch["plane"])
         area, centroid = profile_area_centroid(sketch)
         want_volume, want_cog = prism_expectation(frame, area, centroid, dist, symmetric)
-        catia_sketch, along, _ = self._draw(body, sketch, frame)
+        catia_sketch, along, _ = self._draw(body, sketch, frame, entry)
+        approximation = approximation_area(sketch)
+        allowance = approximation * abs(dist) * (2 if symmetric else 1)
+        self.record.spline_allowance_mm3 += allowance
         part = self.part
         _force_solid_inwork(part, catia_sketch)
         part.InWorkObject = body
@@ -416,8 +492,8 @@ class TreeBuilder:
         part.UpdateObject(pad)
         volume, cog = self._volume(body), self._cog(body)
         size = math.sqrt(area) + abs(dist)
-        tol = max(1e-3, FEATURE_REL_TOL * size)
-        if abs(volume - want_volume) > max(1e-3, FEATURE_REL_TOL * want_volume):
+        tol = max(1e-3, FEATURE_REL_TOL * size) + approximation / area * size
+        if abs(volume - want_volume) > max(1e-3, FEATURE_REL_TOL * want_volume) + allowance:
             raise BuildFailed(
                 f"'{pad.Name}' measures {volume:.4f} mm3, expected {want_volume:.4f} mm3: "
                 "the sketch profile was not read as drawn")
@@ -437,11 +513,87 @@ class TreeBuilder:
             entry.setdefault("notes", []).append(f"{pad.Name}: direction flipped to match the tree")
         return pad
 
+    def _verified_oblique_pad(self, body: Any, sketch: dict[str, Any], vector: Vec,
+                              symmetric: bool, entry: dict[str, Any]) -> Any:
+        """A Pad along a 3D line through the profile's centroid. Whether CATIA
+        measures the length along that line or along the sketch normal is
+        read from the first volume; the direction is flipped once like a pad's."""
+        frame = Frame.from_tree(sketch["plane"])
+        area, centroid = profile_area_centroid(sketch)
+        want_volume, want_cog = oblique_expectation(frame, area, centroid, vector, symmetric)
+        catia_sketch, _, _ = self._draw(body, sketch, frame)
+        start = frame.world(*centroid)
+        line = self.part.HybridShapeFactory.AddNewLinePtPt(
+            self._construction_point(start), self._construction_point(add(start, vector)))
+        self._construction_set().AppendHybridShape(line)
+        part = self.part
+        part.UpdateObject(line)
+        _force_solid_inwork(part, catia_sketch)
+        part.InWorkObject = body
+        length, height = math.sqrt(dot(vector, vector)), abs(dot(vector, frame.normal))
+        pad = part.ShapeFactory.AddNewPad(catia_sketch, length)
+        entry["catia"].append(str(pad.Name))
+        pad.SetDirection(part.CreateReferenceFromObject(line))
+        if symmetric and not _set_prop(pad, "IsSymmetric", True):
+            raise BuildFailed(f"CATIA refused the symmetric extent of '{pad.Name}'")
+        part.UpdateObject(pad)
+        slack = max(1e-3, FEATURE_REL_TOL * want_volume)
+        volume = self._volume(body)
+        if abs(volume - want_volume) > slack and abs(volume * height / length - want_volume) <= slack:
+            # CATIA measured the length along the sketch normal: give it the height.
+            pad.FirstLimit.Dimension.Value = height
+            part.UpdateObject(pad)
+            volume = self._volume(body)
+            entry.setdefault("notes", []).append(
+                f"{pad.Name}: length measured along the sketch normal")
+        if abs(volume - want_volume) > slack:
+            raise BuildFailed(f"'{pad.Name}' measures {volume:.4f} mm3, expected "
+                              f"{want_volume:.4f} mm3 (profile area times the height)")
+        size = math.sqrt(area) + length
+        tol = max(1e-3, FEATURE_REL_TOL * size)
+        cog = self._cog(body)
+        if distance(cog, want_cog) > tol:
+            if symmetric or distance(cog, add(want_cog, scale(vector, -1))) > tol:
+                raise BuildFailed(f"'{pad.Name}' has its centre of gravity at {_fmt(cog)}, "
+                                  f"expected {_fmt(want_cog)}: it does not follow the tree's "
+                                  "direction")
+            current = _read_prop(pad, "DirectionOrientation") or 0
+            if not _set_prop(pad, "DirectionOrientation", 1 - current):
+                raise BuildFailed(f"CATIA refused to flip the direction of '{pad.Name}'")
+            part.UpdateObject(pad)
+            if distance(self._cog(body), want_cog) > tol:
+                raise BuildFailed(f"'{pad.Name}' still points the wrong way after one flip")
+            entry.setdefault("notes", []).append(f"{pad.Name}: direction flipped to match the tree")
+        return pad
+
+    def _verified_taper(self, body: Any, plan: TaperPlan, entry: dict[str, Any]) -> None:
+        """A tapered extrude as build123d builds it: each outer loop lofted to
+        its offset, minus its inner loops lofted to theirs, the pieces joined."""
+        for index, piece in enumerate(plan.pieces):
+            sections = [{"plane": piece.bottom}, {"plane": piece.top}]
+            target = body if index == 0 else self._new_body(use_main=False)
+            self._verified_loft(target, sections, piece.outer, entry)
+            for inner in piece.inners:
+                tool = self._new_body(use_main=False)
+                self._verified_loft(tool, sections, inner, entry)
+                self._combine(target, tool, "cut", entry)
+            if index:
+                self._combine(body, target, "join", entry)
+        volume, cog = self._volume(body), self._cog(body)
+        size = math.sqrt(max(plan.volume, 1e-9) ** (2 / 3))
+        if abs(volume - plan.volume) > max(1e-3, FEATURE_REL_TOL * plan.volume) \
+                or distance(cog, plan.cog) > max(1e-3, FEATURE_REL_TOL * size):
+            raise BuildFailed(f"the tapered extrude gives {volume:.4f} mm3 at {_fmt(cog)}, "
+                              f"expected {plan.volume:.4f} mm3 at {_fmt(plan.cog)} (prismatoid)")
+
     def _verified_shaft(self, body: Any, sketch: dict[str, Any], axis_origin: Vec,
                         axis_direction: Vec, angle: float, entry: dict[str, Any]) -> Any:
         frame = Frame.from_tree(sketch["plane"])
         want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
-        catia_sketch, _, catia_frame = self._draw(body, sketch, frame)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry)
+        approximation = approximation_area(sketch)
+        allowance = approximation * math.radians(angle) * want.max_radius
+        self.record.spline_allowance_mm3 += allowance
         part = self.part
         axis_ref = self._axis_reference(catia_sketch, catia_frame, axis_origin, axis_direction)
         _force_solid_inwork(part, catia_sketch)
@@ -455,8 +607,8 @@ class TreeBuilder:
         part.UpdateObject(shaft)
         volume, cog = self._volume(body), self._cog(body)
         size = math.sqrt(max(want.volume, 1e-9) ** (2 / 3))
-        tol = max(1e-3, FEATURE_REL_TOL * size)
-        if abs(volume - want.volume) > max(1e-3, FEATURE_REL_TOL * want.volume):
+        tol = max(1e-3, FEATURE_REL_TOL * size) + allowance / max(want.volume, 1e-9) * size
+        if abs(volume - want.volume) > max(1e-3, FEATURE_REL_TOL * want.volume) + allowance:
             raise BuildFailed(
                 f"'{shaft.Name}' measures {volume:.4f} mm3, expected {want.volume:.4f} mm3 "
                 "(Pappus): the profile or the axis was not read as the tree gives them")
@@ -671,10 +823,12 @@ class TreeBuilder:
         data = call_fill_array(self.conn.app, sketch, "GetAbsoluteAxisData", 9)
         return tuple(data[0:3]), unit(tuple(data[3:6])), unit(tuple(data[6:9]))
 
-    def _draw(self, body: Any, sketch: dict[str, Any], frame: Frame):
+    def _draw(self, body: Any, sketch: dict[str, Any], frame: Frame,
+              entry: dict[str, Any] | None = None):
         """Draw the tree sketch in a new CATIA sketch of `body`. Returns the
         sketch, +1 / -1 for whether its normal agrees with the tree's, and the
-        CATIA sketch frame (origin, H, V)."""
+        CATIA sketch frame (origin, H, V). Approximated splines are noted in
+        `entry`."""
         ref, known = self._support(frame)
         catia_sketch = body.Sketches.Add(ref)
         origin, h, v = self._sketch_frame(catia_sketch, known)
@@ -700,6 +854,10 @@ class TreeBuilder:
             elif kind == "circle":
                 cu, cv = local(entity["center"])
                 factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
+            elif kind == "spline":
+                note = _draw_spline(factory, entity, local)
+                if note and entry is not None:
+                    entry.setdefault("notes", []).append(note)
             else:
                 arc = Arc.through(local(entity["start"]), local(entity["mid"]), local(entity["end"]))
                 factory.CreateCircle(arc.center[0], arc.center[1], arc.radius, arc.start, arc.end)
@@ -747,6 +905,43 @@ class TreeBuilder:
         record.editability_note = (
             f"{pad.Name} length {original:g} -> {original + 1:g} -> {original:g} mm: volume "
             f"{before:.1f} -> {moved:.1f} -> {restored:.1f} mm3")
+
+
+def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
+    """Draw a tree spline, read in the CATIA sketch's own frame (an isometry
+    of the tree's, so a conic stays the same conic). Returns a note when it is
+    approximated. Factory2D conventions: CreateClosedEllipse(cx, cy, major
+    direction x, y, major radius, minor radius) and CreateEllipse(..., start,
+    end) with counter-clockwise angles from the major axis, as CreateCircle
+    takes them; CreateSpline takes the control points it passes through. Not
+    yet validated live."""
+    plan = drawing(Nurbs.from_entity(entity, transform=local))
+    for item in plan.items:
+        kind = item[0]
+        if kind == "line":
+            (u0, v0), (u1, v1) = item[1], item[2]
+            factory.CreateLine(u0, v0, u1, v1)
+        elif kind == "circle":
+            (cu, cv), r = item[1], item[2]
+            factory.CreateClosedCircle(cu, cv, r)
+        elif kind == "arc":
+            (cu, cv), r, start, end = item[1:]
+            factory.CreateCircle(cu, cv, r, start, end)
+        elif kind == "ellipse":
+            (cu, cv), (mx, my), a, b = item[1:]
+            factory.CreateClosedEllipse(cu, cv, mx, my, a, b)
+        elif kind == "elliptic_arc":
+            (cu, cv), (mx, my), a, b, start, end = item[1:]
+            factory.CreateEllipse(cu, cv, mx, my, a, b, start, end)
+        else:
+            points = tuple(factory.CreateControlPoint(u, v) for u, v in item[1])
+            factory.CreateSpline(points)
+    if plan.exact:
+        return None
+    count = sum(len(item[1]) for item in plan.items)
+    return (f"spline {entity.get('id', '?')}: approximated by {len(plan.items)} CATIA sketch "
+            f"spline(s) through {count} points (chords within {plan.deviation_area:.2g} mm2 "
+            "of the curve)")
 
 
 def _sketch_h_direction(sketch: Any) -> Any:

@@ -305,11 +305,11 @@ def test_3dexperience_adopts_a_hand_imported_window_and_never_closes_it():
 
 def test_dead_bodies_are_named_or_only_isolated_solids():
     part = FakePart("P", FakeBody("PartBody", 1.0, ("Pad.1", "Solide.1")))
-    part.Bodies.append(FakeBody("STEP_fillet1_remove", 1.0, ("Solid.1",)))
+    part.Bodies.append(FakeBody("STEP_draft1_remove", 1.0, ("Solid.1",)))
     part.Bodies.append(FakeBody("Body.3", 1.0, ("Solid.2",)))
     part.Bodies.append(FakeBody("Body.4", 1.0, ("Pocket.1",)))
     rows = {r["name"]: r for r in StepExchange.dead_bodies(part)}
-    assert [n for n, r in rows.items() if r["dead"]] == ["STEP_fillet1_remove", "Body.3"]
+    assert [n for n, r in rows.items() if r["dead"]] == ["STEP_draft1_remove", "Body.3"]
     assert rows["PartBody"]["reason"].startswith("partly dead")
     assert "reason" not in rows["Body.4"]
 
@@ -373,7 +373,9 @@ def test_tool_import_on_3dexperience_reports_unsupported_capability(step_file):
 
 # ── Preflight and builder hook ──
 
-FILLET = {"type": "fillet", "id": "fillet1", "bodies": ["Body1"], "radius": 5, "edges": []}
+# A feature with no native rule, its result supplied as a STEP delta (here the
+# material a round of the block's vertical edges removes).
+DRAFT = {"type": "draft", "id": "draft1", "bodies": ["Body1"]}
 
 
 def _with(tree, *features):
@@ -396,21 +398,21 @@ def test_part_folders_are_file_system_safe():
 
 
 def test_preflight_accepts_features_with_step_files_only_where_they_can_be_imported(tmp_path):
-    tree = _with(load("m1_offset_block"), FILLET,
+    tree = _with(load("m1_offset_block"), DRAFT,
                  {"type": "base_feature", "id": "base1", "operation": "new_body",
                   "creates": ["Body2"], "reason": "raw OCP"},
                  {"type": "combine", "id": "combine1", "operation": "join",
                   "targets": ["Body1"], "tools": ["Body2"]})
     step_dir = str(tmp_path)
-    reasons = analyze(tree, StepSource(step_dir, "v5"))
+    reasons = analyze(tree, step=StepSource(step_dir, "v5"))
     assert len(reasons) == 2 and all("no STEP file" in r for r in reasons)
-    _touch(step_dir, "/M1/OffsetBlock", "fillet1.remove.step")
+    _touch(step_dir, "/M1/OffsetBlock", "draft1.remove.step")
     _touch(step_dir, "/M1/OffsetBlock", "base1.step")
-    assert not analyze(tree, StepSource(step_dir, "v5"))
-    assert not analyze(tree, StepSource(step_dir, None))  # check, before connecting
-    refused = analyze(tree, StepSource(step_dir, "3dx"))
+    assert not analyze(tree, step=StepSource(step_dir, "v5"))
+    assert not analyze(tree, step=StepSource(step_dir, None))  # check, before connecting
+    refused = analyze(tree, step=StepSource(step_dir, "3dx"))
     assert all("3DEXPERIENCE" in r for r in refused) and len(refused) == 2
-    assert "'fillet' features are not supported yet" in next(iter(analyze(tree)))
+    assert "'draft' features are not supported yet" in next(iter(analyze(tree)))
 
 
 def test_preflight_refuses_deltas_for_features_that_create_or_miss_bodies(tmp_path):
@@ -419,7 +421,7 @@ def test_preflight_refuses_deltas_for_features_that_create_or_miss_bodies(tmp_pa
                  {"type": "shell", "id": "shell1", "bodies": ["Nope"]})
     _touch(str(tmp_path), "/M1/OffsetBlock", "copy1.add.step")
     _touch(str(tmp_path), "/M1/OffsetBlock", "shell1.add.step")
-    reasons = " ".join(analyze(tree, StepSource(str(tmp_path), "v5")))
+    reasons = " ".join(analyze(tree, step=StepSource(str(tmp_path), "v5")))
     assert "cannot be replaced by add/remove deltas" in reasons
     assert "exactly one known body" in reasons
 
@@ -456,21 +458,21 @@ def _step_builder(part, monkeypatch, step_dir, solids):
 
 
 def test_builder_applies_delta_bodies_and_reports_them_apart(tmp_path, monkeypatch):
-    removed = _touch(str(tmp_path), "/M1/OffsetBlock", "fillet1.remove.step")
+    removed = _touch(str(tmp_path), "/M1/OffsetBlock", "draft1.remove.step")
     part = _FakePart()
     built, exchange = _step_builder(part, monkeypatch, str(tmp_path),
                                     lambda path: (85.8407, (0.0, 0.0, 0.0)))
-    report = built.build(_with(load("m1_offset_block"), FILLET),
+    report = built.build(_with(load("m1_offset_block"), DRAFT),
                          {"/M1/OffsetBlock": {"volume_mm3": 80000 - 85.8407}},
                          check_editability=False)
     assert report["success"], report.get("error")
     assert report["native_history"] == "partial"
     (dead,) = report["dead_bodies"]
-    assert dead == {"feature": "fillet1", "type": "fillet", "role": "remove", "file": removed,
-                    "body": "STEP_fillet1_remove", "volume_mm3": 85.8407,
+    assert dead == {"feature": "draft1", "type": "draft", "role": "remove", "file": removed,
+                    "body": "STEP_draft1_remove", "volume_mm3": 85.8407,
                     "part": "/M1/OffsetBlock"}
-    fillet = report["parts_detail"][0]["features"][2]
-    assert fillet["dead"] and fillet["catia"][0] == "STEP_fillet1_remove"
+    stood_in = report["parts_detail"][0]["features"][2]
+    assert stood_in["dead"] and stood_in["catia"][0] == "STEP_draft1_remove"
     assert exchange.closed == [removed]
     assert [f.kind for f in part.pads if hasattr(f, "tool")] == ["remove"]
 
@@ -478,16 +480,16 @@ def test_builder_applies_delta_bodies_and_reports_them_apart(tmp_path, monkeypat
 def test_builder_fails_when_a_delta_boolean_has_no_effect(tmp_path, monkeypatch):
     """Coincident faces can make CATIA's Remove leave the body as it was;
     that passes a plain cut's bounds but not the delta's exact check."""
-    _touch(str(tmp_path), "/M1/OffsetBlock", "fillet1.remove.step")
+    _touch(str(tmp_path), "/M1/OffsetBlock", "draft1.remove.step")
     part = _FakePart()
     update = part.UpdateObject
     part.UpdateObject = lambda obj: None if getattr(obj, "kind", None) == "remove" else update(obj)
     built, _ = _step_builder(part, monkeypatch, str(tmp_path),
                                     lambda path: (85.8407, (0.0, 0.0, 0.0)))
-    report = built.build(_with(load("m1_offset_block"), FILLET), check_editability=False)
-    assert not report["success"] and report["error"]["feature"] == "fillet1"
+    report = built.build(_with(load("m1_offset_block"), DRAFT), check_editability=False)
+    assert not report["success"] and report["error"]["feature"] == "draft1"
     assert "coincident faces" in report["error"]["message"]
-    assert report["dead_bodies"][0]["body"] == "STEP_fillet1_remove"
+    assert report["dead_bodies"][0]["body"] == "STEP_draft1_remove"
 
 
 def test_builder_takes_a_base_feature_as_a_new_dead_body(tmp_path, monkeypatch):
@@ -504,12 +506,12 @@ def test_builder_takes_a_base_feature_as_a_new_dead_body(tmp_path, monkeypatch):
 
 
 def test_builder_refuses_step_files_on_3dexperience(tmp_path, monkeypatch):
-    _touch(str(tmp_path), "/M1/OffsetBlock", "fillet1.remove.step")
+    _touch(str(tmp_path), "/M1/OffsetBlock", "draft1.remove.step")
     part = _FakePart()
     built, exchange = _step_builder(part, monkeypatch, str(tmp_path), None)
     built.conn.is_3dx = True
     with pytest.raises(TreeRefused, match="no STEP fallback on 3DEXPERIENCE"):
-        built.build(_with(load("m1_offset_block"), FILLET))
+        built.build(_with(load("m1_offset_block"), DRAFT))
     assert exchange.imported == [] and part.pads == []
 
 
@@ -517,11 +519,11 @@ def test_cli_check_takes_a_step_dir(tmp_path, capsys):
     from catia_mcp.tree.__main__ import main
 
     tree_path = tmp_path / "tree.json"
-    tree_path.write_text(json.dumps(_with(load("m1_offset_block"), FILLET)))
+    tree_path.write_text(json.dumps(_with(load("m1_offset_block"), DRAFT)))
     step_dir = tmp_path / "steps"
     assert main(["check", str(tree_path), "--step-dir", str(step_dir)]) == 1
     assert "no STEP file" in capsys.readouterr().out
-    _touch(str(step_dir), "/M1/OffsetBlock", "fillet1.remove.step")
+    _touch(str(step_dir), "/M1/OffsetBlock", "draft1.remove.step")
     assert main(["check", str(tree_path), "--step-dir", str(step_dir)]) == 0
     assert "1 of them from STEP files" in capsys.readouterr().out
     assert main(["check", str(tree_path), "--step-dir", str(step_dir), "--platform", "3dx"]) == 1
@@ -553,7 +555,7 @@ def test_delta_files_round_trip_through_step_and_the_builder(tmp_path, monkeypat
         write_fallback,
     )
 
-    tree = _with(load("m1_offset_block"), FILLET)
+    tree = _with(load("m1_offset_block"), DRAFT)
     final = _filleted_block()
     rows = write_fallback(tree, str(tmp_path), final_solids({"/M1/OffsetBlock": final}))
     (row,) = rows
@@ -566,7 +568,7 @@ def test_delta_files_round_trip_through_step_and_the_builder(tmp_path, monkeypat
         assert handle.read() == first  # fixed timestamp: same bytes
     assert b"AUTOMOTIVE_DESIGN" in first  # AP214
 
-    assert not analyze(tree, StepSource(str(tmp_path), "v5"))
+    assert not analyze(tree, step=StepSource(str(tmp_path), "v5"))
     want = expected_with_steps(tree, str(tmp_path))["/M1/OffsetBlock"]["volume_mm3"]
     assert want == pytest.approx(final.volume, rel=1e-6)
     part = _FakePart()
@@ -604,7 +606,7 @@ def test_a_base_feature_under_native_features_needs_its_own_solid(tmp_path):
     (row,) = write_fallback(tree, str(tmp_path), after_solids({("/M1/OffsetBlock", "base1"): base}))
     assert row["role"] == "solid" and row["file"].endswith(os.path.join("M1_OffsetBlock",
                                                                          "base1.step"))
-    assert not analyze(tree, StepSource(str(tmp_path), "v5"))
+    assert not analyze(tree, step=StepSource(str(tmp_path), "v5"))
     want = expected_with_steps(tree, str(tmp_path))["/M1/OffsetBlock"]["volume_mm3"]
     assert want == pytest.approx(math.pi * 100 * 120, rel=1e-6)
 
@@ -624,7 +626,7 @@ def test_the_probe_fixture_is_accepted_and_matches_its_block():
     with open(os.path.join(FIXTURE_STEPS, "fillet_block.tree.json")) as handle:
         tree = json.load(handle)
     steps = os.path.join(FIXTURE_STEPS, "steps")
-    assert not analyze(tree, StepSource(steps, "v5"))
+    assert not analyze(tree, step=StepSource(steps, "v5"))
     pytest.importorskip("build123d")
     from catia_mcp.tree.step_fallback import expected_with_steps
 
