@@ -10,8 +10,10 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Any
 
+from catia_mcp.tree.extrude import extrude_vector, taper_plan
 from catia_mcp.tree.geometry import Frame, dot, profile_area_centroid, revolve_expectation, unit
 from catia_mcp.tree.loft import plan_loft
+from catia_mcp.tree.placement import place_part
 from catia_mcp.tree.sweep import sweep_expectation
 
 # Milestones 1, 2 and 4: sketches, extrudes, revolves, combines, holes,
@@ -57,8 +59,11 @@ def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
         pid = part.get("id", "?")
         if part.get("unread"):
             refuse(f"part could not be read: {part['unread']}", pid)
-        if part.get("placement"):
-            refuse("parts placed by a parent location are not supported yet", pid)
+        try:
+            # Checked in world coordinates, as it is built.
+            part = place_part(part)
+        except ValueError as error:
+            refuse(f"part placement is invalid ({error})", pid)
         ids: set[str] = set()
         sketches: dict[str, dict[str, Any]] = {}
         bodies: set[str] = set()
@@ -241,15 +246,25 @@ def _check_plane(feature, refuse, where, kind) -> None:
 
 
 def _check_extrude(feature, sketches, bodies, refuse, where) -> None:
-    if feature.get("sketch") not in sketches:
+    sketch = sketches.get(feature.get("sketch"))
+    if sketch is None:
         refuse("extrude refers to an unknown sketch", where)
-    if feature.get("taper"):
-        refuse("tapered extrudes are not supported yet", where)
-    if feature.get("direction"):
-        refuse("oblique extrudes (direction) are not supported yet", where)
     _check_operation(feature, bodies, refuse, where, "extrude")
-    if not feature.get("distance"):
+    if feature.get("direction") is None and not feature.get("distance"):
         refuse("extrude has no distance", where)
+        return
+    try:
+        frame = Frame.from_tree(sketch["plane"])
+    except (KeyError, TypeError, ValueError):
+        return  # unknown sketch or invalid plane: already refused
+    try:
+        if feature.get("taper"):
+            taper_plan(sketch, feature)
+        else:
+            extrude_vector(feature, frame)
+    except (KeyError, TypeError, ValueError) as error:
+        kind = "tapered extrude" if feature.get("taper") else "extrude direction"
+        refuse(f"{kind} is not supported ({error})", where)
 
 
 def _check_combine(feature, bodies, refuse, where) -> None:

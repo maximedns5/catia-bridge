@@ -24,6 +24,13 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
   and centre of gravity; a twisted result is deleted and rebuilt once with the
   second section's orientation reversed. Sweeps are Ribs along the path drawn
   as a sketch in its own plane, checked by Pappus.
+- Tapered extrudes are built as build123d builds them: each loop lofted
+  (with the verified loft above) to its 2D offset, inner loops cut, pieces
+  joined (catia_mcp/tree/extrude.py), checked by the prismatoid formula.
+  Oblique extrudes are Pads along a 3D line, checked like pads; whether
+  CATIA measures their length along the line or the normal is read from the
+  first volume. A placed part is moved into world coordinates first
+  (catia_mcp/tree/placement.py).
 - Nothing else is retried: the first failure stops the part and is reported
   with its feature, and the document may then hold a partial model.
 """
@@ -47,6 +54,7 @@ from catia_mcp.tools.part_design import (
     _set_prop,
     _sketch_v_direction,
 )
+from catia_mcp.tree.extrude import TaperPlan, extrude_vector, oblique_expectation, taper_plan
 from catia_mcp.tree.geometry import (
     Arc,
     Frame,
@@ -65,6 +73,7 @@ from catia_mcp.tree.geometry import (
     unit,
 )
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
+from catia_mcp.tree.placement import place_part
 from catia_mcp.tree.preflight import check
 from catia_mcp.tree.sweep import path_sketch, sweep_expectation
 
@@ -130,6 +139,7 @@ class TreeBuilder:
                                   "parts": len(tree["parts"]), "features": 0, "parts_detail": []}
         try:
             for part in tree["parts"]:
+                part = place_part(part)  # features in world coordinates
                 record = PartRecord(part["id"], part.get("name", part["id"]))
                 report["parts_detail"].append(record)
                 self._build_part(part, record)
@@ -206,11 +216,24 @@ class TreeBuilder:
 
     def _feature_extrude(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         sketch = self.sketches[feature["sketch"]]
+        symmetric = bool(feature.get("symmetric"))
+        if feature.get("taper"):
+            plan = taper_plan(sketch, feature)
+            self._into_body(feature, entry, lambda body: self._verified_taper(body, plan, entry))
+            return
+        if feature.get("direction") is not None:
+            vector = extrude_vector(feature, Frame.from_tree(sketch["plane"]))
+
+            def make(body):
+                return self._verified_oblique_pad(body, sketch, vector, symmetric, entry)
+        else:
+            def make(body):
+                return self._verified_pad(body, sketch, float(feature["distance"]), symmetric,
+                                          entry)
         operation = feature["operation"]
         if operation == "new_body":
             body = self._new_body(use_main=True)
-            pad = self._verified_pad(body, sketch, float(feature["distance"]),
-                                     bool(feature.get("symmetric")), entry)
+            pad = make(body)
             self.bodies[feature["creates"][0]] = body
             if self.first_pad is None:
                 # Its body survives to the end, so editing it moves the part.
@@ -218,8 +241,7 @@ class TreeBuilder:
             return
         (target,) = feature["bodies"]
         tool = self._new_body(use_main=False)
-        self._verified_pad(tool, sketch, float(feature["distance"]),
-                           bool(feature.get("symmetric")), entry)
+        make(tool)
         self._combine(self.bodies[target], tool, operation, entry)
 
     def _feature_revolve(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -376,6 +398,79 @@ class TreeBuilder:
                 raise BuildFailed(f"'{pad.Name}' still points the wrong way after one flip")
             entry.setdefault("notes", []).append(f"{pad.Name}: direction flipped to match the tree")
         return pad
+
+    def _verified_oblique_pad(self, body: Any, sketch: dict[str, Any], vector: Vec,
+                              symmetric: bool, entry: dict[str, Any]) -> Any:
+        """A Pad along a 3D line through the profile's centroid. Whether CATIA
+        measures the length along that line or along the sketch normal is
+        read from the first volume; the direction is flipped once like a pad's."""
+        frame = Frame.from_tree(sketch["plane"])
+        area, centroid = profile_area_centroid(sketch)
+        want_volume, want_cog = oblique_expectation(frame, area, centroid, vector, symmetric)
+        catia_sketch, _, _ = self._draw(body, sketch, frame)
+        start = frame.world(*centroid)
+        line = self.part.HybridShapeFactory.AddNewLinePtPt(
+            self._construction_point(start), self._construction_point(add(start, vector)))
+        self._construction_set().AppendHybridShape(line)
+        part = self.part
+        part.UpdateObject(line)
+        _force_solid_inwork(part, catia_sketch)
+        part.InWorkObject = body
+        length, height = math.sqrt(dot(vector, vector)), abs(dot(vector, frame.normal))
+        pad = part.ShapeFactory.AddNewPad(catia_sketch, length)
+        entry["catia"].append(str(pad.Name))
+        pad.SetDirection(part.CreateReferenceFromObject(line))
+        if symmetric and not _set_prop(pad, "IsSymmetric", True):
+            raise BuildFailed(f"CATIA refused the symmetric extent of '{pad.Name}'")
+        part.UpdateObject(pad)
+        slack = max(1e-3, FEATURE_REL_TOL * want_volume)
+        volume = self._volume(body)
+        if abs(volume - want_volume) > slack and abs(volume * height / length - want_volume) <= slack:
+            # CATIA measured the length along the sketch normal: give it the height.
+            pad.FirstLimit.Dimension.Value = height
+            part.UpdateObject(pad)
+            volume = self._volume(body)
+            entry.setdefault("notes", []).append(
+                f"{pad.Name}: length measured along the sketch normal")
+        if abs(volume - want_volume) > slack:
+            raise BuildFailed(f"'{pad.Name}' measures {volume:.4f} mm3, expected "
+                              f"{want_volume:.4f} mm3 (profile area times the height)")
+        size = math.sqrt(area) + length
+        tol = max(1e-3, FEATURE_REL_TOL * size)
+        cog = self._cog(body)
+        if distance(cog, want_cog) > tol:
+            if symmetric or distance(cog, add(want_cog, scale(vector, -1))) > tol:
+                raise BuildFailed(f"'{pad.Name}' has its centre of gravity at {_fmt(cog)}, "
+                                  f"expected {_fmt(want_cog)}: it does not follow the tree's "
+                                  "direction")
+            current = _read_prop(pad, "DirectionOrientation") or 0
+            if not _set_prop(pad, "DirectionOrientation", 1 - current):
+                raise BuildFailed(f"CATIA refused to flip the direction of '{pad.Name}'")
+            part.UpdateObject(pad)
+            if distance(self._cog(body), want_cog) > tol:
+                raise BuildFailed(f"'{pad.Name}' still points the wrong way after one flip")
+            entry.setdefault("notes", []).append(f"{pad.Name}: direction flipped to match the tree")
+        return pad
+
+    def _verified_taper(self, body: Any, plan: TaperPlan, entry: dict[str, Any]) -> None:
+        """A tapered extrude as build123d builds it: each outer loop lofted to
+        its offset, minus its inner loops lofted to theirs, the pieces joined."""
+        for index, piece in enumerate(plan.pieces):
+            sections = [{"plane": piece.bottom}, {"plane": piece.top}]
+            target = body if index == 0 else self._new_body(use_main=False)
+            self._verified_loft(target, sections, piece.outer, entry)
+            for inner in piece.inners:
+                tool = self._new_body(use_main=False)
+                self._verified_loft(tool, sections, inner, entry)
+                self._combine(target, tool, "cut", entry)
+            if index:
+                self._combine(body, target, "join", entry)
+        volume, cog = self._volume(body), self._cog(body)
+        size = math.sqrt(max(plan.volume, 1e-9) ** (2 / 3))
+        if abs(volume - plan.volume) > max(1e-3, FEATURE_REL_TOL * plan.volume) \
+                or distance(cog, plan.cog) > max(1e-3, FEATURE_REL_TOL * size):
+            raise BuildFailed(f"the tapered extrude gives {volume:.4f} mm3 at {_fmt(cog)}, "
+                              f"expected {plan.volume:.4f} mm3 at {_fmt(plan.cog)} (prismatoid)")
 
     def _verified_shaft(self, body: Any, sketch: dict[str, Any], axis_origin: Vec,
                         axis_direction: Vec, angle: float, entry: dict[str, Any]) -> Any:
