@@ -154,8 +154,11 @@ All notable changes to this project are documented here.
   orientation 2, and "no closing point" is passed as VBScript's `Nothing`.
 - Lofts between sections with corners: the loft probe showed every variant
   failing on four lines whose ends only touch. Loft sections are now drawn as
-  connected contours, the curves sharing one sketch point at each corner
-  (`scripts/probe_loft.py` checks it live).
+  connected contours, the curves sharing one sketch point at each corner.
+  Its second run gave the exact loft with vertex coupling and 3D closing
+  points, and refused a sketch vertex: the builder now tries 3D points, then
+  CATIA's own closing points, with orientation 1 then -1 (2 builds the same
+  loft as 1).
 - `catia_new_part` in auto mode on 3DEXPERIENCE creates a 3D Shape, unless a
   probe verified that this installation may create a 3D Part (on many roles
   a 3D Part opens a blocking "Operation not authorized" dialog).

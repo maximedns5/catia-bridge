@@ -51,7 +51,6 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
 
 from __future__ import annotations
 
-import contextlib
 import math
 import time
 from collections.abc import Callable
@@ -62,7 +61,6 @@ from catia_mcp.automation import call_fill_array, evaluate
 from catia_mcp.connection import CATIAConnection
 from catia_mcp.introspect import find_enum
 from catia_mcp.measure import Measurer
-from catia_mcp.references import _search_topology
 from catia_mcp.step import DEAD_BODY_PREFIX, StepExchange
 from catia_mcp.tools.document import DocumentTools, _same
 from catia_mcp.tools.part_design import (
@@ -71,7 +69,7 @@ from catia_mcp.tools.part_design import (
     _set_prop,
     _sketch_v_direction,
 )
-from catia_mcp.tree.dressup import DressUpFailed, DressUps, is_sketch_wire
+from catia_mcp.tree.dressup import DressUpFailed, DressUps
 from catia_mcp.tree.extrude import TaperPlan, extrude_vector, oblique_expectation, taper_plan
 from catia_mcp.tree.geometry import (
     Arc,
@@ -114,11 +112,15 @@ EPS = 1e-9
 # HybridShapeLoft.SectionCoupling: 1 ratio, 2 tangency, 3 tangency then
 # curvature, 4 vertices.
 LOFT_VERTEX_COUPLING = 4
-# How a loft section's closing point is given, in the order tried.
-LOFT_CLOSING_MODES = ("sketch vertex", "point", "automatic")
-# The second section's orientation: as drawn, then reversed (R428 refused -1
-# once; 2 is the other value macros use).
-LOFT_ORIENTATIONS = (1, -1, 2)
+# How a loft section's closing point is given, in the order tried: a 3D
+# point on the section's vertex (live on R428 the only way that builds a loft
+# between sections with corners, with connected contours and vertex
+# coupling), then CATIA's own choice. A sketch vertex found by a topology
+# search is refused, and a point drawn in the sketch fails to update.
+LOFT_CLOSING_MODES = ("point", "automatic")
+# The second section's orientation: as drawn, then reversed (on R428, 2
+# builds the same loft as 1).
+LOFT_ORIENTATIONS = (1, -1)
 _LOFT_SECTION_VBS = (
     "Public Function catia_mcp_loft_section(o, r, s)\n"
     "    o.AddSectionToLoft r, s, Nothing\n"
@@ -657,18 +659,10 @@ class TreeBuilder:
         part = self.part
         found = None
         refused: list[str] = []
-        # Live on R428, a 3D point on a vertex where two sketch elements meet
-        # (a polygon corner, a split circle) is refused or gives a loft CATIA
-        # cannot update, while one on a whole circle works. The sketch's own
-        # vertex there is tried first, then the 3D point, then CATIA's own
-        # closing points; the volume and centre of gravity decide.
+        # The volume and centre of gravity decide which closing points and
+        # orientation give the tree's loft.
         for mode in LOFT_CLOSING_MODES:
-            try:
-                closings = [self._closing_point(mode, catia_sketch, point, body)
-                            for catia_sketch, point in drawn]
-            except Exception as error:  # no sketch vertex there, or a COM error
-                refused.append(f"{mode}: {error}")
-                continue
+            closings = [self._closing_point(mode, point) for _, point in drawn]
             for orientation in LOFT_ORIENTATIONS:
                 _force_solid_inwork(part, drawn[0][0])
                 part.InWorkObject = body
@@ -710,30 +704,10 @@ class TreeBuilder:
         raise BuildFailed(f"the loft gives {got}, expected {want.volume:.4f} mm3 at "
                           f"{_fmt(want.cog)} (tried: {'; '.join(refused) or 'every way'})")
 
-    def _closing_point(self, mode: str, catia_sketch: Any, point: Vec, body: Any) -> Any:
-        """A loft section's closing point: the section sketch's own vertex at
-        `point`, a 3D point there, or None for CATIA's choice. A vertex search
-        from the sketch finds nothing (live on R428); from the body it returns
-        the sketches' wire vertices too (Selection_WireFVertex), and the
-        section's is the one at `point`."""
-        if mode == "automatic":
-            return None
-        target = self._construction_point(point)
-        if mode == "point":
-            return target
-        sel = self.conn.hso
-        try:
-            count = _search_topology(sel, body, "Vertex")
-            vertices = [sel.Item(i).Reference for i in range(1, count + 1)]
-        finally:
-            with contextlib.suppress(Exception):
-                sel.Clear()
-        wires = [v for v in vertices if is_sketch_wire(str(getattr(v, "DisplayName", "")))]
-        for vertex in wires:
-            if self.measure.min_distance_mm(vertex, target) <= 1e-4:
-                return vertex
-        raise BuildFailed(f"no sketch vertex at {_fmt(point)} ({len(wires)} sketch vertices "
-                          f"among {len(vertices)} searched)")
+    def _closing_point(self, mode: str, point: Vec) -> Any:
+        """A loft section's closing point: a 3D point at `point`, or None for
+        CATIA's choice."""
+        return None if mode == "automatic" else self._construction_point(point)
 
     def _verified_rib(self, body: Any, sketch: dict[str, Any], path: list[dict[str, Any]],
                       entry: dict[str, Any]) -> Any:

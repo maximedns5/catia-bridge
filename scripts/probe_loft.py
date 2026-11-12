@@ -6,7 +6,9 @@ loft CATIA cannot update, and every later try in the same part is refused.
 The first run of this probe showed every rectangle loft failing to update,
 whatever the coupling, closing points or orientation, while circles worked:
 the rectangles were four lines that only touch. Connected contours (one
-sketch point shared by the lines at each corner) are now tried first.
+sketch point shared by the lines at each corner) are now tried first. The
+second run settled it: connected sections, vertex coupling and 3D closing
+points give the exact loft.
 
 This probe tries each way of building a rectangle-to-rectangle loft, each in
 a fresh part so that one failure cannot spoil the next, and records which
