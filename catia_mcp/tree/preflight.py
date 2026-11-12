@@ -12,6 +12,7 @@ from typing import Any
 
 from catia_mcp.tree.geometry import Frame, dot, profile_area_centroid, revolve_expectation, unit
 from catia_mcp.tree.loft import plan_loft
+from catia_mcp.tree.step_source import StepSource
 from catia_mcp.tree.sweep import sweep_expectation
 
 # Milestones 1, 2 and 4: sketches, extrudes, revolves, combines, holes,
@@ -40,8 +41,10 @@ def _where(feature: dict[str, Any]) -> str:
     return f"feature {feature.get('id', '?')}"
 
 
-def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
-    """Every reason to refuse the tree, mapped to where it occurs."""
+def analyze(tree: dict[str, Any], step: StepSource | None = None) -> OrderedDict[str, list[str]]:
+    """Every reason to refuse the tree, mapped to where it occurs. With
+    `step`, an unsupported feature is accepted when STEP files stand in for
+    it (catia_mcp/tree/step_source.py)."""
     reasons: OrderedDict[str, list[str]] = OrderedDict()
 
     def refuse(reason: str, where: str) -> None:
@@ -69,9 +72,12 @@ def analyze(tree: dict[str, Any]) -> OrderedDict[str, list[str]]:
                 refuse(f"duplicate feature id '{fid}'", f"{pid} {where}")
             ids.add(fid)
             if kind not in SUPPORTED:
+                why = step.refusal(pid, feature, bodies) if step is not None else ""
+                if why is None:
+                    continue
                 label = "a solid without a native rule (base_feature)" if kind == "base_feature" \
                     else f"'{kind}' features are not supported yet"
-                refuse(label, f"{pid} {where}")
+                refuse(f"{label}, and no STEP fallback: {why}" if why else label, f"{pid} {where}")
                 # Keep its bodies known, so later features are not reported as
                 # broken only because this one is unsupported.
                 bodies.update(feature.get("creates") or [])
@@ -294,8 +300,8 @@ def refusal(reasons: OrderedDict[str, list[str]]) -> str:
     )
 
 
-def check(tree: dict[str, Any]) -> None:
-    reasons = analyze(tree)
+def check(tree: dict[str, Any], step: StepSource | None = None) -> None:
+    reasons = analyze(tree, step)
     if reasons:
         raise TreeRefused(reasons)
 

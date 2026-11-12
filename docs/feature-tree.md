@@ -44,6 +44,8 @@ Everything else is refused by `check`, for now: fillet, chamfer and shell
 (milestone 3), lofts through more than two sections, to a point, between
 sections that are not parallel or with correspondence rails, Frenet sweeps,
 sweeps along 3D paths or paths with corners, and tapered or oblique extrudes.
+On CATIA V5, `--step-dir` lets STEP files stand in for a `base_feature` or an
+unsupported feature, as bodies without history: see [step.md](step.md).
 
 ## How the build stays faithful
 

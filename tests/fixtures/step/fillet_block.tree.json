@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/Probe/FilletBlock",
+   "name": "FilletBlock",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       -20
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -50.0,
+        -30.0
+       ],
+       "end": [
+        50.0,
+        -30.0
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        50.0,
+        -30.0
+       ],
+       "end": [
+        50.0,
+        30.0
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        50.0,
+        30.0
+       ],
+       "end": [
+        -50.0,
+        30.0
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -50.0,
+        30.0
+       ],
+       "end": [
+        -50.0,
+        -30.0
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 40,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "fillet",
+     "id": "fillet1",
+     "bodies": [
+      "Body1"
+     ],
+     "radius": 5,
+     "edges": [],
+     "reason": "fillets have no native rule yet"
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

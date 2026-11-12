@@ -31,6 +31,7 @@ from catia_mcp.tools.measurement import MeasurementTools
 from catia_mcp.tools.part_design import PartDesignTools
 from catia_mcp.tools.plm import PLMTools
 from catia_mcp.tools.sketcher import SketcherTools
+from catia_mcp.tools.step import StepTools
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,6 +120,7 @@ class CATIAMCPServer:
         self.measurement_tools = MeasurementTools(self.connection)
         self.export_tools = ExportTools(self.connection)
         self.plm_tools = PLMTools(self.connection)
+        self.step_tools = StepTools(self.connection)
         self.introspection_tools = IntrospectionTools(self.connection, allow_scripts)
         self._tool_modules = [
             self.document_tools,
@@ -132,6 +134,7 @@ class CATIAMCPServer:
             self.measurement_tools,
             self.export_tools,
             self.plm_tools,
+            self.step_tools,
             self.introspection_tools,
         ]
         self._tool_router: dict[str, Any] = {}

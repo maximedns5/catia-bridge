@@ -12,6 +12,7 @@ from catia_mcp.tools.measurement import MeasurementTools
 from catia_mcp.tools.export import ExportTools
 from catia_mcp.tools.introspection import IntrospectionTools
 from catia_mcp.tools.plm import PLMTools
+from catia_mcp.tools.step import StepTools
 
 __all__ = [
     "DocumentTools",
@@ -26,4 +27,5 @@ __all__ = [
     "ExportTools",
     "IntrospectionTools",
     "PLMTools",
+    "StepTools",
 ]

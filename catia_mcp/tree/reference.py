@@ -103,7 +103,9 @@ def _add_solid(bodies: dict[str, Any], feature: dict[str, Any], solid: Any) -> N
         bodies[target] = _combine(bodies[target], solid, feature["operation"])
 
 
-def build_part(part: dict[str, Any]) -> Any:
+def build_part(part: dict[str, Any], external: Any = None) -> Any:
+    """The part's solid. `external(part, feature, bodies)` builds the features
+    this reference has no rule for, by updating `bodies` (the STEP fallback)."""
     sketches: dict[str, dict[str, Any]] = {}
     bodies: dict[str, Any] = {}
     for feature in part.get("features") or []:
@@ -168,6 +170,8 @@ def build_part(part: dict[str, Any]) -> Any:
                 for radius, top, bottom in hole_segments(feature):
                     plane = Plane(origin=add(origin, scale(z_dir, bottom)), x_dir=x_dir, z_dir=z_dir)
                     bodies[target] = bodies[target] - Solid.make_cylinder(radius, top - bottom, plane)
+        elif external is not None:
+            external(part, feature, bodies)
         else:
             raise ReferenceError(f"no reference for '{kind}' features")
     final = [bodies[name] for name in (part.get("bodies") or bodies)]
@@ -183,6 +187,6 @@ def properties(solid: Any) -> dict[str, Any]:
             "cog_mm": [float(cog.X), float(cog.Y), float(cog.Z)]}
 
 
-def expected(tree: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def expected(tree: dict[str, Any], external: Any = None) -> dict[str, dict[str, Any]]:
     """Per-part expected properties, keyed by part id."""
-    return {part["id"]: properties(build_part(part)) for part in tree["parts"]}
+    return {part["id"]: properties(build_part(part, external)) for part in tree["parts"]}
