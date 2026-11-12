@@ -7,6 +7,8 @@
 build attaches to a running CATIA (it never starts one), builds every part in
 a new part, compares each part's volume with build123d's when build123d is
 installed, proves editability, and writes a JSON report. Nothing is saved.
+CATIA runs on a guarded worker thread: a dialog that blocks the build ends it
+with a report naming the part, the feature and the dialog's text.
 --part and --until build a prefix of one part, for development.
 """
 
@@ -15,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from typing import Any
 
 from catia_mcp.tree.preflight import TreeRefused, analyze, refusal, truncate
@@ -63,8 +66,31 @@ def _reference(tree) -> int:
     return 0
 
 
+def _blocked_report(tree, builder, error, started: float) -> dict[str, Any]:
+    """The report of a build a dialog (or a hang) stopped mid-call."""
+    partial = getattr(builder, "report", None) or {"parts_detail": []}
+    details = [record if isinstance(record, dict) else dict(vars(record))
+               for record in partial["parts_detail"]]
+    return {
+        "success": False, "native_history": False, "editable": None,
+        "parts": len(tree["parts"]),
+        "features": sum(len(record["features"]) for record in details),
+        "parts_detail": details,
+        "error": {
+            "part": getattr(builder, "part_id", None),
+            "feature": getattr(builder, "feature_id", None),
+            "code": error.code, "message": str(error), "dialog": error.data.get("watchdog"),
+            "note": "The CATIA call is still pending: close the dialog in CATIA, check the "
+                    "document (it may contain a partial model), then run the build again.",
+        },
+        "elapsed_s": round(time.monotonic() - started, 2),
+    }
+
+
 def _build(tree, args) -> int:
+    from catia_mcp.com_guard import ComWorker
     from catia_mcp.connection import CATIAConnection
+    from catia_mcp.errors import CATIAToolError, SessionError
     from catia_mcp.tree.builder import TreeBuilder
 
     try:
@@ -73,17 +99,26 @@ def _build(tree, args) -> int:
         print(f"Cannot compute the expected volumes: {error}")
         return 2
     conn = CATIAConnection(platform=args.platform, allow_launch=False)
+    # Every CATIA call (connect included) runs on this worker; the budget
+    # check between features stays the builder's, this timeout is the backstop.
+    worker = ComWorker(conn.watchdog, timeout_s=args.deadline + 60, name="catia-tree")
     try:
-        print(conn.connect())
-    except RuntimeError as error:
+        print(worker.run_guarded(conn.connect, label="connect"))
+    except (RuntimeError, CATIAToolError) as error:
         print(error)
         return 2
     builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print)
+    started = time.monotonic()
     try:
-        report = builder.build(tree, expected, check_editability=not args.no_edit)
+        report = worker.run_guarded(builder.build, tree, expected, not args.no_edit,
+                                    label="the tree build")
     except TreeRefused as refused:
         print(refused)
         return 1
+    except SessionError as error:
+        report = _blocked_report(tree, builder, error, started)
+    if worker.dismissed:
+        report["dismissed_dialogs"] = worker.dismissed
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
     for part in report["parts_detail"]:
