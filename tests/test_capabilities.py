@@ -370,6 +370,23 @@ def test_the_3d_part_probe_records_a_refusal(monkeypatch):
         caps.probe(Conn(app, PLATFORM_3DX), risky=["format_c"])
 
 
+def test_a_3d_part_refused_without_e70_is_unavailable(monkeypatch):
+    """Live on R428 (student role): PLMCreate "3DPart" failed with no licence
+    wording, while the licence query answered PDG and GSD yes, E70 no."""
+    monkeypatch.setattr(caps, "_refused_by_licence", lambda error: False)
+    app = _app_3dx(authorized={"PDG", "GSD"})
+    app.session_services["PLMNewService"] = NewService(app, refuse=("3DPart",))
+    entry = caps.probe(Conn(app, PLATFORM_3DX), risky=["3dpart"])[
+        "capabilities"]["plm.create.3dpart"]
+    assert entry["status"] == "unavailable" and "E70 and VMX are not authorized" in entry["reason"]
+    # With no licence answer to go by, a refusal without licence wording stays unknown.
+    app = _app_3dx()
+    app.session_services["PLMNewService"] = NewService(app, refuse=("3DPart",))
+    entry = caps.probe(Conn(app, PLATFORM_3DX), risky=["3dpart"], use_cache=False, save=False)[
+        "capabilities"]["plm.create.3dpart"]
+    assert entry["status"] == "unknown"
+
+
 def test_a_created_3d_part_is_verified_and_closed_unsaved():
     class Allowing(NewService):
         def _out_PLMCreate(self, plm_type):

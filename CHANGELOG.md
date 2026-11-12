@@ -134,6 +134,20 @@ All notable changes to this project are documented here.
   live V5 or 3DEXPERIENCE session and writes a JSON report.
 
 ### Fixed
+- Found by the first live tree run on 3DEXPERIENCE R428 SP6 (French), 29 of
+  40 builds right on the first run:
+  - fillets and chamfers kept the sketches' own wire edges, which the body
+    search returns too (the "tool body cells" of the first probe), and
+    rejected the cells' results, named by CATIA's internal feature name
+    (`Pad.1` for `Extrusion.1`). Wire cells are dropped; one shared result is
+    taken as the last feature's;
+  - 3DEXPERIENCE has no `GetPointsOnCurve`: edges are matched by length and
+    by distance to construction points at the anchor's samples;
+  - lofts whose sections have corners: `AddSectionToLoft` refused a 3D point
+    there as the closing point. The section sketch's own vertex is tried
+    first, then the point, then CATIA's choice;
+  - the capability probe marks a refused 3D Part unavailable when the
+    licence query says E70 and VMX are not authorized.
 - `catia_new_part` in auto mode on 3DEXPERIENCE creates a 3D Shape, unless a
   probe verified that this installation may create a 3D Part (on many roles
   a 3D Part opens a blocking "Operation not authorized" dialog).

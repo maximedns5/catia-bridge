@@ -51,6 +51,7 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
 
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 from collections.abc import Callable
@@ -61,6 +62,7 @@ from catia_mcp.automation import call_fill_array
 from catia_mcp.connection import CATIAConnection
 from catia_mcp.introspect import find_enum
 from catia_mcp.measure import Measurer
+from catia_mcp.references import _search_topology
 from catia_mcp.step import DEAD_BODY_PREFIX, StepExchange
 from catia_mcp.tools.document import DocumentTools, _same
 from catia_mcp.tools.part_design import (
@@ -112,6 +114,8 @@ EPS = 1e-9
 # HybridShapeLoft.SectionCoupling: 1 ratio, 2 tangency, 3 tangency then
 # curvature, 4 vertices.
 LOFT_VERTEX_COUPLING = 4
+# How a loft section's closing point is given, in the order tried.
+LOFT_CLOSING_MODES = ("sketch vertex", "point", "automatic")
 
 
 class BuildFailed(Exception):
@@ -636,43 +640,85 @@ class TreeBuilder:
             redrawn = section_sketch(sketch, segments, plan.common, height)
             catia_sketch, _, _ = self._draw(body, redrawn, Frame.from_tree(sketch["plane"]))
             closing = plan.common.world(segments[0].a[0], segments[0].a[1], height)
-            drawn.append((catia_sketch, self._construction_point(closing)))
+            drawn.append((catia_sketch, closing))
         want = plan.expectation
         size = math.sqrt(max(want.volume, 1e-9) ** (2 / 3))
         tol = max(1e-3, FEATURE_REL_TOL * size)
         part = self.part
-        found = rejected = None
-        for orientation in (1, -1):
-            _force_solid_inwork(part, drawn[0][0])
-            part.InWorkObject = body
-            loft = part.ShapeFactory.AddNewLoft()
+        found = None
+        refused: list[str] = []
+        # Live on R428, AddSectionToLoft refuses a 3D point that sits on a
+        # vertex where two sketch elements meet (a polygon corner, a split
+        # circle) and takes it on a whole circle. The sketch's own vertex
+        # there is tried first, then the 3D point, then CATIA's own closing
+        # points; the volume and centre of gravity decide.
+        for mode in LOFT_CLOSING_MODES:
             try:
-                shape = loft.HybridShape
-            except Exception:  # some releases take the sections on the Loft itself
-                shape = loft
-            if not _set_prop(shape, "SectionCoupling", LOFT_VERTEX_COUPLING):
-                raise BuildFailed(f"CATIA refused vertex coupling on '{loft.Name}'")
-            for (catia_sketch, closing), sense in zip(drawn, (1, orientation), strict=True):
-                shape.AddSectionToLoft(part.CreateReferenceFromObject(catia_sketch), sense,
-                                       closing)
-            try:
-                part.UpdateObject(loft)
-                volume, cog = self._volume(body), self._cog(body)
-                found = (volume, cog)
-                if abs(volume - want.volume) <= max(1e-3, FEATURE_REL_TOL * want.volume) \
-                        and distance(cog, want.cog) <= tol:
-                    entry["catia"].append(str(loft.Name))
-                    if orientation < 0:
-                        entry.setdefault("notes", []).append(
-                            f"{loft.Name}: second section reversed to match the tree")
-                    return loft
-            except Exception as error:  # CATIA rejects a twisted, self-crossing loft
-                rejected = error
-            self._delete(loft)
+                closings = [self._closing_point(mode, catia_sketch, point)
+                            for catia_sketch, point in drawn]
+            except Exception as error:  # no sketch vertex there, or a COM error
+                refused.append(f"{mode}: {error}")
+                continue
+            for orientation in (1, -1):
+                _force_solid_inwork(part, drawn[0][0])
+                part.InWorkObject = body
+                loft = part.ShapeFactory.AddNewLoft()
+                try:
+                    shape = loft.HybridShape
+                except Exception:  # some releases take the sections on the Loft itself
+                    shape = loft
+                if not _set_prop(shape, "SectionCoupling", LOFT_VERTEX_COUPLING):
+                    raise BuildFailed(f"CATIA refused vertex coupling on '{loft.Name}'")
+                try:
+                    for (catia_sketch, _), closing, sense in zip(drawn, closings, (1, orientation),
+                                                                 strict=True):
+                        _add_loft_section(shape, part.CreateReferenceFromObject(catia_sketch),
+                                          sense, closing)
+                except Exception as error:  # this kind of closing point is refused
+                    refused.append(f"{mode}: {error}")
+                    self._delete(loft)
+                    break
+                try:
+                    part.UpdateObject(loft)
+                    volume, cog = self._volume(body), self._cog(body)
+                    found = (volume, cog)
+                    if abs(volume - want.volume) <= max(1e-3, FEATURE_REL_TOL * want.volume) \
+                            and distance(cog, want.cog) <= tol:
+                        entry["catia"].append(str(loft.Name))
+                        notes = entry.setdefault("notes", [])
+                        notes.append(f"{loft.Name}: closing points given as {mode}")
+                        if orientation < 0:
+                            notes.append(f"{loft.Name}: second section reversed to match the "
+                                         "tree")
+                        return loft
+                except Exception as error:  # CATIA rejects a twisted, self-crossing loft
+                    refused.append(f"{mode}, orientation {orientation}: {error}")
+                self._delete(loft)
         got = (f"{found[0]:.4f} mm3 with its centre of gravity at {_fmt(found[1])}"
-               if found else f"nothing CATIA would update ({rejected})")
+               if found else "nothing CATIA would build")
         raise BuildFailed(f"the loft gives {got}, expected {want.volume:.4f} mm3 at "
-                          f"{_fmt(want.cog)}, with either section orientation")
+                          f"{_fmt(want.cog)} (tried: {'; '.join(refused) or 'every way'})")
+
+    def _closing_point(self, mode: str, catia_sketch: Any, point: Vec) -> Any:
+        """A loft section's closing point: the sketch's own vertex at `point`,
+        a 3D point there, or None for CATIA's choice."""
+        if mode == "automatic":
+            return None
+        target = self._construction_point(point)
+        if mode == "point":
+            return target
+        sel = self.conn.hso
+        try:
+            count = _search_topology(sel, catia_sketch, "Vertex")
+            vertices = [sel.Item(i).Reference for i in range(1, count + 1)]
+        finally:
+            with contextlib.suppress(Exception):
+                sel.Clear()
+        for vertex in vertices:
+            if self.measure.min_distance_mm(vertex, target) <= 1e-4:
+                return vertex
+        raise BuildFailed(f"no vertex of the section sketch at {_fmt(point)} "
+                          f"({len(vertices)} vertices searched)")
 
     def _verified_rib(self, body: Any, sketch: dict[str, Any], path: list[dict[str, Any]],
                       entry: dict[str, Any]) -> Any:
@@ -942,6 +988,17 @@ def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
     return (f"spline {entity.get('id', '?')}: approximated by {len(plan.items)} CATIA sketch "
             f"spline(s) through {count} points (chords within {plan.deviation_area:.2g} mm2 "
             "of the curve)")
+
+
+def _add_loft_section(shape: Any, section: Any, sense: int, closing: Any) -> None:
+    """AddSectionToLoft, with no closing point when `closing` is None."""
+    if closing is not None:
+        shape.AddSectionToLoft(section, sense, closing)
+        return
+    try:
+        shape.AddSectionToLoft(section, sense, None)
+    except Exception:  # some releases want the argument left out
+        shape.AddSectionToLoft(section, sense)
 
 
 def _sketch_h_direction(sketch: Any) -> Any:

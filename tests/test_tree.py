@@ -205,10 +205,12 @@ class _FakePart:
     opposite when `pads_reversed`); booleans assume disjoint or nested solids."""
 
     def __init__(self, pads_reversed=False, turns_reversed=False, split_reversed=False,
-                 lofts_reversed=False):
+                 lofts_reversed=False, loft_points_refused=False):
         self.Name, self.pads_reversed, self.pads = "Part1", pads_reversed, []
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.lofts_reversed, self.deleted = lofts_reversed, []
+        # Live on R428: a 3D point as a closing point at a sketch vertex is refused.
+        self.loft_points_refused = loft_points_refused
         self.MainBody = _Body("Corps principal")
         bodies = [self.MainBody]
         self.Bodies = SimpleNamespace(Add=lambda: bodies.append(_Body(f"Body.{len(bodies) + 1}")) or bodies[-1])
@@ -263,8 +265,14 @@ class _FakePart:
         sections = []
         loft.HybridShape = SimpleNamespace(
             SectionCoupling=1, sections=sections,
-            AddSectionToLoft=lambda ref, sense, closing: sections.append((ref, sense, closing)))
+            AddSectionToLoft=lambda ref, sense, closing: self._add_section(
+                sections, ref, sense, closing))
         return loft
+
+    def _add_section(self, sections, ref, sense, closing):
+        if self.loft_points_refused and closing[0] == "point":
+            raise RuntimeError("La méthode AddSectionToLoft a échoué")
+        sections.append((ref, sense, closing))
 
     def delete(self, feature):
         self.deleted.append(feature)
@@ -588,6 +596,7 @@ def test_a_twisted_loft_is_rebuilt_once_with_the_second_section_reversed(monkeyp
     first, second = _lofts(part)
     assert part.deleted == [first] and second.HybridShape.sections[1][1] == -1
     assert report["parts_detail"][0]["features"][2]["notes"] == [
+        f"{second.Name}: closing points given as point",
         f"{second.Name}: second section reversed to match the tree"]
     assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(3700.0)
 
@@ -623,3 +632,59 @@ def test_preflight_refuses_lofts_and_sweeps_it_cannot_pair_or_follow():
     pipe = load("m4_sweep_pipe")
     pipe["parts"][0]["features"][1]["path"][1]["end"] = [15, 5, 55]
     assert "not planar" in next(iter(analyze(pipe)))
+
+
+class _VertexSelection:
+    """Selection.Search of a fake sketch's vertices (French queries)."""
+
+    def __init__(self):
+        self.items = []
+
+    def Clear(self):
+        self.items = []
+
+    def Add(self, obj):
+        self.items.append(obj)
+
+    def Search(self, query):
+        assert query == "Topologie.Sommet,sel", query
+        (sketch,) = self.items
+        origin, h, v = sketch.ref
+        world = lambda uv: tuple(origin[i] + uv[0] * h[i] + uv[1] * v[i] for i in range(3))
+        self.items = [SimpleNamespace(Reference=("vertex", world(e["start"])))
+                      for e in sketch.factory.entities if "start" in e]
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, i):
+        return self.items[i - 1]
+
+
+def _vertex_builder(part, monkeypatch):
+    built = _builder(part, monkeypatch)
+    built.conn.hso = _VertexSelection()
+    monkeypatch.setattr(builder_module.Measurer, "min_distance_mm",
+                        lambda self, a, b: math.dist(a[1], b[1]))
+    return built
+
+
+def test_a_loft_closes_on_the_sketch_vertex_when_catia_refuses_a_3d_point(monkeypatch):
+    part = _FakePart(loft_points_refused=True)
+    report = _vertex_builder(part, monkeypatch).build(load("m4_loft_rect_prismatoid"),
+                                                      check_editability=False)
+    assert report["success"], report.get("error")
+    (loft,) = _lofts(part)
+    assert [closing[0] for _, _, closing in loft.HybridShape.sections] == ["vertex", "vertex"]
+    assert report["parts_detail"][0]["features"][2]["notes"] == [
+        f"{loft.Name}: closing points given as sketch vertex"]
+
+
+def test_a_loft_falls_back_to_a_3d_point_without_a_vertex_search(monkeypatch):
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(load("m4_loft_rect_prismatoid"),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    (loft,) = _lofts(part)
+    assert [closing[0] for _, _, closing in loft.HybridShape.sections] == ["point", "point"]

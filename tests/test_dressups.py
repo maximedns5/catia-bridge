@@ -13,6 +13,7 @@ fails, as CATIA's may.
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -530,12 +531,18 @@ class _TopoPart(_FakePart):
         return [(-volume, tuple((a + b) / 2 for a, b in zip(box_lo, box_hi, strict=True)))]
 
 
-def _topo_builder(part, monkeypatch, **dressups):
+def _topo_builder(part, monkeypatch, length_unit=1.0, selection=None, **dressups):
+    """A builder on the fake 3DEXPERIENCE: edges measure their length (in mm,
+    or in m with length_unit=1e-3) and the distance to a point, as
+    DistanceMinTo against a construction point does (no GetPointsOnCurve)."""
     built = _builder(part, monkeypatch)
-    built.conn.hso = _Selection(part)
+    built.conn.hso = (selection or _Selection)(part)
     built.dressups = DressUps(built, **dressups)
     monkeypatch.setattr(DressUps, "_edge_geometry",
                         lambda self, ref: (ref.length, ref.start, ref.mid, ref.end, ref.center))
+    monkeypatch.setattr(DressUps, "_edge_length_raw", lambda self, ref: ref.length * length_unit)
+    monkeypatch.setattr(DressUps, "_point_distance",
+                        lambda self, ref, p: _measure(ref).distance(p))
     monkeypatch.setattr(DressUps, "_face_geometry", lambda self, ref: (ref.area, ref.centroid))
     monkeypatch.setattr(DressUps, "_area", lambda self, body: sum(
         c.area for c in body.shape_list[-1].cells if c.kind == "Face"))
@@ -765,3 +772,65 @@ def test_the_probe_cases_pass_preflight_and_compare_with_the_reference():
     result = probe.compare_with_reference(tree, candidates)
     assert result["reference_edges"] == 24 and len(result["matched"]) == 24
     assert [f["index"] for f in result["foreign"]] == [100, 101] and not result["missing"]
+
+
+# ── Live findings (3DEXPERIENCE R428 SP6, French) ──
+
+SKETCH_WIRE = ("Selection_WireREdge:(Wire:(Brp:(Sketch.1;4);None:(Limits1:();Limits2:());"
+               "Cf16:());Sketch.1;Z0;G12430)")
+
+
+class _SketchWireSelection(_Selection):
+    """Also returns the sketch's own wire edges, as CATIA's body search does:
+    here copies of four of the solid's edges, so they would tie with them."""
+
+    def Search(self, query):
+        super().Search(query)
+        if "Arête" not in query:
+            return
+        wires = []
+        for item in self.items[:4]:
+            cell = copy.copy(item.Reference)
+            cell.DisplayName = SKETCH_WIRE
+            wires.append(SimpleNamespace(Reference=cell))
+        self.items += wires
+
+
+class _InternalNameSelection(_Selection):
+    """Results named by CATIA's internal feature name (Pad.1) while the
+    feature shows as Extrusion.1."""
+
+    def Search(self, query):
+        super().Search(query)
+        renamed = []
+        for item in self.items:
+            cell = copy.copy(item.Reference)
+            cell.DisplayName = cell.DisplayName.replace("Extrusion.1_ResultOUT", "Pad.1_ResultOUT")
+            renamed.append(SimpleNamespace(Reference=cell))
+        self.items = renamed
+
+
+def test_the_sketches_own_wire_edges_are_dropped(monkeypatch):
+    part = _TopoPart()
+    report = _build("m3_fillet_corners", part, monkeypatch, selection=_SketchWireSelection)
+    assert report["success"], report.get("error")
+    (census,) = _entry(report, "fillet")["topology"]
+    assert census["found"] == 16 and census["sketch_wires"] == 4 and census["kept"] == 12
+
+
+def test_results_named_by_the_internal_feature_name_are_the_last_features(monkeypatch):
+    for mode in ("auto", "strict"):
+        part = _TopoPart()
+        report = _build("m3_fillet_corners", part, monkeypatch,
+                        selection=_InternalNameSelection, ownership=mode)
+        assert report["success"], (mode, report.get("error"))
+        (census,) = _entry(report, "fillet")["topology"]
+        assert census["contexts"] == {"Pad.1": 12} and census["kept"] == 12
+        assert "taken as the last feature 'Extrusion.1'" in census["note"]
+
+
+def test_edge_lengths_read_in_metres_still_match(monkeypatch):
+    part = _TopoPart()
+    report = _build("m3_fillet_corners", part, monkeypatch, length_unit=1e-3)
+    assert report["success"], report.get("error")
+    assert len(_of(part, "fillet")[0].refs) == 4
