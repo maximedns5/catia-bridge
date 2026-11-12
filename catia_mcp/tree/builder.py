@@ -58,7 +58,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from catia_mcp.automation import call_fill_array
+from catia_mcp.automation import call_fill_array, evaluate
 from catia_mcp.connection import CATIAConnection
 from catia_mcp.introspect import find_enum
 from catia_mcp.measure import Measurer
@@ -71,7 +71,7 @@ from catia_mcp.tools.part_design import (
     _set_prop,
     _sketch_v_direction,
 )
-from catia_mcp.tree.dressup import DressUpFailed, DressUps
+from catia_mcp.tree.dressup import DressUpFailed, DressUps, is_sketch_wire
 from catia_mcp.tree.extrude import TaperPlan, extrude_vector, oblique_expectation, taper_plan
 from catia_mcp.tree.geometry import (
     Arc,
@@ -116,6 +116,15 @@ EPS = 1e-9
 LOFT_VERTEX_COUPLING = 4
 # How a loft section's closing point is given, in the order tried.
 LOFT_CLOSING_MODES = ("sketch vertex", "point", "automatic")
+# The second section's orientation: as drawn, then reversed (R428 refused -1
+# once; 2 is the other value macros use).
+LOFT_ORIENTATIONS = (1, -1, 2)
+_LOFT_SECTION_VBS = (
+    "Public Function catia_mcp_loft_section(o, r, s)\n"
+    "    o.AddSectionToLoft r, s, Nothing\n"
+    "    catia_mcp_loft_section = 0\n"
+    "End Function\n"
+)
 
 
 class BuildFailed(Exception):
@@ -647,19 +656,19 @@ class TreeBuilder:
         part = self.part
         found = None
         refused: list[str] = []
-        # Live on R428, AddSectionToLoft refuses a 3D point that sits on a
-        # vertex where two sketch elements meet (a polygon corner, a split
-        # circle) and takes it on a whole circle. The sketch's own vertex
-        # there is tried first, then the 3D point, then CATIA's own closing
-        # points; the volume and centre of gravity decide.
+        # Live on R428, a 3D point on a vertex where two sketch elements meet
+        # (a polygon corner, a split circle) is refused or gives a loft CATIA
+        # cannot update, while one on a whole circle works. The sketch's own
+        # vertex there is tried first, then the 3D point, then CATIA's own
+        # closing points; the volume and centre of gravity decide.
         for mode in LOFT_CLOSING_MODES:
             try:
-                closings = [self._closing_point(mode, catia_sketch, point)
+                closings = [self._closing_point(mode, catia_sketch, point, body)
                             for catia_sketch, point in drawn]
             except Exception as error:  # no sketch vertex there, or a COM error
                 refused.append(f"{mode}: {error}")
                 continue
-            for orientation in (1, -1):
+            for orientation in LOFT_ORIENTATIONS:
                 _force_solid_inwork(part, drawn[0][0])
                 part.InWorkObject = body
                 loft = part.ShapeFactory.AddNewLoft()
@@ -672,12 +681,13 @@ class TreeBuilder:
                 try:
                     for (catia_sketch, _), closing, sense in zip(drawn, closings, (1, orientation),
                                                                  strict=True):
-                        _add_loft_section(shape, part.CreateReferenceFromObject(catia_sketch),
-                                          sense, closing)
-                except Exception as error:  # this kind of closing point is refused
-                    refused.append(f"{mode}: {error}")
+                        _add_loft_section(self.conn.app, shape,
+                                          part.CreateReferenceFromObject(catia_sketch), sense,
+                                          closing)
+                except Exception as error:  # this closing point or orientation is refused
+                    refused.append(f"{mode}, orientation {orientation}: {error}")
                     self._delete(loft)
-                    break
+                    continue
                 try:
                     part.UpdateObject(loft)
                     volume, cog = self._volume(body), self._cog(body)
@@ -687,7 +697,7 @@ class TreeBuilder:
                         entry["catia"].append(str(loft.Name))
                         notes = entry.setdefault("notes", [])
                         notes.append(f"{loft.Name}: closing points given as {mode}")
-                        if orientation < 0:
+                        if orientation != 1:
                             notes.append(f"{loft.Name}: second section reversed to match the "
                                          "tree")
                         return loft
@@ -699,9 +709,12 @@ class TreeBuilder:
         raise BuildFailed(f"the loft gives {got}, expected {want.volume:.4f} mm3 at "
                           f"{_fmt(want.cog)} (tried: {'; '.join(refused) or 'every way'})")
 
-    def _closing_point(self, mode: str, catia_sketch: Any, point: Vec) -> Any:
-        """A loft section's closing point: the sketch's own vertex at `point`,
-        a 3D point there, or None for CATIA's choice."""
+    def _closing_point(self, mode: str, catia_sketch: Any, point: Vec, body: Any) -> Any:
+        """A loft section's closing point: the section sketch's own vertex at
+        `point`, a 3D point there, or None for CATIA's choice. A vertex search
+        from the sketch finds nothing (live on R428); from the body it returns
+        the sketches' wire vertices too (Selection_WireFVertex), and the
+        section's is the one at `point`."""
         if mode == "automatic":
             return None
         target = self._construction_point(point)
@@ -709,16 +722,17 @@ class TreeBuilder:
             return target
         sel = self.conn.hso
         try:
-            count = _search_topology(sel, catia_sketch, "Vertex")
+            count = _search_topology(sel, body, "Vertex")
             vertices = [sel.Item(i).Reference for i in range(1, count + 1)]
         finally:
             with contextlib.suppress(Exception):
                 sel.Clear()
-        for vertex in vertices:
+        wires = [v for v in vertices if is_sketch_wire(str(getattr(v, "DisplayName", "")))]
+        for vertex in wires:
             if self.measure.min_distance_mm(vertex, target) <= 1e-4:
                 return vertex
-        raise BuildFailed(f"no vertex of the section sketch at {_fmt(point)} "
-                          f"({len(vertices)} vertices searched)")
+        raise BuildFailed(f"no sketch vertex at {_fmt(point)} ({len(wires)} sketch vertices "
+                          f"among {len(vertices)} searched)")
 
     def _verified_rib(self, body: Any, sketch: dict[str, Any], path: list[dict[str, Any]],
                       entry: dict[str, Any]) -> Any:
@@ -990,15 +1004,14 @@ def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
             "of the curve)")
 
 
-def _add_loft_section(shape: Any, section: Any, sense: int, closing: Any) -> None:
-    """AddSectionToLoft, with no closing point when `closing` is None."""
+def _add_loft_section(app: Any, shape: Any, section: Any, sense: int, closing: Any) -> None:
+    """AddSectionToLoft; with `closing` None, no closing point. Python cannot
+    pass VBScript's Nothing (R428: "invalid number of parameters"), so that
+    call runs in VBScript."""
     if closing is not None:
         shape.AddSectionToLoft(section, sense, closing)
         return
-    try:
-        shape.AddSectionToLoft(section, sense, None)
-    except Exception:  # some releases want the argument left out
-        shape.AddSectionToLoft(section, sense)
+    evaluate(app, _LOFT_SECTION_VBS, "catia_mcp_loft_section", [shape, section, sense])
 
 
 def _sketch_h_direction(sketch: Any) -> Any:

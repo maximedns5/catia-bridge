@@ -197,6 +197,7 @@ class _Body:
     def _add_sketch(self, ref):
         sketch = _Sketch(ref)
         self.last_sketch = sketch
+        self.sketch_list = getattr(self, "sketch_list", []) + [sketch]
         return sketch
 
 
@@ -205,12 +206,13 @@ class _FakePart:
     opposite when `pads_reversed`); booleans assume disjoint or nested solids."""
 
     def __init__(self, pads_reversed=False, turns_reversed=False, split_reversed=False,
-                 lofts_reversed=False, loft_points_refused=False):
+                 lofts_reversed=False, loft_points_refused=False, loft_minus_one_refused=False):
         self.Name, self.pads_reversed, self.pads = "Part1", pads_reversed, []
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.lofts_reversed, self.deleted = lofts_reversed, []
         # Live on R428: a 3D point as a closing point at a sketch vertex is refused.
         self.loft_points_refused = loft_points_refused
+        self.loft_minus_one_refused = loft_minus_one_refused
         self.MainBody = _Body("Corps principal")
         bodies = [self.MainBody]
         self.Bodies = SimpleNamespace(Add=lambda: bodies.append(_Body(f"Body.{len(bodies) + 1}")) or bodies[-1])
@@ -270,7 +272,8 @@ class _FakePart:
         return loft
 
     def _add_section(self, sections, ref, sense, closing):
-        if self.loft_points_refused and closing[0] == "point":
+        if self.loft_points_refused and closing[0] == "point" or \
+                self.loft_minus_one_refused and sense == -1:
             raise RuntimeError("La méthode AddSectionToLoft a échoué")
         sections.append((ref, sense, closing))
 
@@ -356,7 +359,7 @@ class _FakePart:
         loops = []
         for sketch, closing, sense in ((s1, c1, 1), (s2, c2, sense2)):
             loop = section_loop(_tree_sketch(sketch), common)
-            if (sense < 0) != (self.lofts_reversed and sketch is s2):
+            if (sense != 1) != (self.lofts_reversed and sketch is s2):
                 loop = [seg.reversed() for seg in reversed(loop)]
             offset = tuple(c - o for c, o in zip(closing[1], common.origin))
             at = (dot(offset, common.x_dir), dot(offset, common.y_dir))
@@ -635,7 +638,8 @@ def test_preflight_refuses_lofts_and_sweeps_it_cannot_pair_or_follow():
 
 
 class _VertexSelection:
-    """Selection.Search of a fake sketch's vertices (French queries)."""
+    """Selection.Search of a fake body's vertices (French queries): its
+    sketches' wire vertices, as CATIA's body search returns them."""
 
     def __init__(self):
         self.items = []
@@ -648,11 +652,15 @@ class _VertexSelection:
 
     def Search(self, query):
         assert query == "Topologie.Sommet,sel", query
-        (sketch,) = self.items
-        origin, h, v = sketch.ref
-        world = lambda uv: tuple(origin[i] + uv[0] * h[i] + uv[1] * v[i] for i in range(3))
-        self.items = [SimpleNamespace(Reference=("vertex", world(e["start"])))
-                      for e in sketch.factory.entities if "start" in e]
+        (body,) = self.items
+        found = []
+        for sketch in body.sketch_list:
+            origin, h, v = sketch.ref
+            world = lambda uv, o=origin, h=h, v=v: tuple(o[i] + uv[0] * h[i] + uv[1] * v[i]
+                                                         for i in range(3))
+            found += [("vertex", world(e["start"])) for e in sketch.factory.entities
+                      if "start" in e]
+        self.items = [SimpleNamespace(Reference=_WireVertex(point)) for point in found]
 
     @property
     def Count(self):
@@ -660,6 +668,12 @@ class _VertexSelection:
 
     def Item(self, i):
         return self.items[i - 1]
+
+
+class _WireVertex(tuple):
+    """A sketch vertex reference: ("vertex", point) with CATIA's display name."""
+
+    DisplayName = "Selection_WireFVertex:(Vertex:(Neighbours:(Brp:(Sketch.1;1)));Sketch.1;Z0;G1)"
 
 
 def _vertex_builder(part, monkeypatch):
@@ -688,3 +702,23 @@ def test_a_loft_falls_back_to_a_3d_point_without_a_vertex_search(monkeypatch):
     assert report["success"], report.get("error")
     (loft,) = _lofts(part)
     assert [closing[0] for _, _, closing in loft.HybridShape.sections] == ["point", "point"]
+
+
+def test_a_reversed_section_uses_2_when_catia_refuses_minus_1(monkeypatch):
+    part = _FakePart(lofts_reversed=True, loft_minus_one_refused=True)
+    report = _builder(part, monkeypatch).build(load("m4_loft_rect_prismatoid"),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    *_, loft = _lofts(part)
+    assert loft.HybridShape.sections[1][1] == 2
+    assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(3700.0)
+
+
+def test_no_closing_point_is_passed_as_vbscript_nothing():
+    calls = []
+    app = SimpleNamespace(SystemService=SimpleNamespace(
+        Evaluate=lambda code, language, function, params: calls.append((code, function, params))))
+    builder_module._add_loft_section(app, "shape", "section", 1, None)
+    ((code, function, params),) = calls
+    assert "o.AddSectionToLoft r, s, Nothing" in code
+    assert function == "catia_mcp_loft_section" and params == ["shape", "section", 1]

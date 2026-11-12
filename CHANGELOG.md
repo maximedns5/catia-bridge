@@ -148,6 +148,10 @@ All notable changes to this project are documented here.
     first, then the point, then CATIA's choice;
   - the capability probe marks a refused 3D Part unavailable when the
     licence query says E70 and VMX are not authorized.
+- Found by the second live run (fillets, chamfers, shells and the first
+  sample file now exact): a loft's sketch vertex is searched from the body
+  (a search from the sketch finds none), a reversed section is also tried as
+  orientation 2, and "no closing point" is passed as VBScript's `Nothing`.
 - `catia_new_part` in auto mode on 3DEXPERIENCE creates a 3D Shape, unless a
   probe verified that this installation may create a 3D Part (on many roles
   a 3D Part opens a blocking "Operation not authorized" dialog).

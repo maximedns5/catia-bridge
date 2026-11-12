@@ -188,8 +188,30 @@ The other 11 failed for three reasons, fixed since:
   section sketch's own vertex there, found by a topology search, then a 3D
   point, then CATIA's own choice; the volume and centre of gravity decide.
 
-These three fixes have not been run live yet. `tests/fixtures/trees/` holds
-synthetic trees for each path.
+**Second live run, after those fixes:**
+- all six fillet, chamfer and shell trees build exactly, and so does the
+  first sample file (a filleted and chamfered plate, a revolved shaft);
+- every CATIA edge of a block and of a notched block matched a build123d
+  edge (12 of 12, 24 of 24, none foreign);
+- a fillet on a matched edge changed the volume by exactly the expected
+  amount;
+- the STEP fallback on 3DEXPERIENCE worked end to end: a hand-imported part
+  adopted, pasted as a body without history and joined.
+
+Two things did not hold:
+- **BRep names:** references rebuilt from a BRep name resolve but do not
+  measure (length -1), so the builder uses the selection's references. Those
+  work.
+- **Lofts with corners still failed.**
+  - A vertex search from the section sketch finds nothing. It now runs from
+    the body, whose search returns the sketches' wire vertices.
+  - The 3D point was accepted with orientation 1 but gave a loft CATIA could
+    not update.
+  - Orientation -1 was refused; 2 is now tried too.
+  - CATIA's own closing points need VBScript's `Nothing`, which Python cannot
+    pass: that call now runs in VBScript.
+
+`tests/fixtures/trees/` holds synthetic trees for each path.
 - **Milestone 1** (`m1_*`): an offset plane, a reversed-normal plane, arcs with a negative distance, join, cut and intersect, the three hole kinds, and a tilted plane (the equation-plane path).
 - **Milestone 2** (`m2_*`):
   - revolves about an axis off the sketch origin (3D line), about the sketch's V axis, and about its H axis with a partial cut;
