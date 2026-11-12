@@ -154,19 +154,30 @@ def test_reference_matches_the_closed_form_of_the_fixtures():
 
 
 class _Factory:
+    """Sketch drawing: each curve is recorded as a tree entity, and returned
+    as an object whose StartPoint / EndPoint a connected contour sets."""
+
     def __init__(self):
-        self.entities = []
+        self.entities, self.points = [], []
+
+    def _curve(self, entity):
+        self.entities.append(entity)
+        return SimpleNamespace(entity=entity, StartPoint=None, EndPoint=None)
 
     def CreateLine(self, u0, v0, u1, v1):
-        self.entities.append({"type": "line", "start": [u0, v0], "end": [u1, v1]})
+        return self._curve({"type": "line", "start": [u0, v0], "end": [u1, v1]})
 
     def CreateClosedCircle(self, cu, cv, r):
-        self.entities.append({"type": "circle", "center": [cu, cv], "radius": r})
+        return self._curve({"type": "circle", "center": [cu, cv], "radius": r})
 
     def CreateCircle(self, cu, cv, r, a0, a1):
         point = lambda a: [cu + r * math.cos(a), cv + r * math.sin(a)]
-        self.entities.append({"type": "arc", "start": point(a0), "mid": point((a0 + a1) / 2),
-                              "end": point(a1)})
+        return self._curve({"type": "arc", "start": point(a0), "mid": point((a0 + a1) / 2),
+                            "end": point(a1)})
+
+    def CreatePoint(self, u, v):
+        self.points.append(SimpleNamespace(uv=(u, v)))
+        return self.points[-1]
 
 
 def _localized(name):
@@ -197,6 +208,7 @@ class _Body:
     def _add_sketch(self, ref):
         sketch = _Sketch(ref)
         self.last_sketch = sketch
+        self.sketch_list = getattr(self, "sketch_list", []) + [sketch]
         return sketch
 
 
@@ -205,12 +217,10 @@ class _FakePart:
     opposite when `pads_reversed`); booleans assume disjoint or nested solids."""
 
     def __init__(self, pads_reversed=False, turns_reversed=False, split_reversed=False,
-                 lofts_reversed=False, loft_points_refused=False):
+                 lofts_reversed=False):
         self.Name, self.pads_reversed, self.pads = "Part1", pads_reversed, []
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.lofts_reversed, self.deleted = lofts_reversed, []
-        # Live on R428: a 3D point as a closing point at a sketch vertex is refused.
-        self.loft_points_refused = loft_points_refused
         self.MainBody = _Body("Corps principal")
         bodies = [self.MainBody]
         self.Bodies = SimpleNamespace(Add=lambda: bodies.append(_Body(f"Body.{len(bodies) + 1}")) or bodies[-1])
@@ -265,14 +275,8 @@ class _FakePart:
         sections = []
         loft.HybridShape = SimpleNamespace(
             SectionCoupling=1, sections=sections,
-            AddSectionToLoft=lambda ref, sense, closing: self._add_section(
-                sections, ref, sense, closing))
+            AddSectionToLoft=lambda ref, sense, closing: sections.append((ref, sense, closing)))
         return loft
-
-    def _add_section(self, sections, ref, sense, closing):
-        if self.loft_points_refused and closing[0] == "point":
-            raise RuntimeError("La méthode AddSectionToLoft a échoué")
-        sections.append((ref, sense, closing))
 
     def delete(self, feature):
         self.deleted.append(feature)
@@ -356,7 +360,7 @@ class _FakePart:
         loops = []
         for sketch, closing, sense in ((s1, c1, 1), (s2, c2, sense2)):
             loop = section_loop(_tree_sketch(sketch), common)
-            if (sense < 0) != (self.lofts_reversed and sketch is s2):
+            if (sense != 1) != (self.lofts_reversed and sketch is s2):
                 loop = [seg.reversed() for seg in reversed(loop)]
             offset = tuple(c - o for c, o in zip(closing[1], common.origin))
             at = (dot(offset, common.x_dir), dot(offset, common.y_dir))
@@ -634,57 +638,37 @@ def test_preflight_refuses_lofts_and_sweeps_it_cannot_pair_or_follow():
     assert "not planar" in next(iter(analyze(pipe)))
 
 
-class _VertexSelection:
-    """Selection.Search of a fake sketch's vertices (French queries)."""
-
-    def __init__(self):
-        self.items = []
-
-    def Clear(self):
-        self.items = []
-
-    def Add(self, obj):
-        self.items.append(obj)
-
-    def Search(self, query):
-        assert query == "Topologie.Sommet,sel", query
-        (sketch,) = self.items
-        origin, h, v = sketch.ref
-        world = lambda uv: tuple(origin[i] + uv[0] * h[i] + uv[1] * v[i] for i in range(3))
-        self.items = [SimpleNamespace(Reference=("vertex", world(e["start"])))
-                      for e in sketch.factory.entities if "start" in e]
-
-    @property
-    def Count(self):
-        return len(self.items)
-
-    def Item(self, i):
-        return self.items[i - 1]
-
-
-def _vertex_builder(part, monkeypatch):
-    built = _builder(part, monkeypatch)
-    built.conn.hso = _VertexSelection()
-    monkeypatch.setattr(builder_module.Measurer, "min_distance_mm",
-                        lambda self, a, b: math.dist(a[1], b[1]))
-    return built
-
-
-def test_a_loft_closes_on_the_sketch_vertex_when_catia_refuses_a_3d_point(monkeypatch):
-    part = _FakePart(loft_points_refused=True)
-    report = _vertex_builder(part, monkeypatch).build(load("m4_loft_rect_prismatoid"),
-                                                      check_editability=False)
-    assert report["success"], report.get("error")
-    (loft,) = _lofts(part)
-    assert [closing[0] for _, _, closing in loft.HybridShape.sections] == ["vertex", "vertex"]
-    assert report["parts_detail"][0]["features"][2]["notes"] == [
-        f"{loft.Name}: closing points given as sketch vertex"]
-
-
-def test_a_loft_falls_back_to_a_3d_point_without_a_vertex_search(monkeypatch):
+def test_a_loft_closes_on_3d_points_at_the_paired_vertices(monkeypatch):
+    """Live on R428 the only closing points that build a rectangle loft."""
     part = _FakePart()
     report = _builder(part, monkeypatch).build(load("m4_loft_rect_prismatoid"),
                                                check_editability=False)
     assert report["success"], report.get("error")
     (loft,) = _lofts(part)
     assert [closing[0] for _, _, closing in loft.HybridShape.sections] == ["point", "point"]
+
+
+def test_no_closing_point_is_passed_as_vbscript_nothing():
+    calls = []
+    app = SimpleNamespace(SystemService=SimpleNamespace(
+        Evaluate=lambda code, language, function, params: calls.append((code, function, params))))
+    builder_module._add_loft_section(app, "shape", "section", 1, None)
+    ((code, function, params),) = calls
+    assert "o.AddSectionToLoft r, s, Nothing" in code
+    assert function == "catia_mcp_loft_section" and params == ["shape", "section", 1]
+
+
+def test_loft_sections_are_drawn_as_connected_contours(monkeypatch):
+    """Live on R428 a rectangle of four lines that only touch made every loft
+    fail to update: each corner is one sketch point both lines end on."""
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(load("m4_loft_rect_prismatoid"),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    (loft,) = _lofts(part)
+    for sketch, _, _ in loft.HybridShape.sections:
+        assert len(sketch.factory.points) == 4  # one shared point per corner
+    # A pad's sketch is left as drawn.
+    part = _FakePart()
+    _builder(part, monkeypatch).build(load("m1_offset_block"), check_editability=False)
+    assert all(not pad.sketch.factory.points for pad in part.pads if hasattr(pad, "sketch"))

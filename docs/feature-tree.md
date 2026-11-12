@@ -188,8 +188,52 @@ The other 11 failed for three reasons, fixed since:
   section sketch's own vertex there, found by a topology search, then a 3D
   point, then CATIA's own choice; the volume and centre of gravity decide.
 
-These three fixes have not been run live yet. `tests/fixtures/trees/` holds
-synthetic trees for each path.
+**Second live run, after those fixes:**
+- all six fillet, chamfer and shell trees build exactly, and so does the
+  first sample file (a filleted and chamfered plate, a revolved shaft);
+- every CATIA edge of a block and of a notched block matched a build123d
+  edge (12 of 12, 24 of 24, none foreign);
+- a fillet on a matched edge changed the volume by exactly the expected
+  amount;
+- the STEP fallback on 3DEXPERIENCE worked end to end: a hand-imported part
+  adopted, pasted as a body without history and joined.
+
+Two things did not hold:
+- **BRep names:** references rebuilt from a BRep name resolve but do not
+  measure (length -1), so the builder uses the selection's references. Those
+  work.
+- **Lofts with corners still failed.**
+  - A vertex search from the section sketch finds nothing. It now runs from
+    the body, whose search returns the sketches' wire vertices.
+  - The 3D point was accepted with orientation 1 but gave a loft CATIA could
+    not update.
+  - Orientation -1 was refused; 2 is now tried too.
+  - CATIA's own closing points need VBScript's `Nothing`, which Python cannot
+    pass: that call now runs in VBScript.
+
+  `scripts/probe_loft.py` then tried every variant on a rectangle-to-rectangle
+  loft, each in a fresh part: coupling unset or 1 to 4, no closing point, 3D
+  points, sketch points, and orientation 1, -1 or 2. Every one failed to
+  update, while the circle control worked. The cause is the sections
+  themselves: four lines whose ends only touch. A Pad finds that contour; a
+  Multi-sections Solid does not. Loft sections are now drawn connected, with
+  one sketch point shared by the curves at each corner.
+
+  The second run of the probe, with connected sections, settled it:
+  - vertex coupling with 3D points at the paired vertices gives the exact
+    loft (3700.0 mm3, centre of gravity at z = 12.1622);
+  - with no closing point, ratio coupling builds a slightly different solid
+    (3695.83 mm3), and orientation -1 a twisted one (1370.83 mm3);
+    orientation 2 builds the same loft as 1;
+  - a sketch vertex found by the body search (8 per section now that the
+    contour is connected) is refused by `AddSectionToLoft`, and a point drawn
+    in the sketch gives a loft CATIA cannot update.
+
+  The builder now gives 3D points first, then CATIA's own closing points,
+  with orientation 1 then -1. A refused try leaves the part refusing every
+  later one, so the order matters.
+
+`tests/fixtures/trees/` holds synthetic trees for each path.
 - **Milestone 1** (`m1_*`): an offset plane, a reversed-normal plane, arcs with a negative distance, join, cut and intersect, the three hole kinds, and a tilted plane (the equation-plane path).
 - **Milestone 2** (`m2_*`):
   - revolves about an axis off the sketch origin (3D line), about the sketch's V axis, and about its H axis with a partial cut;
@@ -214,8 +258,9 @@ chamfered top, and an open-top shell.
 Validated live on R428: `AddNewLoft` with vertex coupling and a closing point
 on a whole circle, `AddNewRib` with a path sketch as its centre curve,
 `Prism.SetDirection` with a 3D line, `AddNewShell` with faces matched by area
-and centre of gravity. Not yet: closing points on a sketch vertex, deleting a
-twisted loft through the selection, and lofts drawn on sketches in equation
+and centre of gravity, and (by `scripts/probe_loft.py`) a loft between
+rectangles drawn as connected contours, closed on 3D points. Not yet: deleting
+a twisted loft through the selection, and lofts drawn on sketches in equation
 planes for tilted parts.
 
 Not yet validated live, for fillets, chamfers and shells:
