@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from jsonschema import ValidationError, validate
@@ -16,8 +15,9 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
+from catia_mcp.com_guard import BLOCKED, BUSY_MESSAGE, ComWorker, is_busy
 from catia_mcp.connection import CATIAConnection, normalize_platform
-from catia_mcp.errors import CATIAToolError
+from catia_mcp.errors import CATIAToolError, SessionError
 from catia_mcp.results import operation_result
 from catia_mcp.tools.assembly import AssemblyTools
 from catia_mcp.tools.diagnostics import DiagnosticsTools
@@ -59,7 +59,8 @@ def structured_result(data: dict[str, Any]) -> CallToolResult:
 
 
 def failure(
-    code: str, message: str, stage: str, modified: bool | None, tool: str
+    code: str, message: str, stage: str, modified: bool | None, tool: str,
+    data: dict[str, Any] | None = None,
 ) -> CallToolResult:
     return structured_result(
         operation_result(
@@ -67,7 +68,7 @@ def failure(
             ok=False,
             code=code,
             message=message,
-            data={"failure_stage": stage},
+            data={"failure_stage": stage, **(data or {})},
             modified=modified,
         )
     )
@@ -107,7 +108,9 @@ class CATIAMCPServer:
                 "catia_run_script is ENABLED: connected clients can run arbitrary "
                 "VBScript with this user's rights in CATIA and on this machine."
             )
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="catia-sta")
+        # The one STA thread for every CATIA call, guarded against dialogs and
+        # hangs (catia_mcp/com_guard.py).
+        self.worker = ComWorker(self.connection.watchdog)
         self.document_tools = DocumentTools(self.connection)
         self.sketcher_tools = SketcherTools(self.connection)
         self.part_design_tools = PartDesignTools(self.connection)
@@ -159,16 +162,14 @@ class CATIAMCPServer:
             return await self.call_tool(name, arguments or {})
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
-        future = asyncio.get_running_loop().run_in_executor(
-            self._executor, self._execute_tool, name, arguments
-        )
         try:
-            return await asyncio.shield(future)
-        except asyncio.CancelledError:
-            future.add_done_callback(
-                lambda completed: completed.exception() if not completed.cancelled() else None
+            return await self.worker.run_async(
+                self._execute_tool, name, arguments, label=name,
+                reconnect=name in {"catia_connect", "catia_disconnect"},
             )
-            raise
+        except SessionError as error:
+            logger.warning("Tool refused or abandoned: %s: %s %s", name, error.code, error)
+            return failure(error.code, str(error), "session", error.modified, name, error.data)
 
     def _execute_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
         module = self._tool_router.get(name)
@@ -192,22 +193,26 @@ class CATIAMCPServer:
             return CallToolResult(content=[TextContent(type="text", text=result)])
         except CATIAToolError as error:
             logger.warning("Tool failed: %s: %s %s", name, error.code, error)
-            return failure(error.code, str(error), stage, error.modified, name)
+            return failure(
+                error.code, str(error), stage, error.modified, name, getattr(error, "data", None)
+            )
         except Exception as error:
             logger.exception("Tool failed: %s: %s", name, error)  # noqa: TRY401 -- log preview includes the error message
             code = "UNSUPPORTED_CAPABILITY" if isinstance(error, AttributeError) else "COM_ERROR"
             message = str(error)
             if code == "UNSUPPORTED_CAPABILITY":
                 message = unsupported_message(name, error, self.connection.is_3dx)
+            elif is_busy(error):
+                code, message = "CATIA_BUSY", f"{BUSY_MESSAGE} ({error})"
             return failure(code, message, stage, False if stage == "connect" else None, name)
 
     async def close(self) -> None:
+        # A call stuck in CATIA keeps the worker: skip the cleanup, exit anyway.
         try:
-            await asyncio.get_running_loop().run_in_executor(
-                self._executor, self.connection.disconnect
-            )
+            if self.worker.state != BLOCKED:
+                await asyncio.wrap_future(self.worker.submit(self.connection.disconnect))
         finally:
-            self._executor.shutdown(wait=True)
+            self.worker.shutdown(wait=True)
 
     async def run(self) -> None:
         logger.info("Starting CATIA MCP Server: %d tools", len(self._tool_router))

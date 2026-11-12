@@ -25,18 +25,26 @@ import os
 from typing import Any
 
 from catia_mcp.automation import get_member, iter_items, name_exists, resolves, safe_get
+from catia_mcp.com_guard import call_with_retry, configure_gen_py
 from catia_mcp.errors import (
+    CatiaBusy,
     InvalidArgument,
     NoActiveDocument,
     ObjectNotFound,
     WrongDocumentType,
 )
+from catia_mcp.fingerprint import release_fingerprint, release_line
+from catia_mcp.watchdog import Watchdog
 
 logger = logging.getLogger("catia_mcp")
 
 # COM imports are deferred to runtime (Windows only)
 try:
     import pythoncom
+    import win32com
+
+    # A private makepy cache, set before win32com.client loads the default one.
+    configure_gen_py(win32com)
     import win32com.client
 
     HAS_COM = True
@@ -80,6 +88,8 @@ class CATIAConnection:
         self.platform: str | None = None
         # Part key -> body name selected with catia_set_active_body.
         self._active_bodies: dict[str, str] = {}
+        # What CATIA shows on screen, read without COM (catia_mcp/watchdog.py).
+        self.watchdog = Watchdog()
 
     # ── Connection lifecycle ──
 
@@ -90,8 +100,11 @@ class CATIAConnection:
             return False
         try:
             # Try accessing a property to verify the connection is alive
-            _ = self.app.Caption
+            # (a busy CATIA is alive: retried, then CatiaBusy, never dropped)
+            _ = call_with_retry(lambda: self.app.Caption)
             return True
+        except CatiaBusy:
+            raise
         except Exception:
             self.app = None
             self.platform = None
@@ -126,13 +139,21 @@ class CATIAConnection:
             pythoncom.CoInitialize()
             self._initialized_com = True
 
+        # Two CATIA running: GetActiveObject could pick the wrong one.
+        self.watchdog.refuse_several_catia()
+
         # Phase 1: Try to attach to a running CATIA instance
         try:
-            self.app = win32com.client.GetActiveObject(self.CATIA_PROGID)
+            self.app = call_with_retry(win32com.client.GetActiveObject, self.CATIA_PROGID)
             self.platform = self._detect_platform()
             version = self._get_version()
             logger.info("Connected to running %s instance (%s)", self.platform_label, version)
-            return f"Connected to running {self.platform_label} instance ({version})"
+            return (
+                f"Connected to running {self.platform_label} instance ({version}). "
+                f"{release_line(self.fingerprint())}"
+            )
+        except CatiaBusy:
+            raise
         except Exception:
             if not self.allow_launch:
                 self.app = None
@@ -156,7 +177,10 @@ class CATIAConnection:
                     " Log in to the 3DEXPERIENCE platform in that window before "
                     "creating or opening content."
                 )
-            return f"Launched new {self.platform_label} instance ({version}).{note}"
+            return (
+                f"Launched new {self.platform_label} instance ({version}). "
+                f"{release_line(self.fingerprint())}{note}"
+            )
         except Exception as e:
             self.app = None
             self.platform = None
@@ -185,6 +209,10 @@ class CATIAConnection:
         """Ensure we have an active CATIA connection, connecting if needed."""
         if not self.is_connected:
             self.connect()
+
+    def fingerprint(self) -> dict[str, Any]:
+        """Platform, release and UI language of the connected CATIA."""
+        return release_fingerprint(self)
 
     def _detect_platform(self) -> str:
         if self._forced_platform:
