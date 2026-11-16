@@ -109,6 +109,43 @@ CONSTRUCTION_SET = "Tree_Construction"
 FEATURE_REL_TOL = 1e-3
 PART_REL_TOL = 1e-4
 EPS = 1e-9
+# Hole.Type (CatHoleType), Hole.BottomType, Limit.LimitMode (CatLimitMode),
+# Hole.CounterSunkMode and Hole.AnchorMode, from the Automation help.
+HOLE_TYPES = {"simple": 0, "counterbore": 2, "countersink": 3}
+HOLE_FLAT_BOTTOM = 0
+LIMIT_DIMENSION, LIMIT_UP_TO_LAST = 0, 2
+COUNTERSUNK_DEPTH_ANGLE = 0
+HOLE_ANCHOR_EXTREME = 0
+
+
+@dataclass
+class HoleSpec:
+    type: int
+    diameter: float
+    depth: float | None  # None: up to last (a through hole)
+    head_diameter: float | None = None
+    head_depth: float | None = None
+    head_angle: float | None = None
+
+
+def hole_spec(feature: dict[str, Any]) -> HoleSpec:
+    """CATIA's Hole values for a tree hole (build123d's Hole, CounterBoreHole
+    or CounterSinkHole). A countersink is given by its depth and angle (the
+    documented mode): depth = (D_cs - D) / 2 / tan(angle / 2)."""
+    kind = feature["kind"]
+    depth = None if feature.get("depth") is None else float(feature["depth"])
+    spec = HoleSpec(HOLE_TYPES[kind], float(feature["diameter"]), depth)
+    if kind == "counterbore":
+        spec.head_diameter = float(feature["counterbore_diameter"])
+        spec.head_depth = float(feature["counterbore_depth"])
+    elif kind == "countersink":
+        angle = float(feature["countersink_angle"])
+        spec.head_angle = angle
+        spec.head_depth = (float(feature["countersink_diameter"]) - spec.diameter) / 2 \
+            / math.tan(math.radians(angle) / 2)
+    return spec
+
+
 # How features are built. "human": a join or cut goes straight into its body
 # (Pad, Pocket, Shaft, Groove), as a designer would model it, and is checked
 # against build123d's body after that feature (the reference's per-feature
@@ -164,6 +201,15 @@ def _parallel(a: Vec, b: Vec) -> float:
     """+1 / -1 when the unit vectors are (anti)parallel, 0 otherwise."""
     d = dot(a, b)
     return math.copysign(1.0, d) if abs(abs(d) - 1) < 1e-9 else 0.0
+
+
+class HumanMismatch(BuildFailed):
+    """A human-style feature that does not change its body as build123d's did,
+    either way round. `items` are the CATIA features it made."""
+
+    def __init__(self, message: str, items: list[Any]) -> None:
+        super().__init__(message)
+        self.items = items
 
 
 class TreeBuilder:
@@ -407,6 +453,21 @@ class TreeBuilder:
             entry.setdefault("notes", []).append(f"{split.Name}: side flipped to match the tree")
 
     def _feature_hole(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        if self._human(feature):
+            try:
+                self._human_feature(feature, entry,
+                                    lambda body: self._holes_into(body, feature, entry),
+                                    flip=_reverse_hole)
+                return
+            except HumanMismatch as error:
+                # A through hole whose frame is not on an outer face (build123d
+                # drills both ways from it, a Hole only one): cut it as tool
+                # bodies instead.
+                for item in reversed(error.items):
+                    self._delete(item)
+                entry["catia"] = []
+                entry.setdefault("notes", []).append(
+                    f"as Hole features: {error}; built as cut cylinders instead")
         (target,) = feature["bodies"]
         for matrix in feature["frames"]:
             if feature["kind"] == "countersink":
@@ -525,17 +586,20 @@ class TreeBuilder:
         (target,) = feature["bodies"]
         body = self.bodies[target]
         before = (self._volume(body), self._cog(body))
-        item = build(body)
+        built = build(body)
+        items = built if isinstance(built, list) else [built]
+        name = ", ".join(str(item.Name) for item in items)
         error = self._snapshot_error(target, before)
         if error is None:
             return
-        if flip is None or not flip(item):
-            raise BuildFailed(f"'{item.Name}' {error}")
-        self.part.UpdateObject(item)
+        if flip is None or not all(flip(item) for item in items):
+            raise HumanMismatch(f"'{name}' {error}", items)
+        for item in items:
+            self.part.UpdateObject(item)
         second = self._snapshot_error(target, before)
         if second is not None:
-            raise BuildFailed(f"'{item.Name}' {error}; flipped, it {second}")
-        entry.setdefault("notes", []).append(f"{item.Name}: flipped to match the tree")
+            raise HumanMismatch(f"'{name}' {error}; flipped, it {second}", items)
+        entry.setdefault("notes", []).append(f"{name}: flipped to match the tree")
 
     def _snapshot_error(self, name: str, before: tuple[float, Vec]) -> str | None:
         """None when the body changed as build123d's did in this feature: the
@@ -610,6 +674,28 @@ class TreeBuilder:
         _set_prop(revolution, "SecondAngle", 0.0)
         part.UpdateObject(revolution)
         return revolution
+
+    def _holes_into(self, body: Any, feature: dict[str, Any], entry: dict[str, Any]) -> list[Any]:
+        """One Hole feature per position, each placed by a sketch holding one
+        point on the hole frame's XY plane. A through hole goes up to last."""
+        part = self.part
+        holes = []
+        spec = hole_spec(feature)
+        for matrix in feature["frames"]:
+            origin, x_dir, z_dir = frame_axes(matrix)
+            point = {"plane": {"origin": list(origin), "x_dir": list(x_dir),
+                               "normal": list(z_dir)},
+                     "entities": [{"type": "point", "at": [0.0, 0.0], "id": "p"}],
+                     "profiles": []}
+            catia_sketch, _, _ = self._draw(body, point, Frame.from_tree(point["plane"]))
+            _force_solid_inwork(part, catia_sketch)
+            part.InWorkObject = body
+            hole = part.ShapeFactory.AddNewHoleFromSketch(catia_sketch, spec.depth or 1.0)
+            entry["catia"].append(str(hole.Name))
+            _apply_hole_spec(hole, spec)
+            part.UpdateObject(hole)
+            holes.append(hole)
+        return holes
 
     def _new_body(self, use_main: bool) -> Any:
         if use_main and not self.main_body_used:
@@ -1029,6 +1115,8 @@ class TreeBuilder:
             elif kind == "circle":
                 cu, cv = local(entity["center"])
                 factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
+            elif kind == "point":  # a Hole's position (not a tree entity)
+                factory.CreatePoint(*local(entity["at"]))
             elif kind == "spline":
                 note = _draw_spline(factory, entity, local)
                 if note and entry is not None:
@@ -1123,6 +1211,45 @@ def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
     return (f"spline {entity.get('id', '?')}: approximated by {len(plan.items)} CATIA sketch "
             f"spline(s) through {count} points (chords within {plan.deviation_area:.2g} mm2 "
             "of the curve)")
+
+
+def _set_value(obj: Any, name: str, value: float) -> None:
+    """Set a Length or Angle parameter object's value (Hole.Diameter...)."""
+    getattr(obj, name).Value = value
+    got = float(getattr(obj, name).Value)
+    if abs(got - value) > 1e-6:
+        raise BuildFailed(f"CATIA kept {name} = {got:g} on '{obj.Name}' after {value:g} was set")
+
+
+def _apply_hole_spec(hole: Any, spec: HoleSpec) -> None:
+    if not _set_prop(hole, "Type", spec.type):
+        raise BuildFailed(f"CATIA refused the hole type of '{hole.Name}'")
+    _set_value(hole, "Diameter", spec.diameter)
+    hole.BottomType = HOLE_FLAT_BOTTOM
+    limit = hole.BottomLimit
+    if spec.depth is None:
+        limit.LimitMode = LIMIT_UP_TO_LAST
+    else:
+        limit.LimitMode = LIMIT_DIMENSION
+        # R428 ignores AddNewHoleFromSketch's depth: set and read back.
+        _set_value(limit, "Dimension", spec.depth)
+    if spec.head_diameter is not None:
+        _set_value(hole, "HeadDiameter", spec.head_diameter)
+    if spec.head_depth is not None:
+        _set_value(hole, "HeadDepth", spec.head_depth)
+    if spec.head_angle is not None:
+        _set_prop(hole, "CounterSunkMode", COUNTERSUNK_DEPTH_ANGLE)
+        _set_value(hole, "HeadAngle", spec.head_angle)
+    if spec.type == HOLE_TYPES["counterbore"]:
+        _set_prop(hole, "AnchorMode", HOLE_ANCHOR_EXTREME)
+
+
+def _reverse_hole(hole: Any) -> bool:
+    try:
+        hole.Reverse()
+        return True
+    except Exception:
+        return False
 
 
 def _flip_direction(prism: Any) -> bool:

@@ -82,6 +82,7 @@ changes, as a designer would model it:
 | `extrude` `cut` (no taper, no direction) | Pocket in the target body |
 | `revolve` `join` | Shaft in the target body |
 | `revolve` `cut` | Groove in the target body |
+| `hole` (simple, counterbore, countersink) | one Hole feature per position, placed by a sketch holding one point on the hole frame's plane: through holes up to last, blind holes at their depth (flat bottom), counterbores with their head diameter and depth, countersinks by head depth and angle (`(D_cs − D) / 2 / tan(angle / 2)`) |
 
 A Pocket or a Groove has no closed form: what it removes depends on the body.
 So the build123d reference (`catia_mcp/tree/reference.py`, `expected`) records
@@ -95,16 +96,19 @@ build123d's did:
   small differences cancel out) agrees within the per-feature tolerance.
 
 A feature that fails is flipped once (`DirectionOrientation` for a Pad or a
-Pocket, the angle moved to the profile's other side for a Shaft or a Groove),
-and anything else stops the build.
+Pocket, the angle moved to the profile's other side for a Shaft or a Groove,
+`Reverse()` for the Holes), and anything else stops the build. Holes are the
+exception: build123d drills a through hole both ways from its frame, a Hole
+only one way. When up to last cannot match (material on both sides of the
+frame), the Holes are deleted and the hole is cut as cylinders in tool
+bodies, with a note.
 
 Every other feature, and every part without snapshots (build123d not
 installed, `--expect none`, or expected volumes from a file without
 `features`), is built as below (`--style exact`): each solid in a tool body,
 checked against its closed form, then combined.
 
-Next, in this order: Hole features for holes, rectangular and circular
-patterns for repeated holes, user parameters and formulas from the tree's
+Next, in this order: rectangular and circular patterns for repeated holes, user parameters and formulas from the tree's
 `params`, and constraints in the sketches, so a dimension can be edited where
 a designer would look for it.
 

@@ -217,9 +217,13 @@ class _FakePart:
     opposite when `pads_reversed`); booleans assume disjoint or nested solids."""
 
     def __init__(self, pads_reversed=False, turns_reversed=False, split_reversed=False,
-                 lofts_reversed=False, pockets_reversed=False):
+                 lofts_reversed=False, pockets_reversed=False, holes_reversed=False,
+                 through_depth=None):
         self.Name, self.pads_reversed, self.pads = "Part1", pads_reversed, []
         self.pockets_reversed = pockets_reversed
+        # Holes drill against their sketch's normal (live on R428) unless
+        # reversed; "up to last" goes `through_depth` deep.
+        self.holes_reversed, self.through_depth = holes_reversed, through_depth
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.lofts_reversed, self.deleted = lofts_reversed, []
         self.MainBody = _Body("Corps principal")
@@ -238,6 +242,7 @@ class _FakePart:
             AddNewPad=self._pad, AddNewShaft=self._shaft,
             AddNewPocket=lambda sketch, length: self._pad(sketch, length, "Poche", -1),
             AddNewGroove=lambda sketch: self._shaft(sketch, "groove"),
+            AddNewHoleFromSketch=self._hole,
             AddNewMirror=lambda ref: self._feature("mirror", ref=ref),
             AddNewSplit=lambda ref, side: self._feature("split", ref=ref, SplitSide=side),
             AddNewLoft=self._loft,
@@ -296,7 +301,35 @@ class _FakePart:
 
     def delete(self, feature):
         self.deleted.append(feature)
-        feature.body.solids = []
+        feature.body.solids = getattr(feature, "base", [])
+
+    def _hole(self, sketch, depth):
+        value = lambda v=None: SimpleNamespace(Value=v)
+        hole = self._feature("hole", sketch=sketch, Type=0, BottomType=1, Diameter=value(10.0),
+                             HeadDiameter=value(), HeadDepth=value(), HeadAngle=value(),
+                             BottomLimit=SimpleNamespace(LimitMode=0, Dimension=value(depth)),
+                             flipped=False)
+        hole.Reverse = lambda: setattr(hole, "flipped", not hole.flipped)
+        return hole
+
+    def _drilled(self, hole):
+        """A flat-bottomed simple or counterbored hole from its sketch's point."""
+        origin, h, v = hole.sketch.ref
+        (point,) = hole.sketch.factory.points
+        normal = cross(h, v)
+        at = tuple(origin[i] + point.uv[0] * h[i] + point.uv[1] * v[i] for i in range(3))
+        down = -1 if hole.flipped == self.holes_reversed else 1  # along -normal by default
+        limit = hole.BottomLimit
+        depth = self.through_depth if limit.LimitMode == 2 else limit.Dimension.Value
+        r = hole.Diameter.Value / 2
+        pieces = [(math.pi * r * r * depth, depth / 2)]
+        if hole.Type == 2:  # counterbored: the head replaces the top of the hole
+            R, head = hole.HeadDiameter.Value / 2, hole.HeadDepth.Value
+            pieces = [(math.pi * R * R * head, head / 2),
+                      (math.pi * r * r * (depth - head), head + (depth - head) / 2)]
+        volume = sum(v for v, _ in pieces)
+        along = sum(v * z for v, z in pieces) / volume
+        return volume, tuple(at[i] + down * along * normal[i] for i in range(3))
 
     def _boolean(self, kind, tool):
         target = self.InWorkObject
@@ -306,7 +339,9 @@ class _FakePart:
 
     def UpdateObject(self, obj):
         kind = getattr(obj, "kind", None)
-        if kind in ("shaft", "groove"):
+        if kind == "hole":
+            self._onto(obj, self._drilled(obj), -1)
+        elif kind in ("shaft", "groove"):
             self._onto(obj, self._revolved(obj), -1 if kind == "groove" else 1)
         elif kind == "mirror":
             origin, h, v = obj.ref
@@ -700,6 +735,13 @@ SNAPSHOTS = {
         "extrude1": {"Body1": {"volume_mm3": 24000.0, "cog_mm": [0.0, 0.0, 5.0]}},
         "extrude2": {"Body1": {"volume_mm3": 23000.0, "cog_mm": [-0.2174, 0.0, 4.8913]}},
     },
+    "m1_holes": {
+        "extrude1": {"Body1": {"volume_mm3": 24000.0, "cog_mm": [0.0, 0.0, 5.0]}},
+        "hole1": {"Body1": {"volume_mm3": 23717.256661, "cog_mm": [-0.178821, 0.0, 5.0]}},
+        "hole2": {"Body1": {"volume_mm3": 23666.991179, "cog_mm": [-0.147343, 0.0, 4.993628]}},
+        "hole3": {"Body1": {"volume_mm3": 23465.929249,
+                            "cog_mm": [-0.148606, -0.085682, 4.980721]}},
+    },
     "m2_partial_revolve_cut_h_axis": {
         "extrude1": {"Body1": {"volume_mm3": 80000.0, "cog_mm": [0.0, 0.0, 0.0]}},
         "revolve1": {"Body1": {"volume_mm3": 77905.6049, "cog_mm": [-0.1204, -0.2086, 0.0]}},
@@ -785,3 +827,49 @@ def test_reference_snapshots_every_body_after_each_feature():
             got = props["features"][feature]["Body1"]
             assert got["volume_mm3"] == pytest.approx(bodies["Body1"]["volume_mm3"], abs=1e-3)
             assert got["cog_mm"] == pytest.approx(bodies["Body1"]["cog_mm"], abs=1e-3)
+
+
+def test_holes_are_hole_features_of_each_kind(monkeypatch):
+    """A through hole goes up to last, a blind one keeps its depth, a
+    counterbore has its head; each from a sketch holding its position."""
+    part = _FakePart(through_depth=10.0)
+    tree, expected = _human_tree("m1_holes")
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    holes = [f for f in part.pads if getattr(f, "kind", None) == "hole"]
+    assert [(h.Type, h.BottomLimit.LimitMode, h.Diameter.Value) for h in holes] == [
+        (0, 2, 6), (0, 0, 4), (2, 2, 4)]
+    assert holes[1].BottomLimit.Dimension.Value == 4
+    assert (holes[2].HeadDiameter.Value, holes[2].HeadDepth.Value) == (8, 2)
+    assert all(h.body is part.MainBody and h.BottomType == 0 for h in holes)
+    features = report["parts_detail"][0]["features"]
+    assert [f["catia"] for f in features if f["type"] == "hole"] == [[h.Name] for h in holes]
+
+
+def test_a_hole_drilled_into_air_is_reversed_once(monkeypatch):
+    part = _FakePart(through_depth=10.0, holes_reversed=True)
+    tree, expected = _human_tree("m1_holes", "hole1")
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    (hole,) = [f for f in part.pads if getattr(f, "kind", None) == "hole"]
+    assert hole.flipped and report["parts_detail"][0]["features"][2]["notes"] == [
+        f"{hole.Name}: flipped to match the tree"]
+
+
+def test_a_hole_no_hole_feature_can_make_is_cut_as_cylinders(monkeypatch):
+    """Up to last stops short of build123d's through hole (material on both
+    sides of its frame): the Hole is deleted and the cylinders cut instead."""
+    part = _FakePart(through_depth=4.0)
+    tree, expected = _human_tree("m1_holes", "hole1")
+    tree["parts"][0]["features"][2]["effective_depth"] = 10.0  # the fake has no clipping
+    feature_id = "hole1"
+    expected[tree["parts"][0]["id"]]["features"][feature_id]["Body1"] = {
+        "volume_mm3": 24000 - math.pi * 9 * 10, "cog_mm": [-15 * math.pi * 90 / (24000 - 90 * math.pi),
+                                                         0.0, 5.0]}
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    (hole,) = [f for f in part.pads if getattr(f, "kind", None) == "hole"]
+    assert part.deleted == [hole]
+    entry = report["parts_detail"][0]["features"][2]
+    assert entry["catia"] == ["Extrusion.3", "remove.3"]
+    assert "built as cut cylinders instead" in entry["notes"][0]
