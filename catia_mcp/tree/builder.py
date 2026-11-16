@@ -51,6 +51,7 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
 
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 from collections.abc import Callable
@@ -91,6 +92,7 @@ from catia_mcp.tree.geometry import (
 )
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.nurbs import Nurbs, drawing
+from catia_mcp.tree.parameters import ParameterPlan
 from catia_mcp.tree.placement import place_part
 from catia_mcp.tree.preflight import SUPPORTED, check
 from catia_mcp.tree.step_source import StepSource
@@ -195,6 +197,9 @@ class PartRecord:
     spline_allowance_mm3: float = 0.0
     # "human" when build123d's per-feature snapshots drove the build.
     style: str = "exact"
+    # The user parameters made from the script's numbers, and why none were.
+    parameters: list[dict[str, Any]] = field(default_factory=list)
+    parameters_note: str = ""
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -283,6 +288,9 @@ class TreeBuilder:
         self.snapshots: dict[str, dict[str, Any]] = snapshots or {}
         self.expected_bodies: dict[str, dict[str, Any]] = {}
         record.style = "human" if self.snapshots else "exact"
+        self.plan = ParameterPlan()
+        self.edit_parameter = None
+        self.first_pad_feature = None
         self.log(f"part {part['id']}: creating")
         if self.conn.is_3dx:
             self.documents._new_part(record.name, self.plm_type)
@@ -322,6 +330,8 @@ class TreeBuilder:
             raise BuildFailed(f"the final part update failed: {error}", part["id"]) from error
         final = [self.bodies[name] for name in (part.get("bodies") or self.bodies)]
         record.volume_mm3 = round(sum(self._volume(body) for body in final), 4)
+        if self.style == "human" and self.plan:
+            self._parametrize(record, final)
 
     def _check_part_volume(self, record: PartRecord) -> None:
         want, got = record.expected_volume_mm3, record.volume_mm3
@@ -362,17 +372,29 @@ class TreeBuilder:
             def make(body):
                 return self._verified_oblique_pad(body, sketch, vector, symmetric, entry)
         else:
+            dist, scale_ = float(feature["distance"]), 1.0
+            centred = self._centred_box(feature, sketch, symmetric)
+            if centred is not None:
+                # build123d's centred Box or Cylinder: a designer sketches on
+                # the middle plane and pads both ways.
+                sketch, dist, symmetric, scale_ = centred, dist / 2, True, 0.5
+
             def make(body):
-                return self._verified_pad(body, sketch, float(feature["distance"]), symmetric,
-                                          entry)
+                pad = self._verified_pad(body, sketch, dist, symmetric, entry)
+                self.plan.drive(feature, "distance", lambda: pad.FirstLimit.Dimension, scale_)
+                return pad
         operation = feature["operation"]
         if operation in ("join", "cut") and feature.get("direction") is None \
                 and self._human(feature):
             dist = float(feature["distance"])
-            self._human_feature(
-                feature, entry,
-                lambda body: self._prism_into(body, sketch, dist, symmetric, operation, entry),
-                flip=None if symmetric else _flip_direction)
+
+            def build(body):
+                prism = self._prism_into(body, sketch, dist, symmetric, operation, entry)
+                self.plan.drive(feature, "distance", lambda: prism.FirstLimit.Dimension)
+                return prism
+
+            self._human_feature(feature, entry, build,
+                                flip=None if symmetric else _flip_direction)
             return
         if operation == "new_body":
             body = self._new_body(use_main=True)
@@ -381,6 +403,7 @@ class TreeBuilder:
             if self.first_pad is None:
                 # Its body survives to the end, so editing it moves the part.
                 self.first_pad = (pad, body)
+                self.first_pad_feature = feature.get("id")
             return
         (target,) = feature["bodies"]
         tool = self._new_body(use_main=False)
@@ -629,6 +652,21 @@ class TreeBuilder:
                     f"{_fmt(want_centre)}")
         return None
 
+    def _centred_box(self, feature: dict[str, Any], sketch: dict[str, Any],
+                     symmetric: bool) -> dict[str, Any] | None:
+        """The sketch moved to the middle of a centred primitive's extrude
+        (params distance base_shift 0.5: the plane was offset by -distance/2),
+        or None."""
+        spec = (feature.get("params") or {}).get("distance") or {}
+        if self.style != "human" or symmetric or spec.get("base_shift") != 0.5 \
+                or feature["operation"] != "new_body":
+            return None
+        plane = dict(sketch["plane"])
+        normal = unit(tuple(float(c) for c in plane["normal"]))
+        plane["origin"] = list(add(tuple(float(c) for c in plane["origin"]),
+                                   scale(normal, float(feature["distance"]) / 2)))
+        return {**sketch, "plane": plane}
+
     def _prism_into(self, body: Any, sketch: dict[str, Any], dist: float, symmetric: bool,
                     operation: str, entry: dict[str, Any]) -> Any:
         """A Pad (join) or a Pocket (cut) drawn in the body it changes."""
@@ -693,6 +731,12 @@ class TreeBuilder:
             hole = part.ShapeFactory.AddNewHoleFromSketch(catia_sketch, spec.depth or 1.0)
             entry["catia"].append(str(hole.Name))
             _apply_hole_spec(hole, spec)
+            for key, member in (("diameter", "Diameter"), ("counterbore_diameter", "HeadDiameter"),
+                                ("counterbore_depth", "HeadDepth"),
+                                ("countersink_angle", "HeadAngle")):
+                self.plan.drive(feature, key, lambda h=hole, m=member: getattr(h, m))
+            if spec.depth is not None:
+                self.plan.drive(feature, "depth", lambda h=hole: h.BottomLimit.Dimension)
             part.UpdateObject(hole)
             holes.append(hole)
         return holes
@@ -1149,12 +1193,61 @@ class TreeBuilder:
         self._ensure_home()
         return tuple(self.measure.cog_mm(self.part, body))
 
+    # ── Parameters ──
+
+    def _parametrize(self, record: PartRecord, final: list[Any]) -> None:
+        """One user parameter per script number, and a formula on every value
+        it set. The part must keep its volume; if not, or if CATIA refuses,
+        everything made here is removed and the report says why."""
+        part = self.part
+        before = sum(self._volume(body) for body in final)
+        made_parameters: list[str] = []
+        made_formulas: list[str] = []
+        try:
+            parameters, relations = part.Parameters, part.Relations
+            for script in self.plan.parameters.values():
+                parameter = parameters.CreateDimension(script.name, script.magnitude, 0)
+                made_parameters.append(script.name)
+                parameter.ValuateFromString(f"{script.value:g}{script.unit}")
+                _set_prop(parameter, "Comment", f"from {script.source}")
+                for i, driven in enumerate(script.driven, 1):
+                    name = f"{script.name}_f{i}"
+                    relations.CreateFormula(name, f"from {script.source}", driven.target(),
+                                            script.expression(driven.scale))
+                    made_formulas.append(name)
+            part.Update()
+            after = sum(self._volume(body) for body in final)
+            if abs(after - before) > max(1e-3, PART_REL_TOL * abs(before)):
+                raise BuildFailed(f"the formulas moved the part from {before:.4f} to "
+                                  f"{after:.4f} mm3")
+        except Exception as error:  # a parameter is a bonus: never lose the part for it
+            for name in made_formulas:
+                with contextlib.suppress(Exception):
+                    part.Relations.Remove(name)
+            for name in made_parameters:
+                with contextlib.suppress(Exception):
+                    part.Parameters.Remove(name)
+            with contextlib.suppress(Exception):
+                part.Update()
+            record.parameters_note = f"no user parameters: {error}"
+            return
+        record.parameters = [
+            {"name": s.name, "value": s.value, "unit": s.unit, "source": s.source,
+             "drives": [s.expression(d.scale) for d in s.driven]}
+            for s in self.plan.parameters.values()]
+        self.edit_parameter = self.plan.by_key.get((str(self.first_pad_feature), "distance"))
+
     def _check_editability(self, record: PartRecord) -> None:
-        """Change the first pad's length, check the volume moves, restore it."""
+        """Change the first pad's length (through its user parameter when it
+        has one), check the volume moves, restore it."""
         if self.first_pad is None:
             record.editable, record.editability_note = None, "no pad to edit"
             return
         pad, body = self.first_pad
+        script = getattr(self, "edit_parameter", None)
+        if script is not None:
+            self._check_parameter_edit(record, script, body)
+            return
         try:
             dimension = pad.FirstLimit.Dimension
             original = float(dimension.Value)
@@ -1174,6 +1267,28 @@ class TreeBuilder:
         record.editability_note = (
             f"{pad.Name} length {original:g} -> {original + 1:g} -> {original:g} mm: volume "
             f"{before:.1f} -> {moved:.1f} -> {restored:.1f} mm3")
+
+    def _check_parameter_edit(self, record: PartRecord, script: Any, body: Any) -> None:
+        """Edit the user parameter as a designer would, through its value."""
+        try:
+            parameter = self.part.Parameters.Item(script.name)
+            before = self._volume(body)
+            parameter.ValuateFromString(f"{script.value + 1:g}{script.unit}")
+            self.part.Update()
+            moved = self._volume(body)
+            parameter.ValuateFromString(f"{script.value:g}{script.unit}")
+            self.part.Update()
+            restored = self._volume(body)
+        except Exception as error:
+            record.editable, record.editability_note = False, f"edit failed: {error}"
+            return
+        changed = abs(moved - before) > max(1e-3, FEATURE_REL_TOL * before)
+        back = abs(restored - before) <= max(1e-3, PART_REL_TOL * before)
+        record.editable = changed and back
+        record.editability_note = (
+            f"parameter {script.name} {script.value:g} -> {script.value + 1:g} -> "
+            f"{script.value:g} {script.unit}: volume {before:.1f} -> {moved:.1f} -> "
+            f"{restored:.1f} mm3")
 
 
 def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:

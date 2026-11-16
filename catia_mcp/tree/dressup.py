@@ -180,6 +180,11 @@ class DressUps:
         self._note_chains(entry, matched, chains)
         return chains, refs
 
+    def _drive(self, feature: dict[str, Any], key: str, target: Any) -> None:
+        plan = getattr(self.builder, "plan", None)
+        if plan is not None:
+            plan.drive(feature, key, target)
+
     def fillet(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         body = self._body(feature)
         radius = float(feature["radius"])
@@ -193,6 +198,7 @@ class DressUps:
         for ref in refs[1:]:
             fillet.AddObjectToFillet(ref)
         entry["catia"].append(str(fillet.Name))
+        self._drive(feature, "radius", lambda: fillet.Radius)
         part.UpdateObject(fillet)
         after = self.builder._volume(body)
         bound = sum(FILLET_SECTION_MAX * radius ** 2 * e.length * (1 + radius / (e.radius or math.inf))
@@ -224,6 +230,9 @@ class DressUps:
         self._check_change(chamfer, before, after, bound, "chamfer")
         if abs(second - first) > 1e-9:
             self._orient_chamfer(feature, chamfer, body, first, second, straight, entry)
+        else:  # one script number sets both lengths (build123d's length2 = length)
+            self._drive(feature, "distance", lambda: chamfer.Length1)
+            self._drive(feature, "distance2", lambda: chamfer.Length2)
 
     def shell(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         body = self._body(feature)

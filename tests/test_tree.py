@@ -251,6 +251,8 @@ class _FakePart:
             AddNewRemove=lambda t: self._boolean("remove", t),
             AddNewIntersect=lambda t: self._boolean("intersect", t))
         self.InWorkObject = None
+        self.Parameters = _FakeParameters()
+        self.Relations = _FakeRelations()
 
     def CreateReferenceFromObject(self, obj):
         if isinstance(obj, str):
@@ -269,6 +271,7 @@ class _FakePart:
         pad = SimpleNamespace(Name=f"{name}.{len(self.pads) + 1}", sketch=sketch, length=length,
                               IsSymmetric=False, DirectionOrientation=0, body=self.InWorkObject,
                               sign=sign)
+        pad.FirstLimit = SimpleNamespace(Dimension=SimpleNamespace(Value=length, owner=pad))
         self.pads.append(pad)
         return pad
 
@@ -432,6 +435,39 @@ class _FakePart:
                 for e in rib.center.factory.entities]
         _, volume = sweep_expectation(_tree_sketch(rib.sketch), path)
         return volume, tuple(origin)
+
+
+class _FakeParameters:
+    def __init__(self):
+        self.items, self.removed = {}, []
+
+    def CreateDimension(self, name, magnitude, value):
+        parameter = SimpleNamespace(Name=name, magnitude=magnitude, text=None, Comment="")
+        parameter.ValuateFromString = lambda text: setattr(parameter, "text", text)
+        self.items[name] = parameter
+        return parameter
+
+    def Item(self, name):
+        return self.items[name]
+
+    def Remove(self, name):
+        self.removed.append(name)
+        self.items.pop(name, None)
+
+
+class _FakeRelations:
+    def __init__(self, refuse=False):
+        self.formulas, self.removed, self.refuse = {}, [], refuse
+
+    def CreateFormula(self, name, comment, target, expression):
+        if self.refuse:
+            raise RuntimeError("La méthode CreateFormula a échoué")
+        self.formulas[name] = (target, expression)
+        return SimpleNamespace(Name=name)
+
+    def Remove(self, name):
+        self.removed.append(name)
+        self.formulas.pop(name, None)
 
 
 def _tree_sketch(sketch):
@@ -873,3 +909,102 @@ def test_a_hole_no_hole_feature_can_make_is_cut_as_cylinders(monkeypatch):
     entry = report["parts_detail"][0]["features"][2]
     assert entry["catia"] == ["Extrusion.3", "remove.3"]
     assert "built as cut cylinders instead" in entry["notes"][0]
+
+
+# ── Script parameters ──
+
+
+def _script_tree():
+    """A centred 60 x 40 x 8 plate (build123d Box: sketch offset by -4), with
+    one through hole of radius 3, as the app's tracer gives them."""
+    def param(arg, value, line, **more):
+        return {"arg": arg, "kind": "literal", "value": value, "factor": 1.0, "slope": 1.0,
+                "intercept": 0.0, "file": "model.py", "line": line, "col": 4, **more}
+
+    rectangle = [(-30, -20), (30, -20), (30, 20), (-30, 20)]
+    return {"version": 1, "parts": [{"id": "/Demo/Plate", "name": "Plate", "bodies": ["Body1"],
+        "features": [
+            {"type": "sketch", "id": "sketch1", "plane": {"origin": [0, 0, -4], "x_dir": [1, 0, 0],
+                                                          "normal": [0, 0, 1]},
+             "entities": [{"type": "line", "start": list(rectangle[i]),
+                           "end": list(rectangle[(i + 1) % 4]), "id": f"e{i}"} for i in range(4)],
+             "profiles": [{"outer": ["e0", "e1", "e2", "e3"], "inner": []}]},
+            {"type": "extrude", "id": "extrude1", "name": "Extrude1", "sketch": "sketch1",
+             "distance": 8, "operation": "new_body", "creates": ["Body1"],
+             "params": {"distance": param("height", 8, 3, base_shift=0.5)}},
+            {"type": "hole", "id": "hole1", "name": "Hole1", "kind": "simple", "diameter": 6,
+             "depth": None, "effective_depth": 16.0, "positions": [[15, 0, 4]],
+             "direction": [0, 0, -1], "frames": [[[1, 0, 0, 15], [0, 1, 0, 0], [0, 0, 1, 4]]],
+             "bodies": ["Body1"], "params": {"diameter": param("radius", 3, 6, factor=2.0)}},
+        ]}]}
+
+
+def _script_expected():
+    plate = 60 * 40 * 8
+    hole = math.pi * 9 * 8
+    return {"/Demo/Plate": {"volume_mm3": plate - hole, "features": {
+        "extrude1": {"Body1": {"volume_mm3": plate, "cog_mm": [0.0, 0.0, 0.0]}},
+        "hole1": {"Body1": {"volume_mm3": plate - hole,
+                            "cog_mm": [-15 * hole / (plate - hole), 0.0, 0.0]}}}}}
+
+
+def test_a_centred_box_is_a_symmetric_pad_on_its_middle_plane(monkeypatch):
+    part = _FakePart(through_depth=8.0)
+    report = _builder(part, monkeypatch).build(_script_tree(), _script_expected(),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    pad = part.pads[0]
+    assert pad.IsSymmetric and pad.length == 4
+    assert pad.sketch.ref[0] == (0.0, 0.0, 0.0)  # the XY plane itself, no offset plane
+    assert _mass(part.MainBody.solids)[0] == pytest.approx(60 * 40 * 8 - math.pi * 9 * 8)
+
+
+def test_script_numbers_become_user_parameters_driving_the_features(monkeypatch):
+    part = _FakePart(through_depth=8.0)
+    report = _builder(part, monkeypatch).build(_script_tree(), _script_expected(),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    detail = report["parts_detail"][0]
+    assert detail["parameters"] == [
+        {"name": "Extrude1_height", "value": 8.0, "unit": "mm", "source": "model.py line 3",
+         "drives": ["Extrude1_height/2"]},
+        {"name": "Hole1_radius", "value": 3.0, "unit": "mm", "source": "model.py line 6",
+         "drives": ["Hole1_radius*2"]}]
+    assert part.Parameters.items["Hole1_radius"].text == "3mm"
+    pad = part.pads[0]
+    (hole,) = [f for f in part.pads if getattr(f, "kind", None) == "hole"]
+    assert part.Relations.formulas == {
+        "Extrude1_height_f1": (pad.FirstLimit.Dimension, "Extrude1_height/2"),
+        "Hole1_radius_f1": (hole.Diameter, "Hole1_radius*2")}
+
+
+def test_parameters_catia_refuses_are_removed_and_the_part_kept(monkeypatch):
+    part = _FakePart(through_depth=8.0)
+    part.Relations = _FakeRelations(refuse=True)
+    report = _builder(part, monkeypatch).build(_script_tree(), _script_expected(),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    detail = report["parts_detail"][0]
+    assert detail["parameters"] == [] and "CreateFormula" in detail["parameters_note"]
+    assert part.Parameters.removed == ["Extrude1_height"] and not part.Parameters.items
+
+
+def test_parameter_expressions_read_as_a_designer_would_write_them():
+    from catia_mcp.tree.parameters import ParameterPlan, ScriptParameter, spec_for
+
+    p = ScriptParameter("H", 8, "mm", 1.0, 1.0, 0.0, "model.py line 3")
+    assert [p.expression(), p.expression(0.5), p.expression(3)] == ["H", "H/2", "H*3"]
+    q = ScriptParameter("R", 3, "mm", 2.0, 1.0, -0.5, "x")
+    assert q.expression() == "(R-0.5mm)*2"
+    chamfer = {"id": "chamfer1", "name": "Chamfer 1", "params": {
+        "distance": {"arg": "length", "kind": "literal", "value": 0.5, "line": 7,
+                     "also": ["distance2"]},
+        "distance2": {"arg": "length2", "computed": "length2 is not written in the call"}}}
+    assert spec_for(chamfer, "distance2")["value"] == 0.5
+    plan = ParameterPlan()
+    plan.drive(chamfer, "distance", "L1")
+    plan.drive(chamfer, "distance2", "L2")
+    (one,) = plan.parameters.values()  # one script number, one parameter
+    assert one.name == "Chamfer_1_length" and [d.target for d in one.driven] == ["L1", "L2"]
+    assert spec_for({"params": {"angle": {"arg": "revolution_arc", "computed": "x"}}},
+                    "angle") is None
