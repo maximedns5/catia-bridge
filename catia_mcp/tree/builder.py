@@ -265,7 +265,9 @@ class TreeBuilder:
             dead = any(r.dead_bodies for r in report["parts_detail"])
             report["native_history"] = "partial" if dead else True
             flags = [r.editable for r in report["parts_detail"]]
-            report["editable"] = all(flags) if check_editability else None
+            # A part with nothing to edit (no pad) proves nothing either way.
+            report["editable"] = (None if not check_editability or all(f is None for f in flags)
+                                  else not any(f is False for f in flags))
         except BuildFailed as error:
             report["error"] = {"part": error.part, "feature": error.feature, "message": str(error),
                                "note": "The CATIA document may contain a partial model: check it "
