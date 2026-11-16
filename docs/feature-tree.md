@@ -108,9 +108,35 @@ installed, `--expect none`, or expected volumes from a file without
 `features`), is built as below (`--style exact`): each solid in a tool body,
 checked against its closed form, then combined.
 
-Next, in this order: rectangular and circular patterns for repeated holes, user parameters and formulas from the tree's
-`params`, and constraints in the sketches, so a dimension can be edited where
-a designer would look for it.
+**Centred primitives.** build123d's centred `Box` or `Cylinder` arrives as
+a sketch on a plane offset by half the height (`params.distance.base_shift`
+0.5). It is drawn on the middle plane instead, often an origin plane, and
+padded both ways (`IsSymmetric`, half the height each side).
+
+**Script parameters** (`catia_mcp/tree/parameters.py`). The tree's `params`
+say which number in the build123d script each value came from. Each
+`literal` number becomes one CATIA user parameter holding the script's
+value, named after the feature and the argument (`Extrude1_height`,
+`Hole1_radius`), with the source line as its comment. Every CATIA value it
+set is driven by a formula written as a designer would:
+
+| Script | CATIA |
+|---|---|
+| `Box(60, 40, 8)` | `Extrude1_height` = 8 mm; the Pad's length `= Extrude1_height/2` (symmetric) |
+| `Hole(3)` | `Hole1_radius` = 3 mm; each Hole's diameter `= Hole1_radius*2` |
+| `fillet(..., radius=4)` | `Fillet1_radius` = 4 mm; the fillet's radius |
+| `chamfer(..., length=0.5)` | `Chamfer1_length` = 0.5 mm; both lengths |
+
+Numbers the script does not write (`computed`) get no parameter; they stay
+editable in their feature. After the formulas the part must keep its
+volume; if it does not, or CATIA refuses a parameter or a formula,
+everything made for the parameters is removed and the report's
+`parameters_note` says why. The editability check then edits the first
+pad's parameter, as a designer would.
+
+Next: rectangular and circular patterns for repeated holes, and constraints
+in the sketches (the tree gives no `params` for sketch dimensions yet: a
+contract request).
 
 ## How the build stays faithful
 
