@@ -71,6 +71,78 @@ its own frame or already in world coordinates.
 On CATIA V5, `--step-dir` lets STEP files stand in for a `base_feature` or an
 unsupported feature, as bodies without history: see [step.md](step.md).
 
+## Human style: the tree a designer would have made
+
+By default (`--style human`) a join or a cut goes straight into the body it
+changes, as a designer would model it:
+
+| Tree feature | CATIA |
+|---|---|
+| `extrude` `join` (no taper, no direction) | Pad in the target body |
+| `extrude` `cut` (no taper, no direction) | Pocket in the target body |
+| `revolve` `join` | Shaft in the target body |
+| `revolve` `cut` | Groove in the target body |
+| `hole` (simple, counterbore, countersink) | one Hole feature per position, placed by a sketch holding one point on the hole frame's plane: through holes up to last, blind holes at their depth (flat bottom), counterbores with their head diameter and depth, countersinks by head depth and angle (`(D_cs − D) / 2 / tan(angle / 2)`) |
+
+A Pocket or a Groove has no closed form: what it removes depends on the body.
+So the build123d reference (`catia_mcp/tree/reference.py`, `expected`) records
+every live body's volume and centre of gravity after each feature
+(`features: {feature id: {body: {volume_mm3, cog_mm}}}` in the expected
+properties). After each such feature, the body must have changed as
+build123d's did:
+- the volume added or removed agrees within max(1e-3 mm³, 1e-3 of the
+  change), plus the spline allowance;
+- the change's own centre (its first moment over its volume, so earlier
+  small differences cancel out) agrees within the per-feature tolerance.
+
+A feature that fails is flipped once (`DirectionOrientation` for a Pad or a
+Pocket, the angle moved to the profile's other side for a Shaft or a Groove,
+`Reverse()` for the Holes), and anything else stops the build. Holes are the
+exception: build123d drills a through hole both ways from its frame, a Hole
+only one way. When up to last cannot match (material on both sides of the
+frame), the Holes are deleted and the hole is cut as cylinders in tool
+bodies, with a note.
+
+Every other feature, and every part without snapshots (build123d not
+installed, `--expect none`, or expected volumes from a file without
+`features`), is built as below (`--style exact`): each solid in a tool body,
+checked against its closed form, then combined.
+
+**Centred primitives.** build123d's centred `Box` or `Cylinder` arrives as
+a sketch on a plane offset by half the height (`params.distance.base_shift`
+0.5). It is drawn on the middle plane instead, often an origin plane, and
+padded both ways (`IsSymmetric`, half the height each side).
+
+**Script parameters** (`catia_mcp/tree/parameters.py`). The tree's `params`
+say which number in the build123d script each value came from. Each
+`literal` number becomes one CATIA user parameter holding the script's
+value, named after the feature and the argument (`Extrude1_height`,
+`Hole1_radius`), with the source line as its comment. Every CATIA value it
+set is driven by a formula written as a designer would:
+
+| Script | CATIA |
+|---|---|
+| `Box(60, 40, 8)` | `Extrude1_height` = 8 mm; the Pad's length `= Extrude1_height/2` (symmetric) |
+| `Hole(3)` | `Hole1_radius` = 3 mm; each Hole's diameter `= Hole1_radius*2` |
+| `fillet(..., radius=4)` | `Fillet1_radius` = 4 mm; the fillet's radius |
+| `chamfer(..., length=0.5)` | `Chamfer1_length` = 0.5 mm; both lengths |
+
+A signed script number keeps its sign in the parameter: `extrude(amount=-6)`
+gives `Extrude2_amount` = -6 mm and a Pocket depth `= -Extrude2_amount`, the
+direction being set apart. A centred primitive joined or cut into a body
+(`body + Cylinder(...)`) is drawn on its middle plane too.
+
+Numbers the script does not write (`computed`) get no parameter; they stay
+editable in their feature. After the formulas the part must keep its
+volume; if it does not, or CATIA refuses a parameter or a formula,
+everything made for the parameters is removed, every value they drove is
+put back, and the report's `parameters_note` says why. The editability check then edits the first
+pad's parameter, as a designer would.
+
+Next: rectangular and circular patterns for repeated holes, and constraints
+in the sketches (the tree gives no `params` for sketch dimensions yet: a
+contract request).
+
 ## How the build stays faithful
 
 - **Sketch frames:** sketch points are projected into the frame CATIA actually gives the sketch, read back with `GetAbsoluteAxisData`. A tree plane whose normal is the reverse of a CATIA origin plane's, such as `-XZ` (normal -Y), is drawn on that origin plane and padded the other way.

@@ -167,9 +167,10 @@ def _dressup(feature: dict[str, Any], body: Any) -> Any:
         raise ReferenceError(f"{kind} {feature.get('id')}: {error}") from error
 
 
-def build_part(part: dict[str, Any], external: Any = None) -> Any:
+def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = None) -> Any:
     """The part's solid. `external(part, feature, bodies)` builds the features
-    this reference has no rule for, by updating `bodies` (the STEP fallback)."""
+    this reference has no rule for, by updating `bodies` (the STEP fallback).
+    `on_feature(feature, bodies)` sees the live bodies after each feature."""
     part = place_part(part)
     sketches: dict[str, dict[str, Any]] = {}
     bodies: dict[str, Any] = {}
@@ -243,6 +244,8 @@ def build_part(part: dict[str, Any], external: Any = None) -> Any:
             external(part, feature, bodies)
         else:
             raise ReferenceError(f"no reference for '{kind}' features")
+        if on_feature is not None and kind != "sketch":
+            on_feature(feature, bodies)
     final = [bodies[name] for name in (part.get("bodies") or bodies)]
     result = final[0]
     for other in final[1:]:
@@ -269,6 +272,31 @@ def _volume(solid: Any) -> float:
     return float(props.Mass())
 
 
-def expected(tree: dict[str, Any], external: Any = None) -> dict[str, dict[str, Any]]:
-    """Per-part expected properties, keyed by part id."""
-    return {part["id"]: properties(build_part(part, external)) for part in tree["parts"]}
+def mass(solid: Any) -> dict[str, Any]:
+    """Volume and centre of gravity, the per-feature check's two numbers."""
+    volume = _volume(solid)
+    if volume <= 0:
+        return {"volume_mm3": 0.0, "cog_mm": [0.0, 0.0, 0.0]}
+    cog = solid.center(CenterOf.MASS)
+    return {"volume_mm3": volume, "cog_mm": [float(cog.X), float(cog.Y), float(cog.Z)]}
+
+
+def expected(tree: dict[str, Any], external: Any = None,
+             features: bool = True) -> dict[str, dict[str, Any]]:
+    """Per-part expected properties, keyed by part id. With `features`, each
+    part also gets `features`: {feature id: {body: {volume_mm3, cog_mm}}},
+    every live body after that feature. The builder checks features that have
+    no closed form (a Pocket into a body, a Hole, a Groove) against them."""
+    out: dict[str, dict[str, Any]] = {}
+    for part in tree["parts"]:
+        snapshots: dict[str, dict[str, Any]] = {}
+
+        def record(feature: dict[str, Any], bodies: dict[str, Any],
+                   snapshots: dict[str, dict[str, Any]] = snapshots) -> None:
+            snapshots[str(feature.get("id"))] = {name: mass(body) for name, body in bodies.items()}
+
+        props = properties(build_part(part, external, record if features else None))
+        if features:
+            props["features"] = snapshots
+        out[part["id"]] = props
+    return out

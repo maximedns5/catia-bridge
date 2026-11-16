@@ -51,6 +51,7 @@ Design choices, each backed by a live finding on 3DEXPERIENCE R428 or V5:
 
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 from collections.abc import Callable
@@ -91,6 +92,7 @@ from catia_mcp.tree.geometry import (
 )
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.nurbs import Nurbs, drawing
+from catia_mcp.tree.parameters import ParameterPlan
 from catia_mcp.tree.placement import place_part
 from catia_mcp.tree.preflight import SUPPORTED, check
 from catia_mcp.tree.step_source import StepSource
@@ -109,6 +111,50 @@ CONSTRUCTION_SET = "Tree_Construction"
 FEATURE_REL_TOL = 1e-3
 PART_REL_TOL = 1e-4
 EPS = 1e-9
+# Hole.Type (CatHoleType), Hole.BottomType, Limit.LimitMode (CatLimitMode),
+# Hole.CounterSunkMode and Hole.AnchorMode, from the Automation help.
+HOLE_TYPES = {"simple": 0, "counterbore": 2, "countersink": 3}
+HOLE_FLAT_BOTTOM = 0
+LIMIT_DIMENSION, LIMIT_UP_TO_LAST = 0, 2
+COUNTERSUNK_DEPTH_ANGLE = 0
+HOLE_ANCHOR_EXTREME = 0
+
+
+@dataclass
+class HoleSpec:
+    type: int
+    diameter: float
+    depth: float | None  # None: up to last (a through hole)
+    head_diameter: float | None = None
+    head_depth: float | None = None
+    head_angle: float | None = None
+
+
+def hole_spec(feature: dict[str, Any]) -> HoleSpec:
+    """CATIA's Hole values for a tree hole (build123d's Hole, CounterBoreHole
+    or CounterSinkHole). A countersink is given by its depth and angle (the
+    documented mode): depth = (D_cs - D) / 2 / tan(angle / 2)."""
+    kind = feature["kind"]
+    depth = None if feature.get("depth") is None else float(feature["depth"])
+    spec = HoleSpec(HOLE_TYPES[kind], float(feature["diameter"]), depth)
+    if kind == "counterbore":
+        spec.head_diameter = float(feature["counterbore_diameter"])
+        spec.head_depth = float(feature["counterbore_depth"])
+    elif kind == "countersink":
+        angle = float(feature["countersink_angle"])
+        spec.head_angle = angle
+        spec.head_depth = (float(feature["countersink_diameter"]) - spec.diameter) / 2 \
+            / math.tan(math.radians(angle) / 2)
+    return spec
+
+
+# How features are built. "human": a join or cut goes straight into its body
+# (Pad, Pocket, Shaft, Groove), as a designer would model it, and is checked
+# against build123d's body after that feature (the reference's per-feature
+# snapshots). "exact": every solid is built in a tool body of its own, checked
+# against a closed form, then combined. A part with no snapshots (build123d
+# not installed, or no expected volumes) is built "exact".
+STYLES = ("human", "exact")
 # HybridShapeLoft.SectionCoupling: 1 ratio, 2 tangency, 3 tangency then
 # curvature, 4 vertices.
 LOFT_VERTEX_COUPLING = 4
@@ -149,6 +195,11 @@ class PartRecord:
     # What approximated splines may move the volume by (mm3), added to the
     # part check's tolerance.
     spline_allowance_mm3: float = 0.0
+    # "human" when build123d's per-feature snapshots drove the build.
+    style: str = "exact"
+    # The user parameters made from the script's numbers, and why none were.
+    parameters: list[dict[str, Any]] = field(default_factory=list)
+    parameters_note: str = ""
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -157,11 +208,24 @@ def _parallel(a: Vec, b: Vec) -> float:
     return math.copysign(1.0, d) if abs(abs(d) - 1) < 1e-9 else 0.0
 
 
+class HumanMismatch(BuildFailed):
+    """A human-style feature that does not change its body as build123d's did,
+    either way round. `items` are the CATIA features it made."""
+
+    def __init__(self, message: str, items: list[Any]) -> None:
+        super().__init__(message)
+        self.items = items
+
+
 class TreeBuilder:
     def __init__(self, conn: CATIAConnection, plm_type: str = "3DShape",
                  deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None,
-                 ownership: str | None = None, step_dir: str | None = None) -> None:
+                 ownership: str | None = None, step_dir: str | None = None,
+                 style: str = "human") -> None:
+        if style not in STYLES:
+            raise ValueError(f"style is one of {', '.join(STYLES)}")
         self.conn = conn
+        self.style = style
         self.step_dir = step_dir
         self.step_source: StepSource | None = None
         self.measure = Measurer(conn)
@@ -189,7 +253,7 @@ class TreeBuilder:
                 part = place_part(part)  # features in world coordinates
                 record = PartRecord(part["id"], part.get("name", part["id"]))
                 report["parts_detail"].append(record)
-                self._build_part(part, record)
+                self._build_part(part, record, (expected or {}).get(part["id"]))
                 if expected and part["id"] in expected:
                     record.expected_volume_mm3 = expected[part["id"]]["volume_mm3"]
                     self._check_part_volume(record)
@@ -201,7 +265,9 @@ class TreeBuilder:
             dead = any(r.dead_bodies for r in report["parts_detail"])
             report["native_history"] = "partial" if dead else True
             flags = [r.editable for r in report["parts_detail"]]
-            report["editable"] = all(flags) if check_editability else None
+            # A part with nothing to edit (no pad) proves nothing either way.
+            report["editable"] = (None if not check_editability or all(f is None for f in flags)
+                                  else not any(f is False for f in flags))
         except BuildFailed as error:
             report["error"] = {"part": error.part, "feature": error.feature, "message": str(error),
                                "note": "The CATIA document may contain a partial model: check it "
@@ -215,9 +281,18 @@ class TreeBuilder:
 
     # ── Parts ──
 
-    def _build_part(self, part: dict[str, Any], record: PartRecord) -> None:
+    def _build_part(self, part: dict[str, Any], record: PartRecord,
+                    expected: dict[str, Any] | None = None) -> None:
         self.part_id, self.feature_id = part["id"], None
         self.record = record
+        # build123d's bodies after each feature, for the human style's checks.
+        snapshots = (expected or {}).get("features") if self.style == "human" else None
+        self.snapshots: dict[str, dict[str, Any]] = snapshots or {}
+        self.expected_bodies: dict[str, dict[str, Any]] = {}
+        record.style = "human" if self.snapshots else "exact"
+        self.plan = ParameterPlan()
+        self.edit_parameter = None
+        self.first_pad_feature = None
         self.log(f"part {part['id']}: creating")
         if self.conn.is_3dx:
             self.documents._new_part(record.name, self.plm_type)
@@ -249,12 +324,16 @@ class TreeBuilder:
                 raise BuildFailed(f"CATIA rejected the feature: {error}", part["id"],
                                   feature.get("id")) from error
             entry["ok"] = True
+            if feature.get("id") in self.snapshots:
+                self.expected_bodies = self.snapshots[feature["id"]]
         try:
             self.part.Update()
         except Exception as error:
             raise BuildFailed(f"the final part update failed: {error}", part["id"]) from error
         final = [self.bodies[name] for name in (part.get("bodies") or self.bodies)]
         record.volume_mm3 = round(sum(self._volume(body) for body in final), 4)
+        if self.style == "human" and self.plan:
+            self._parametrize(record, final)
 
     def _check_part_volume(self, record: PartRecord) -> None:
         want, got = record.expected_volume_mm3, record.volume_mm3
@@ -295,10 +374,32 @@ class TreeBuilder:
             def make(body):
                 return self._verified_oblique_pad(body, sketch, vector, symmetric, entry)
         else:
+            dist = float(feature["distance"])
+            # CATIA's lengths are positive, the direction is set apart: the
+            # script's signed number drives the length times its sign.
+            scale_ = 1.0 if dist >= 0 else -1.0
+            centred = self._centred_box(feature, sketch, symmetric)
+            if centred is not None:
+                # build123d's centred Box or Cylinder: a designer sketches on
+                # the middle plane and pads both ways.
+                sketch, dist, symmetric, scale_ = centred, dist / 2, True, scale_ / 2
+
             def make(body):
-                return self._verified_pad(body, sketch, float(feature["distance"]), symmetric,
-                                          entry)
+                pad = self._verified_pad(body, sketch, dist, symmetric, entry)
+                self.plan.drive(feature, "distance", lambda: pad.FirstLimit.Dimension, scale_)
+                return pad
         operation = feature["operation"]
+        if operation in ("join", "cut") and feature.get("direction") is None \
+                and self._human(feature):
+
+            def build(body):
+                prism = self._prism_into(body, sketch, dist, symmetric, operation, entry)
+                self.plan.drive(feature, "distance", lambda: prism.FirstLimit.Dimension, scale_)
+                return prism
+
+            self._human_feature(feature, entry, build,
+                                flip=None if symmetric else _flip_direction)
+            return
         if operation == "new_body":
             body = self._new_body(use_main=True)
             pad = make(body)
@@ -306,6 +407,7 @@ class TreeBuilder:
             if self.first_pad is None:
                 # Its body survives to the end, so editing it moves the part.
                 self.first_pad = (pad, body)
+                self.first_pad_feature = feature.get("id")
             return
         (target,) = feature["bodies"]
         tool = self._new_body(use_main=False)
@@ -322,6 +424,13 @@ class TreeBuilder:
             body = self._new_body(use_main=True)
             self._verified_shaft(body, sketch, origin, direction, angle, entry)
             self.bodies[feature["creates"][0]] = body
+            return
+        if feature["operation"] in ("join", "cut") and self._human(feature):
+            self._human_feature(
+                feature, entry,
+                lambda body: self._revolution_into(body, sketch, origin, direction, angle,
+                                                   feature["operation"], entry),
+                flip=_swap_angles)
             return
         (target,) = feature["bodies"]
         tool = self._new_body(use_main=False)
@@ -371,6 +480,21 @@ class TreeBuilder:
             entry.setdefault("notes", []).append(f"{split.Name}: side flipped to match the tree")
 
     def _feature_hole(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        if self._human(feature):
+            try:
+                self._human_feature(feature, entry,
+                                    lambda body: self._holes_into(body, feature, entry),
+                                    flip=_reverse_hole)
+                return
+            except HumanMismatch as error:
+                # A through hole whose frame is not on an outer face (build123d
+                # drills both ways from it, a Hole only one): cut it as tool
+                # bodies instead.
+                for item in reversed(error.items):
+                    self._delete(item)
+                entry["catia"] = []
+                entry.setdefault("notes", []).append(
+                    f"as Hole features: {error}; built as cut cylinders instead")
         (target,) = feature["bodies"]
         for matrix in feature["frames"]:
             if feature["kind"] == "countersink":
@@ -476,6 +600,150 @@ class TreeBuilder:
         tool = self._new_body(use_main=False)
         make(tool)
         self._combine(self.bodies[target], tool, feature["operation"], entry)
+
+    # ── Human style ──
+
+    def _human(self, feature: dict[str, Any]) -> bool:
+        return feature.get("id") in self.snapshots
+
+    def _human_feature(self, feature: dict[str, Any], entry: dict[str, Any],
+                       build: Callable[[Any], Any], flip: Callable[[Any], bool] | None) -> None:
+        """Build a join or cut straight into its body, then check that body
+        against build123d's after this feature; flip once if it does not."""
+        (target,) = feature["bodies"]
+        body = self.bodies[target]
+        before = (self._volume(body), self._cog(body))
+        built = build(body)
+        items = built if isinstance(built, list) else [built]
+        name = ", ".join(str(item.Name) for item in items)
+        error = self._snapshot_error(target, before)
+        if error is None:
+            return
+        if flip is None or not all(flip(item) for item in items):
+            raise HumanMismatch(f"'{name}' {error}", items)
+        for item in items:
+            self.part.UpdateObject(item)
+        second = self._snapshot_error(target, before)
+        if second is not None:
+            raise HumanMismatch(f"'{name}' {error}; flipped, it {second}", items)
+        entry.setdefault("notes", []).append(f"{name}: flipped to match the tree")
+
+    def _snapshot_error(self, name: str, before: tuple[float, Vec]) -> str | None:
+        """None when the body changed as build123d's did in this feature: the
+        volume added or removed, and where its centre of gravity is (the
+        change's own moment, so earlier small differences cancel out)."""
+        want = self.snapshots[self.feature_id][name]
+        prior = self.expected_bodies.get(name) or {"volume_mm3": 0.0, "cog_mm": [0.0, 0.0, 0.0]}
+        volume, cog = self._volume(self.bodies[name]), self._cog(self.bodies[name])
+        want_delta = float(want["volume_mm3"]) - float(prior["volume_mm3"])
+        got_delta = volume - before[0]
+        slack = max(1e-3, FEATURE_REL_TOL * abs(want_delta), 1e-7 * float(want["volume_mm3"])) \
+            + self.record.spline_allowance_mm3
+        if abs(got_delta - want_delta) > slack:
+            return (f"changed the body by {got_delta:+.4f} mm3, build123d by "
+                    f"{want_delta:+.4f} mm3")
+        if abs(want_delta) <= slack:
+            return None  # nothing moved: no centre to compare
+        moment = [volume * cog[i] - before[0] * before[1][i] for i in range(3)]
+        want_moment = [float(want["volume_mm3"]) * float(want["cog_mm"][i])
+                       - float(prior["volume_mm3"]) * float(prior["cog_mm"][i]) for i in range(3)]
+        got_centre = tuple(m / got_delta for m in moment)
+        want_centre = tuple(m / want_delta for m in want_moment)
+        size = abs(want_delta) ** (1 / 3)
+        tol = max(1e-3, FEATURE_REL_TOL * size) + self.record.spline_allowance_mm3 / abs(want_delta)
+        if distance(got_centre, want_centre) > tol:
+            return (f"changed the body around {_fmt(got_centre)}, build123d around "
+                    f"{_fmt(want_centre)}")
+        return None
+
+    def _centred_box(self, feature: dict[str, Any], sketch: dict[str, Any],
+                     symmetric: bool) -> dict[str, Any] | None:
+        """The sketch moved to the middle of a centred primitive's extrude
+        (params distance base_shift 0.5: the plane was offset by -distance/2),
+        or None."""
+        spec = (feature.get("params") or {}).get("distance") or {}
+        if self.style != "human" or symmetric or spec.get("base_shift") != 0.5 \
+                or feature["operation"] not in ("new_body", "join", "cut"):
+            return None
+        plane = dict(sketch["plane"])
+        normal = unit(tuple(float(c) for c in plane["normal"]))
+        plane["origin"] = list(add(tuple(float(c) for c in plane["origin"]),
+                                   scale(normal, float(feature["distance"]) / 2)))
+        return {**sketch, "plane": plane}
+
+    def _prism_into(self, body: Any, sketch: dict[str, Any], dist: float, symmetric: bool,
+                    operation: str, entry: dict[str, Any]) -> Any:
+        """A Pad (join) or a Pocket (cut) drawn in the body it changes."""
+        frame = Frame.from_tree(sketch["plane"])
+        catia_sketch, along, _ = self._draw(body, sketch, frame, entry)
+        self.record.spline_allowance_mm3 += \
+            approximation_area(sketch) * abs(dist) * (2 if symmetric else 1)
+        part = self.part
+        _force_solid_inwork(part, catia_sketch)
+        part.InWorkObject = body
+        method = part.ShapeFactory.AddNewPad if operation == "join" else \
+            part.ShapeFactory.AddNewPocket
+        prism = method(catia_sketch, abs(dist))
+        entry["catia"].append(str(prism.Name))
+        if symmetric:
+            if not _set_prop(prism, "IsSymmetric", True):
+                raise BuildFailed(f"CATIA refused the symmetric extent of '{prism.Name}'")
+        elif dist * along < 0 and not _set_prop(prism, "DirectionOrientation", 1):
+            raise BuildFailed(f"CATIA refused the direction of '{prism.Name}'")
+        part.UpdateObject(prism)
+        return prism
+
+    def _revolution_into(self, body: Any, sketch: dict[str, Any], axis_origin: Vec,
+                         axis_direction: Vec, angle: float, operation: str,
+                         entry: dict[str, Any]) -> Any:
+        """A Shaft (join) or a Groove (cut) drawn in the body it changes."""
+        frame = Frame.from_tree(sketch["plane"])
+        want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry)
+        self.record.spline_allowance_mm3 += \
+            approximation_area(sketch) * math.radians(angle) * want.max_radius
+        part = self.part
+        axis_ref = self._axis_reference(catia_sketch, catia_frame, axis_origin, axis_direction)
+        _force_solid_inwork(part, catia_sketch)
+        part.InWorkObject = body
+        method = part.ShapeFactory.AddNewShaft if operation == "join" else \
+            part.ShapeFactory.AddNewGroove
+        revolution = method(catia_sketch)
+        entry["catia"].append(str(revolution.Name))
+        revolution.RevoluteAxis = axis_ref
+        if not _set_prop(revolution, "FirstAngle", angle):
+            raise BuildFailed(f"CATIA refused the angle of '{revolution.Name}'")
+        _set_prop(revolution, "SecondAngle", 0.0)
+        part.UpdateObject(revolution)
+        return revolution
+
+    def _holes_into(self, body: Any, feature: dict[str, Any], entry: dict[str, Any]) -> list[Any]:
+        """One Hole feature per position, each placed by a sketch holding one
+        point on the hole frame's XY plane. A through hole goes up to last."""
+        part = self.part
+        holes = []
+        spec = hole_spec(feature)
+        for matrix in feature["frames"]:
+            origin, x_dir, z_dir = frame_axes(matrix)
+            point = {"plane": {"origin": list(origin), "x_dir": list(x_dir),
+                               "normal": list(z_dir)},
+                     "entities": [{"type": "point", "at": [0.0, 0.0], "id": "p"}],
+                     "profiles": []}
+            catia_sketch, _, _ = self._draw(body, point, Frame.from_tree(point["plane"]))
+            _force_solid_inwork(part, catia_sketch)
+            part.InWorkObject = body
+            hole = part.ShapeFactory.AddNewHoleFromSketch(catia_sketch, spec.depth or 1.0)
+            entry["catia"].append(str(hole.Name))
+            _apply_hole_spec(hole, spec)
+            for key, member in (("diameter", "Diameter"), ("counterbore_diameter", "HeadDiameter"),
+                                ("counterbore_depth", "HeadDepth"),
+                                ("countersink_angle", "HeadAngle")):
+                self.plan.drive(feature, key, lambda h=hole, m=member: getattr(h, m))
+            if spec.depth is not None:
+                self.plan.drive(feature, "depth", lambda h=hole: h.BottomLimit.Dimension)
+            part.UpdateObject(hole)
+            holes.append(hole)
+        return holes
 
     def _new_body(self, use_main: bool) -> Any:
         if use_main and not self.main_body_used:
@@ -895,6 +1163,8 @@ class TreeBuilder:
             elif kind == "circle":
                 cu, cv = local(entity["center"])
                 factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
+            elif kind == "point":  # a Hole's position (not a tree entity)
+                factory.CreatePoint(*local(entity["at"]))
             elif kind == "spline":
                 note = _draw_spline(factory, entity, local)
                 if note and entry is not None:
@@ -927,12 +1197,69 @@ class TreeBuilder:
         self._ensure_home()
         return tuple(self.measure.cog_mm(self.part, body))
 
+    # ── Parameters ──
+
+    def _parametrize(self, record: PartRecord, final: list[Any]) -> None:
+        """One user parameter per script number, and a formula on every value
+        it set. The part must keep its volume; if not, or if CATIA refuses,
+        everything made here is removed and the report says why."""
+        part = self.part
+        before = sum(self._volume(body) for body in final)
+        made_parameters: list[str] = []
+        made_formulas: list[str] = []
+        # Each driven value as it was, put back if the parameters are undone
+        # (removing a formula leaves its last value in place).
+        originals: list[tuple[Any, float]] = []
+        try:
+            parameters, relations = part.Parameters, part.Relations
+            for script in self.plan.parameters.values():
+                parameter = parameters.CreateDimension(script.name, script.magnitude, 0)
+                made_parameters.append(script.name)
+                parameter.ValuateFromString(f"{script.value:g}{script.unit}")
+                _set_prop(parameter, "Comment", f"from {script.source}")
+                for i, driven in enumerate(script.driven, 1):
+                    name = f"{script.name}_f{i}"
+                    target = driven.target()
+                    originals.append((target, float(target.Value)))
+                    relations.CreateFormula(name, f"from {script.source}", target,
+                                            script.expression(driven.scale))
+                    made_formulas.append(name)
+            part.Update()
+            after = sum(self._volume(body) for body in final)
+            if abs(after - before) > max(1e-3, PART_REL_TOL * abs(before)):
+                raise BuildFailed(f"the formulas moved the part from {before:.4f} to "
+                                  f"{after:.4f} mm3")
+        except Exception as error:  # a parameter is a bonus: never lose the part for it
+            for name in made_formulas:
+                with contextlib.suppress(Exception):
+                    part.Relations.Remove(name)
+            for name in made_parameters:
+                with contextlib.suppress(Exception):
+                    part.Parameters.Remove(name)
+            for target, value in originals:
+                with contextlib.suppress(Exception):
+                    target.Value = value
+            with contextlib.suppress(Exception):
+                part.Update()
+            record.parameters_note = f"no user parameters: {error}"
+            return
+        record.parameters = [
+            {"name": s.name, "value": s.value, "unit": s.unit, "source": s.source,
+             "drives": [s.expression(d.scale) for d in s.driven]}
+            for s in self.plan.parameters.values()]
+        self.edit_parameter = self.plan.by_key.get((str(self.first_pad_feature), "distance"))
+
     def _check_editability(self, record: PartRecord) -> None:
-        """Change the first pad's length, check the volume moves, restore it."""
+        """Change the first pad's length (through its user parameter when it
+        has one), check the volume moves, restore it."""
         if self.first_pad is None:
             record.editable, record.editability_note = None, "no pad to edit"
             return
         pad, body = self.first_pad
+        script = getattr(self, "edit_parameter", None)
+        if script is not None:
+            self._check_parameter_edit(record, script, body)
+            return
         try:
             dimension = pad.FirstLimit.Dimension
             original = float(dimension.Value)
@@ -948,10 +1275,34 @@ class TreeBuilder:
             return
         changed = abs(moved - before) > max(1e-3, FEATURE_REL_TOL * before)
         back = abs(restored - before) <= max(1e-3, PART_REL_TOL * before)
-        record.editable = changed and back
+        # Restored but unmoved: a later feature clips the pad (an intersect),
+        # which proves nothing either way.
+        record.editable = True if changed and back else (None if back else False)
         record.editability_note = (
             f"{pad.Name} length {original:g} -> {original + 1:g} -> {original:g} mm: volume "
             f"{before:.1f} -> {moved:.1f} -> {restored:.1f} mm3")
+
+    def _check_parameter_edit(self, record: PartRecord, script: Any, body: Any) -> None:
+        """Edit the user parameter as a designer would, through its value."""
+        try:
+            parameter = self.part.Parameters.Item(script.name)
+            before = self._volume(body)
+            parameter.ValuateFromString(f"{script.value + 1:g}{script.unit}")
+            self.part.Update()
+            moved = self._volume(body)
+            parameter.ValuateFromString(f"{script.value:g}{script.unit}")
+            self.part.Update()
+            restored = self._volume(body)
+        except Exception as error:
+            record.editable, record.editability_note = False, f"edit failed: {error}"
+            return
+        changed = abs(moved - before) > max(1e-3, FEATURE_REL_TOL * before)
+        back = abs(restored - before) <= max(1e-3, PART_REL_TOL * before)
+        record.editable = changed and back
+        record.editability_note = (
+            f"parameter {script.name} {script.value:g} -> {script.value + 1:g} -> "
+            f"{script.value:g} {script.unit}: volume {before:.1f} -> {moved:.1f} -> "
+            f"{restored:.1f} mm3")
 
 
 def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
@@ -989,6 +1340,68 @@ def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
     return (f"spline {entity.get('id', '?')}: approximated by {len(plan.items)} CATIA sketch "
             f"spline(s) through {count} points (chords within {plan.deviation_area:.2g} mm2 "
             "of the curve)")
+
+
+def _set_value(obj: Any, name: str, value: float) -> None:
+    """Set a Length or Angle parameter object's value (Hole.Diameter...)."""
+    getattr(obj, name).Value = value
+    got = float(getattr(obj, name).Value)
+    if abs(got - value) > 1e-6:
+        raise BuildFailed(f"CATIA kept {name} = {got:g} on '{obj.Name}' after {value:g} was set")
+
+
+def _apply_hole_spec(hole: Any, spec: HoleSpec) -> None:
+    if not _set_prop(hole, "Type", spec.type):
+        raise BuildFailed(f"CATIA refused the hole type of '{hole.Name}'")
+    _set_value(hole, "Diameter", spec.diameter)
+    hole.BottomType = HOLE_FLAT_BOTTOM
+    limit = hole.BottomLimit
+    if spec.depth is None:
+        limit.LimitMode = LIMIT_UP_TO_LAST
+    else:
+        limit.LimitMode = LIMIT_DIMENSION
+        # R428 ignores AddNewHoleFromSketch's depth: set and read back.
+        _set_value(limit, "Dimension", spec.depth)
+    if spec.head_diameter is not None:
+        _set_value(hole, "HeadDiameter", spec.head_diameter)
+    if spec.head_depth is not None:
+        _set_value(hole, "HeadDepth", spec.head_depth)
+    if spec.head_angle is not None:
+        _set_prop(hole, "CounterSunkMode", COUNTERSUNK_DEPTH_ANGLE)
+        _set_value(hole, "HeadAngle", spec.head_angle)
+    if spec.type == HOLE_TYPES["counterbore"]:
+        _set_prop(hole, "AnchorMode", HOLE_ANCHOR_EXTREME)
+
+
+def _reverse_hole(hole: Any) -> bool:
+    try:
+        hole.Reverse()
+        return True
+    except Exception:
+        return False
+
+
+def _flip_direction(prism: Any) -> bool:
+    current = _read_prop(prism, "DirectionOrientation") or 0
+    return _set_prop(prism, "DirectionOrientation", 1 - current)
+
+
+def _read_angle(obj: Any, name: str) -> float | None:
+    """An angle property (an Angle object on CATIA, whose Value is degrees)."""
+    try:
+        value = getattr(obj, name)
+        return float(getattr(value, "Value", value))
+    except Exception:
+        return None
+
+
+def _swap_angles(revolution: Any) -> bool:
+    """Turn the other way: the angle on the other side of the profile."""
+    first, second = _read_angle(revolution, "FirstAngle"), _read_angle(revolution, "SecondAngle")
+    if first is None or second is None:
+        return False
+    return _set_prop(revolution, "FirstAngle", second) and \
+        _set_prop(revolution, "SecondAngle", first)
 
 
 def _connect_ends(factory: Any, ends) -> None:
