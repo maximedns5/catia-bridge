@@ -16,6 +16,14 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **App link** (`catia_mcp/link/`, `python -m catia_mcp.link`): a hosted app
+  sends feature trees to CATIA on the user's PC. The bridge pairs once with a
+  short code, long-polls the app's server for jobs (`catia/ping`,
+  `catia/capabilities`, `catia/check_tree`, `catia/build_tree`), builds on the
+  guarded COM worker and posts the report back. Jobs carry data, never code;
+  one job runs at a time and polling goes on during a build. A reference
+  relay plays the app's server for trying the chain on one PC
+  (`docs/app-link.md`).
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that

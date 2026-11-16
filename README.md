@@ -281,6 +281,21 @@ reached through a private network such as Tailscale or an SSH tunnel, never
 the open internet. Full setup and client configurations:
 [docs/remote-access.md](docs/remote-access.md).
 
+### Remote use: a hosted app sends models to CATIA
+
+A web app in the cloud cannot reach the user's PC, so the bridge calls out to
+it. Pair once with the code the app shows, then leave the link running:
+
+```bat
+python -m catia_mcp.link pair --server https://APP --code CODE
+python -m catia_mcp.link run
+```
+
+The bridge long-polls the app for jobs, builds each feature tree in CATIA and
+posts the report back. Jobs carry data, never code. The protocol, and a
+reference relay to try the chain on one PC:
+[docs/app-link.md](docs/app-link.md).
+
 ### 4. Start CATIA
 
 Make sure CATIA is running before asking your agent to interact with it. The server will automatically connect to the running instance and detect whether it is CATIA V5 or CATIA 3DEXPERIENCE.
