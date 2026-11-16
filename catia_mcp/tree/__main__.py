@@ -27,10 +27,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from typing import Any
 
-from catia_mcp.tree.preflight import TreeRefused, analyze, refusal, truncate
+from catia_mcp.tree.preflight import analyze, refusal, truncate
 
 
 def _load(args) -> dict[str, Any]:
@@ -103,32 +102,11 @@ def _reference(tree, step_dir=None) -> int:
     return 0
 
 
-def _blocked_report(tree, builder, error, started: float) -> dict[str, Any]:
-    """The report of a build a dialog (or a hang) stopped mid-call."""
-    partial = getattr(builder, "report", None) or {"parts_detail": []}
-    details = [record if isinstance(record, dict) else dict(vars(record))
-               for record in partial["parts_detail"]]
-    return {
-        "success": False, "native_history": False, "editable": None,
-        "parts": len(tree["parts"]),
-        "features": sum(len(record["features"]) for record in details),
-        "parts_detail": details,
-        "error": {
-            "part": getattr(builder, "part_id", None),
-            "feature": getattr(builder, "feature_id", None),
-            "code": error.code, "message": str(error), "dialog": error.data.get("watchdog"),
-            "note": "The CATIA call is still pending: close the dialog in CATIA, check the "
-                    "document (it may contain a partial model), then run the build again.",
-        },
-        "elapsed_s": round(time.monotonic() - started, 2),
-    }
-
-
 def _build(tree, args) -> int:
     from catia_mcp.com_guard import ComWorker
     from catia_mcp.connection import CATIAConnection
-    from catia_mcp.errors import CATIAToolError, SessionError
-    from catia_mcp.tree.builder import TreeBuilder
+    from catia_mcp.errors import CATIAToolError
+    from catia_mcp.tree.session import build_tree_on
 
     try:
         expected = _expected(tree, args.expect, args.step_dir)
@@ -140,41 +118,15 @@ def _build(tree, args) -> int:
     # check between features stays the builder's, this timeout is the backstop.
     worker = ComWorker(conn.watchdog, timeout_s=args.deadline + 60, name="catia-tree")
     try:
-        print(worker.run_guarded(conn.connect, label="connect"))
+        report = build_tree_on(conn, worker, tree, expected=expected, plm_type=args.plm_type,
+                               deadline_s=args.deadline, check_editability=not args.no_edit,
+                               ownership=args.ownership, step_dir=args.step_dir, log=print)
     except (RuntimeError, CATIAToolError) as error:
         print(error)
         return 2
-    from catia_mcp.capabilities import probe
-
-    # The probe uses the connection, so it runs on the worker that made it.
-    try:
-        capabilities = worker.run_guarded(lambda: probe(conn, save=False),
-                                          label="the capability probe")
-    except SessionError as error:
-        print(error)
-        return 2
-    step = None
-    if args.step_dir:
-        from catia_mcp.tree.step_source import StepSource
-
-        step = StepSource(args.step_dir, "3dx" if conn.is_3dx else "v5")
-    reasons = analyze(tree, capabilities, args.plm_type, step=step)
-    if reasons:
-        print(refusal(reasons))
+    if report.get("refused"):
+        print(report["message"])
         return 1
-    builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print,
-                          ownership=args.ownership, step_dir=args.step_dir)
-    started = time.monotonic()
-    try:
-        report = worker.run_guarded(builder.build, tree, expected, not args.no_edit,
-                                    label="the tree build")
-    except TreeRefused as refused:
-        print(refused)
-        return 1
-    except SessionError as error:
-        report = _blocked_report(tree, builder, error, started)
-    if worker.dismissed:
-        report["dismissed_dialogs"] = worker.dismissed
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
     for part in report["parts_detail"]:
