@@ -163,7 +163,7 @@ def _build(tree, args) -> int:
         print(refusal(reasons))
         return 1
     builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print,
-                          ownership=args.ownership, step_dir=args.step_dir)
+                          ownership=args.ownership, step_dir=args.step_dir, style=args.style)
     started = time.monotonic()
     try:
         report = worker.run_guarded(builder.build, tree, expected, not args.no_edit,
@@ -233,6 +233,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ownership", choices=["auto", "strict", "off"],
                         help="fillet/chamfer/shell topology ownership filter (default: "
                              "$CATIA_MCP_TOPOLOGY_OWNERSHIP or auto)")
+    parser.add_argument("--style", default="human", choices=["human", "exact"],
+                        help="human (default): joins and cuts go straight into their body as "
+                             "Pad, Pocket, Shaft, Groove, checked against build123d after each "
+                             "feature; exact: each solid in a tool body, checked by a closed "
+                             "form, then combined. Without build123d the build is exact.")
     parser.add_argument("--no-edit", action="store_true", help="skip the editability check")
     parser.add_argument("--deadline", type=float, default=170.0, help="build budget in seconds")
     parser.add_argument("--report", help="JSON report path (default tree_report.json, "

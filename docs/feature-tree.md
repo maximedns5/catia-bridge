@@ -71,6 +71,43 @@ its own frame or already in world coordinates.
 On CATIA V5, `--step-dir` lets STEP files stand in for a `base_feature` or an
 unsupported feature, as bodies without history: see [step.md](step.md).
 
+## Human style: the tree a designer would have made
+
+By default (`--style human`) a join or a cut goes straight into the body it
+changes, as a designer would model it:
+
+| Tree feature | CATIA |
+|---|---|
+| `extrude` `join` (no taper, no direction) | Pad in the target body |
+| `extrude` `cut` (no taper, no direction) | Pocket in the target body |
+| `revolve` `join` | Shaft in the target body |
+| `revolve` `cut` | Groove in the target body |
+
+A Pocket or a Groove has no closed form: what it removes depends on the body.
+So the build123d reference (`catia_mcp/tree/reference.py`, `expected`) records
+every live body's volume and centre of gravity after each feature
+(`features: {feature id: {body: {volume_mm3, cog_mm}}}` in the expected
+properties). After each such feature, the body must have changed as
+build123d's did:
+- the volume added or removed agrees within max(1e-3 mm³, 1e-3 of the
+  change), plus the spline allowance;
+- the change's own centre (its first moment over its volume, so earlier
+  small differences cancel out) agrees within the per-feature tolerance.
+
+A feature that fails is flipped once (`DirectionOrientation` for a Pad or a
+Pocket, the angle moved to the profile's other side for a Shaft or a Groove),
+and anything else stops the build.
+
+Every other feature, and every part without snapshots (build123d not
+installed, `--expect none`, or expected volumes from a file without
+`features`), is built as below (`--style exact`): each solid in a tool body,
+checked against its closed form, then combined.
+
+Next, in this order: Hole features for holes, rectangular and circular
+patterns for repeated holes, user parameters and formulas from the tree's
+`params`, and constraints in the sketches, so a dimension can be edited where
+a designer would look for it.
+
 ## How the build stays faithful
 
 - **Sketch frames:** sketch points are projected into the frame CATIA actually gives the sketch, read back with `GetAbsoluteAxisData`. A tree plane whose normal is the reverse of a CATIA origin plane's, such as `-XZ` (normal -Y), is drawn on that origin plane and padded the other way.

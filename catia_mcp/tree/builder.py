@@ -109,6 +109,13 @@ CONSTRUCTION_SET = "Tree_Construction"
 FEATURE_REL_TOL = 1e-3
 PART_REL_TOL = 1e-4
 EPS = 1e-9
+# How features are built. "human": a join or cut goes straight into its body
+# (Pad, Pocket, Shaft, Groove), as a designer would model it, and is checked
+# against build123d's body after that feature (the reference's per-feature
+# snapshots). "exact": every solid is built in a tool body of its own, checked
+# against a closed form, then combined. A part with no snapshots (build123d
+# not installed, or no expected volumes) is built "exact".
+STYLES = ("human", "exact")
 # HybridShapeLoft.SectionCoupling: 1 ratio, 2 tangency, 3 tangency then
 # curvature, 4 vertices.
 LOFT_VERTEX_COUPLING = 4
@@ -149,6 +156,8 @@ class PartRecord:
     # What approximated splines may move the volume by (mm3), added to the
     # part check's tolerance.
     spline_allowance_mm3: float = 0.0
+    # "human" when build123d's per-feature snapshots drove the build.
+    style: str = "exact"
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -160,8 +169,12 @@ def _parallel(a: Vec, b: Vec) -> float:
 class TreeBuilder:
     def __init__(self, conn: CATIAConnection, plm_type: str = "3DShape",
                  deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None,
-                 ownership: str | None = None, step_dir: str | None = None) -> None:
+                 ownership: str | None = None, step_dir: str | None = None,
+                 style: str = "human") -> None:
+        if style not in STYLES:
+            raise ValueError(f"style is one of {', '.join(STYLES)}")
         self.conn = conn
+        self.style = style
         self.step_dir = step_dir
         self.step_source: StepSource | None = None
         self.measure = Measurer(conn)
@@ -189,7 +202,7 @@ class TreeBuilder:
                 part = place_part(part)  # features in world coordinates
                 record = PartRecord(part["id"], part.get("name", part["id"]))
                 report["parts_detail"].append(record)
-                self._build_part(part, record)
+                self._build_part(part, record, (expected or {}).get(part["id"]))
                 if expected and part["id"] in expected:
                     record.expected_volume_mm3 = expected[part["id"]]["volume_mm3"]
                     self._check_part_volume(record)
@@ -215,9 +228,15 @@ class TreeBuilder:
 
     # ── Parts ──
 
-    def _build_part(self, part: dict[str, Any], record: PartRecord) -> None:
+    def _build_part(self, part: dict[str, Any], record: PartRecord,
+                    expected: dict[str, Any] | None = None) -> None:
         self.part_id, self.feature_id = part["id"], None
         self.record = record
+        # build123d's bodies after each feature, for the human style's checks.
+        snapshots = (expected or {}).get("features") if self.style == "human" else None
+        self.snapshots: dict[str, dict[str, Any]] = snapshots or {}
+        self.expected_bodies: dict[str, dict[str, Any]] = {}
+        record.style = "human" if self.snapshots else "exact"
         self.log(f"part {part['id']}: creating")
         if self.conn.is_3dx:
             self.documents._new_part(record.name, self.plm_type)
@@ -249,6 +268,8 @@ class TreeBuilder:
                 raise BuildFailed(f"CATIA rejected the feature: {error}", part["id"],
                                   feature.get("id")) from error
             entry["ok"] = True
+            if feature.get("id") in self.snapshots:
+                self.expected_bodies = self.snapshots[feature["id"]]
         try:
             self.part.Update()
         except Exception as error:
@@ -299,6 +320,14 @@ class TreeBuilder:
                 return self._verified_pad(body, sketch, float(feature["distance"]), symmetric,
                                           entry)
         operation = feature["operation"]
+        if operation in ("join", "cut") and feature.get("direction") is None \
+                and self._human(feature):
+            dist = float(feature["distance"])
+            self._human_feature(
+                feature, entry,
+                lambda body: self._prism_into(body, sketch, dist, symmetric, operation, entry),
+                flip=None if symmetric else _flip_direction)
+            return
         if operation == "new_body":
             body = self._new_body(use_main=True)
             pad = make(body)
@@ -322,6 +351,13 @@ class TreeBuilder:
             body = self._new_body(use_main=True)
             self._verified_shaft(body, sketch, origin, direction, angle, entry)
             self.bodies[feature["creates"][0]] = body
+            return
+        if feature["operation"] in ("join", "cut") and self._human(feature):
+            self._human_feature(
+                feature, entry,
+                lambda body: self._revolution_into(body, sketch, origin, direction, angle,
+                                                   feature["operation"], entry),
+                flip=_swap_angles)
             return
         (target,) = feature["bodies"]
         tool = self._new_body(use_main=False)
@@ -476,6 +512,104 @@ class TreeBuilder:
         tool = self._new_body(use_main=False)
         make(tool)
         self._combine(self.bodies[target], tool, feature["operation"], entry)
+
+    # ── Human style ──
+
+    def _human(self, feature: dict[str, Any]) -> bool:
+        return feature.get("id") in self.snapshots
+
+    def _human_feature(self, feature: dict[str, Any], entry: dict[str, Any],
+                       build: Callable[[Any], Any], flip: Callable[[Any], bool] | None) -> None:
+        """Build a join or cut straight into its body, then check that body
+        against build123d's after this feature; flip once if it does not."""
+        (target,) = feature["bodies"]
+        body = self.bodies[target]
+        before = (self._volume(body), self._cog(body))
+        item = build(body)
+        error = self._snapshot_error(target, before)
+        if error is None:
+            return
+        if flip is None or not flip(item):
+            raise BuildFailed(f"'{item.Name}' {error}")
+        self.part.UpdateObject(item)
+        second = self._snapshot_error(target, before)
+        if second is not None:
+            raise BuildFailed(f"'{item.Name}' {error}; flipped, it {second}")
+        entry.setdefault("notes", []).append(f"{item.Name}: flipped to match the tree")
+
+    def _snapshot_error(self, name: str, before: tuple[float, Vec]) -> str | None:
+        """None when the body changed as build123d's did in this feature: the
+        volume added or removed, and where its centre of gravity is (the
+        change's own moment, so earlier small differences cancel out)."""
+        want = self.snapshots[self.feature_id][name]
+        prior = self.expected_bodies.get(name) or {"volume_mm3": 0.0, "cog_mm": [0.0, 0.0, 0.0]}
+        volume, cog = self._volume(self.bodies[name]), self._cog(self.bodies[name])
+        want_delta = float(want["volume_mm3"]) - float(prior["volume_mm3"])
+        got_delta = volume - before[0]
+        slack = max(1e-3, FEATURE_REL_TOL * abs(want_delta), 1e-7 * float(want["volume_mm3"])) \
+            + self.record.spline_allowance_mm3
+        if abs(got_delta - want_delta) > slack:
+            return (f"changed the body by {got_delta:+.4f} mm3, build123d by "
+                    f"{want_delta:+.4f} mm3")
+        if abs(want_delta) <= slack:
+            return None  # nothing moved: no centre to compare
+        moment = [volume * cog[i] - before[0] * before[1][i] for i in range(3)]
+        want_moment = [float(want["volume_mm3"]) * float(want["cog_mm"][i])
+                       - float(prior["volume_mm3"]) * float(prior["cog_mm"][i]) for i in range(3)]
+        got_centre = tuple(m / got_delta for m in moment)
+        want_centre = tuple(m / want_delta for m in want_moment)
+        size = abs(want_delta) ** (1 / 3)
+        tol = max(1e-3, FEATURE_REL_TOL * size) + self.record.spline_allowance_mm3 / abs(want_delta)
+        if distance(got_centre, want_centre) > tol:
+            return (f"changed the body around {_fmt(got_centre)}, build123d around "
+                    f"{_fmt(want_centre)}")
+        return None
+
+    def _prism_into(self, body: Any, sketch: dict[str, Any], dist: float, symmetric: bool,
+                    operation: str, entry: dict[str, Any]) -> Any:
+        """A Pad (join) or a Pocket (cut) drawn in the body it changes."""
+        frame = Frame.from_tree(sketch["plane"])
+        catia_sketch, along, _ = self._draw(body, sketch, frame, entry)
+        self.record.spline_allowance_mm3 += \
+            approximation_area(sketch) * abs(dist) * (2 if symmetric else 1)
+        part = self.part
+        _force_solid_inwork(part, catia_sketch)
+        part.InWorkObject = body
+        method = part.ShapeFactory.AddNewPad if operation == "join" else \
+            part.ShapeFactory.AddNewPocket
+        prism = method(catia_sketch, abs(dist))
+        entry["catia"].append(str(prism.Name))
+        if symmetric:
+            if not _set_prop(prism, "IsSymmetric", True):
+                raise BuildFailed(f"CATIA refused the symmetric extent of '{prism.Name}'")
+        elif dist * along < 0 and not _set_prop(prism, "DirectionOrientation", 1):
+            raise BuildFailed(f"CATIA refused the direction of '{prism.Name}'")
+        part.UpdateObject(prism)
+        return prism
+
+    def _revolution_into(self, body: Any, sketch: dict[str, Any], axis_origin: Vec,
+                         axis_direction: Vec, angle: float, operation: str,
+                         entry: dict[str, Any]) -> Any:
+        """A Shaft (join) or a Groove (cut) drawn in the body it changes."""
+        frame = Frame.from_tree(sketch["plane"])
+        want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry)
+        self.record.spline_allowance_mm3 += \
+            approximation_area(sketch) * math.radians(angle) * want.max_radius
+        part = self.part
+        axis_ref = self._axis_reference(catia_sketch, catia_frame, axis_origin, axis_direction)
+        _force_solid_inwork(part, catia_sketch)
+        part.InWorkObject = body
+        method = part.ShapeFactory.AddNewShaft if operation == "join" else \
+            part.ShapeFactory.AddNewGroove
+        revolution = method(catia_sketch)
+        entry["catia"].append(str(revolution.Name))
+        revolution.RevoluteAxis = axis_ref
+        if not _set_prop(revolution, "FirstAngle", angle):
+            raise BuildFailed(f"CATIA refused the angle of '{revolution.Name}'")
+        _set_prop(revolution, "SecondAngle", 0.0)
+        part.UpdateObject(revolution)
+        return revolution
 
     def _new_body(self, use_main: bool) -> Any:
         if use_main and not self.main_body_used:
@@ -989,6 +1123,29 @@ def _draw_spline(factory: Any, entity: dict[str, Any], local) -> str | None:
     return (f"spline {entity.get('id', '?')}: approximated by {len(plan.items)} CATIA sketch "
             f"spline(s) through {count} points (chords within {plan.deviation_area:.2g} mm2 "
             "of the curve)")
+
+
+def _flip_direction(prism: Any) -> bool:
+    current = _read_prop(prism, "DirectionOrientation") or 0
+    return _set_prop(prism, "DirectionOrientation", 1 - current)
+
+
+def _read_angle(obj: Any, name: str) -> float | None:
+    """An angle property (an Angle object on CATIA, whose Value is degrees)."""
+    try:
+        value = getattr(obj, name)
+        return float(getattr(value, "Value", value))
+    except Exception:
+        return None
+
+
+def _swap_angles(revolution: Any) -> bool:
+    """Turn the other way: the angle on the other side of the profile."""
+    first, second = _read_angle(revolution, "FirstAngle"), _read_angle(revolution, "SecondAngle")
+    if first is None or second is None:
+        return False
+    return _set_prop(revolution, "FirstAngle", second) and \
+        _set_prop(revolution, "SecondAngle", first)
 
 
 def _connect_ends(factory: Any, ends) -> None:

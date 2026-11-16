@@ -217,8 +217,9 @@ class _FakePart:
     opposite when `pads_reversed`); booleans assume disjoint or nested solids."""
 
     def __init__(self, pads_reversed=False, turns_reversed=False, split_reversed=False,
-                 lofts_reversed=False):
+                 lofts_reversed=False, pockets_reversed=False):
         self.Name, self.pads_reversed, self.pads = "Part1", pads_reversed, []
+        self.pockets_reversed = pockets_reversed
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.lofts_reversed, self.deleted = lofts_reversed, []
         self.MainBody = _Body("Corps principal")
@@ -235,6 +236,8 @@ class _FakePart:
             AddNewLinePtPt=lambda p1, p2: ("axis", p1[1], unit(tuple(b - a for a, b in zip(p1[1], p2[1])))))
         self.ShapeFactory = SimpleNamespace(
             AddNewPad=self._pad, AddNewShaft=self._shaft,
+            AddNewPocket=lambda sketch, length: self._pad(sketch, length, "Poche", -1),
+            AddNewGroove=lambda sketch: self._shaft(sketch, "groove"),
             AddNewMirror=lambda ref: self._feature("mirror", ref=ref),
             AddNewSplit=lambda ref, side: self._feature("split", ref=ref, SplitSide=side),
             AddNewLoft=self._loft,
@@ -255,14 +258,27 @@ class _FakePart:
         normal = cross(h, v)
         return (tuple(origin[i] + offset * normal[i] for i in range(3)), h, v)
 
-    def _pad(self, sketch, length):
-        pad = SimpleNamespace(Name=f"Extrusion.{len(self.pads) + 1}", sketch=sketch, length=length,
-                              IsSymmetric=False, DirectionOrientation=0, body=self.InWorkObject)
+    def _pad(self, sketch, length, name="Extrusion", sign=1):
+        """A Pad (sign 1) or a Pocket (sign -1): what it adds or removes is
+        appended to what its body held before (no clipping)."""
+        pad = SimpleNamespace(Name=f"{name}.{len(self.pads) + 1}", sketch=sketch, length=length,
+                              IsSymmetric=False, DirectionOrientation=0, body=self.InWorkObject,
+                              sign=sign)
         self.pads.append(pad)
         return pad
 
-    def _shaft(self, sketch):
-        return self._feature("shaft", sketch=sketch, RevoluteAxis=None, FirstAngle=0.0, SecondAngle=0.0)
+    def _shaft(self, sketch, kind="shaft"):
+        return self._feature(kind, sketch=sketch, RevoluteAxis=None, FirstAngle=0.0,
+                             SecondAngle=0.0)
+
+    @staticmethod
+    def _onto(feature, solid, sign=1):
+        """The body after `feature`: what it held before the feature's first
+        update, plus (or minus) the feature's solid."""
+        if not hasattr(feature, "base"):
+            feature.base = list(feature.body.solids)
+        volume, cog = solid
+        feature.body.solids = feature.base + [(sign * volume, cog)]
 
     def _feature(self, kind, **fields):
         feature = SimpleNamespace(Name=f"{kind}.{len(self.pads) + 1}", kind=kind,
@@ -290,8 +306,8 @@ class _FakePart:
 
     def UpdateObject(self, obj):
         kind = getattr(obj, "kind", None)
-        if kind == "shaft":
-            obj.body.solids = [self._revolved(obj)]
+        if kind in ("shaft", "groove"):
+            self._onto(obj, self._revolved(obj), -1 if kind == "groove" else 1)
         elif kind == "mirror":
             origin, h, v = obj.ref
             n = cross(h, v)
@@ -314,7 +330,7 @@ class _FakePart:
             obj.body.solids = [(volume / 2, tuple(c + (1 if keeps_positive else -1) * n[i]
                                                   for i, c in enumerate(on_plane)))]
         elif hasattr(obj, "length"):
-            obj.body.solids = [self._prism(obj)]
+            self._onto(obj, self._prism(obj), obj.sign)
         elif hasattr(obj, "tool"):
             tool_volume, tool_cog = _mass(obj.tool.solids)
             sign = {"add": 1, "remove": -1}.get(obj.kind)
@@ -331,7 +347,8 @@ class _FakePart:
         normal = cross(h, v)
         entities = [dict(e, id=str(i)) for i, e in enumerate(pad.sketch.factory.entities)]
         area, (cu, cv) = _loop_area_centroid(entities)
-        side = -1 if (pad.DirectionOrientation == 1) != self.pads_reversed else 1
+        reversed_ = self.pockets_reversed if pad.sign < 0 else self.pads_reversed
+        side = -1 if (pad.DirectionOrientation == 1) != reversed_ else 1
         offset = 0 if pad.IsSymmetric else side * pad.length / 2
         cog = tuple(origin[i] + cu * h[i] + cv * v[i] + offset * normal[i] for i in range(3))
         return area * pad.length * (2 if pad.IsSymmetric else 1), cog
@@ -672,3 +689,99 @@ def test_loft_sections_are_drawn_as_connected_contours(monkeypatch):
     part = _FakePart()
     _builder(part, monkeypatch).build(load("m1_offset_block"), check_editability=False)
     assert all(not pad.sketch.factory.points for pad in part.pads if hasattr(pad, "sketch"))
+
+
+# ── Human style: features straight into their body, checked by snapshots ──
+
+# build123d's bodies after each feature (catia_mcp.tree.reference.expected),
+# as the CLI computes them; written out so the tests run without build123d.
+SNAPSHOTS = {
+    "m3_pocket_floor_fillet": {
+        "extrude1": {"Body1": {"volume_mm3": 24000.0, "cog_mm": [0.0, 0.0, 5.0]}},
+        "extrude2": {"Body1": {"volume_mm3": 23000.0, "cog_mm": [-0.2174, 0.0, 4.8913]}},
+    },
+    "m2_partial_revolve_cut_h_axis": {
+        "extrude1": {"Body1": {"volume_mm3": 80000.0, "cog_mm": [0.0, 0.0, 0.0]}},
+        "revolve1": {"Body1": {"volume_mm3": 77905.6049, "cog_mm": [-0.1204, -0.2086, 0.0]}},
+    },
+}
+
+
+def _human_tree(name, until=None):
+    tree = load(name)
+    if until:
+        tree = truncate(tree, tree["parts"][0]["id"], until)
+    part_id = tree["parts"][0]["id"]
+    snapshots = json.loads(json.dumps(SNAPSHOTS[name]))  # a copy the test may change
+    final = snapshots[until or list(snapshots)[-1]]["Body1"]
+    return tree, {part_id: {"volume_mm3": final["volume_mm3"], "features": snapshots}}
+
+
+def test_a_cut_is_a_pocket_in_the_body_checked_against_build123d(monkeypatch):
+    part = _FakePart()
+    tree, expected = _human_tree("m3_pocket_floor_fillet", "extrude2")
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    _, pocket = part.pads
+    assert pocket.Name.startswith("Poche") and pocket.body is part.MainBody
+    assert not [f for f in part.pads if hasattr(f, "tool")]  # no tool body, no boolean
+    detail = report["parts_detail"][0]
+    assert detail["style"] == "human"
+    assert detail["features"][3]["catia"] == [pocket.Name]
+
+
+def test_a_pocket_cutting_the_wrong_way_is_flipped_once(monkeypatch):
+    part = _FakePart(pockets_reversed=True)
+    tree, expected = _human_tree("m3_pocket_floor_fillet", "extrude2")
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    (_, pocket) = part.pads
+    assert report["parts_detail"][0]["features"][3]["notes"] == [
+        f"{pocket.Name}: flipped to match the tree"]
+
+
+def test_a_revolved_cut_is_a_groove_turned_the_tree_s_way(monkeypatch):
+    for reversed_ in (False, True):
+        part = _FakePart(turns_reversed=reversed_)
+        tree, expected = _human_tree("m2_partial_revolve_cut_h_axis")
+        report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+        assert report["success"], report.get("error")
+        (groove,) = [f for f in part.pads if getattr(f, "kind", None) == "groove"]
+        assert groove.body is part.MainBody
+        notes = report["parts_detail"][0]["features"][3].get("notes", [])
+        assert notes == ([f"{groove.Name}: flipped to match the tree"] if reversed_ else [])
+
+
+def test_a_human_feature_that_matches_neither_way_stops_the_build(monkeypatch):
+    part = _FakePart()
+    tree, expected = _human_tree("m3_pocket_floor_fillet", "extrude2")
+    (want,) = expected.values()
+    want["features"]["extrude2"]["Body1"]["volume_mm3"] = 22900.0
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert not report["success"]
+    assert report["error"]["feature"] == "extrude2"
+    assert "build123d by -1100.0000 mm3" in report["error"]["message"]
+
+
+def test_without_snapshots_or_in_exact_style_cuts_stay_tool_bodies(monkeypatch):
+    tree, expected = _human_tree("m3_pocket_floor_fillet", "extrude2")
+    for options, want in (({}, None), ({"style": "exact"}, expected)):
+        part = _FakePart()
+        built = _builder(part, monkeypatch)
+        built.style = options.get("style", built.style)
+        report = built.build(tree, want, check_editability=False)
+        assert report["success"], report.get("error")
+        assert report["parts_detail"][0]["style"] == "exact"
+        assert [f.kind for f in part.pads if hasattr(f, "tool")] == ["remove"]
+
+
+def test_reference_snapshots_every_body_after_each_feature():
+    pytest.importorskip("build123d")
+    from catia_mcp.tree.reference import expected
+
+    for name, snapshots in SNAPSHOTS.items():
+        (props,) = expected(load(name)).values()
+        for feature, bodies in snapshots.items():
+            got = props["features"][feature]["Body1"]
+            assert got["volume_mm3"] == pytest.approx(bodies["Body1"]["volume_mm3"], abs=1e-3)
+            assert got["cog_mm"] == pytest.approx(bodies["Body1"]["cog_mm"], abs=1e-3)

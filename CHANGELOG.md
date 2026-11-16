@@ -16,6 +16,12 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **Human-style tree** (`--style human`, the default): a join or a cut goes
+  straight into its body as a Pad, Pocket, Shaft or Groove, instead of a tool
+  body and a boolean. The build123d reference now records every body's volume
+  and centre of gravity after each feature, and each such feature is checked
+  against them (the change's volume and centre), flipped once if needed.
+  `--style exact` keeps the tool bodies.
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that
