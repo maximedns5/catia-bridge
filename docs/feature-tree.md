@@ -139,8 +139,27 @@ everything made for the parameters is removed, every value they drove is
 put back, and the report's `parameters_note` says why. The editability check then edits the first
 pad's parameter, as a designer would.
 
-Next: rectangular and circular patterns for repeated holes, and constraints
-in the sketches (the tree gives no `params` for sketch dimensions yet: a
+**Patterns** (`catia_mcp/tree/patterns.py`). build123d's `GridLocations`
+and `PolarLocations` reach the tree only as a hole's list of frames, so the
+layout is recognised from the frames' origins, in the first frame's plane:
+
+- a **grid**: every combination of nx equally spaced X values and ny equally
+  spaced Y values (a single row when one count is 1) becomes one Hole at the
+  corner with the lowest X and Y and a **Rectangular Pattern** (counts and
+  spacings). A direction along an origin axis is given by the origin plane
+  normal to it (PlaneYZ for X, live on V5), any other by a construction line;
+- a **crown**: three or more positions equally far from a centre at equal
+  angular steps (a full circle or an arc) becomes one Hole at the start of the
+  run and a **Circular Pattern** about the line through the centre, along
+  the holes' axis.
+
+The holes are checked together against build123d's body after the feature,
+the seed reversed once if needed. If CATIA refuses the pattern (V5 refuses a
+circular pattern in a part holding a geometrical set) or the result does not
+match, the seed and the pattern are deleted and each position gets its own
+Hole; the report notes why.
+
+Next: constraints in the sketches (the tree gives no `params` for sketch dimensions yet: a
 contract request).
 
 ## How the build stays faithful

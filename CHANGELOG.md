@@ -27,6 +27,10 @@ All notable changes to this project are documented here.
   Cylinder is a symmetric Pad on its middle plane. Each literal number of the
   script (`params`) becomes a CATIA user parameter, and the values it set are
   driven by formulas (`Hole1_radius*2`); the editability check edits it.
+- **Hole patterns:** holes laid out on a grid or a crown (build123d's
+  `GridLocations`, `PolarLocations`) become one Hole and a Rectangular or
+  Circular Pattern, recognised from the hole frames; one Hole per position
+  when CATIA refuses the pattern or it does not match.
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that
