@@ -23,7 +23,10 @@ All notable changes to this project are documented here.
   against them (the change's volume and centre), flipped once if needed.
   `--style exact` keeps the tool bodies. Holes are Hole features (one per
   position, up to last when through, counterbore and countersink heads), cut
-  as cylinders only when no Hole can match build123d's.
+  as cylinders only when no Hole can match build123d's. A centred Box or
+  Cylinder is a symmetric Pad on its middle plane. Each literal number of the
+  script (`params`) becomes a CATIA user parameter, and the values it set are
+  driven by formulas (`Hole1_radius*2`); the editability check edits it.
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that
