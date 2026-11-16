@@ -54,11 +54,12 @@ class ScriptParameter:
             sign = "+" if self.intercept > 0 else "-"
             term = f"({term}{sign}{_num(abs(self.intercept))}{self.unit})"
         k = self.factor * scale
+        sign, k = ("-", -k) if k < 0 else ("", k)
         if k == 1:
-            return term
+            return f"{sign}{term}"
         if k != 0 and abs(1 / k - round(1 / k)) < 1e-12 and round(1 / k) > 1:
-            return f"{term}/{round(1 / k)}"
-        return f"{term}*{_num(k)}"
+            return f"{sign}{term}/{round(1 / k)}"
+        return f"{sign}{term}*{_num(k)}"
 
 
 def _num(x: float) -> str:

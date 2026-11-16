@@ -372,12 +372,15 @@ class TreeBuilder:
             def make(body):
                 return self._verified_oblique_pad(body, sketch, vector, symmetric, entry)
         else:
-            dist, scale_ = float(feature["distance"]), 1.0
+            dist = float(feature["distance"])
+            # CATIA's lengths are positive, the direction is set apart: the
+            # script's signed number drives the length times its sign.
+            scale_ = 1.0 if dist >= 0 else -1.0
             centred = self._centred_box(feature, sketch, symmetric)
             if centred is not None:
                 # build123d's centred Box or Cylinder: a designer sketches on
                 # the middle plane and pads both ways.
-                sketch, dist, symmetric, scale_ = centred, dist / 2, True, 0.5
+                sketch, dist, symmetric, scale_ = centred, dist / 2, True, scale_ / 2
 
             def make(body):
                 pad = self._verified_pad(body, sketch, dist, symmetric, entry)
@@ -386,11 +389,10 @@ class TreeBuilder:
         operation = feature["operation"]
         if operation in ("join", "cut") and feature.get("direction") is None \
                 and self._human(feature):
-            dist = float(feature["distance"])
 
             def build(body):
                 prism = self._prism_into(body, sketch, dist, symmetric, operation, entry)
-                self.plan.drive(feature, "distance", lambda: prism.FirstLimit.Dimension)
+                self.plan.drive(feature, "distance", lambda: prism.FirstLimit.Dimension, scale_)
                 return prism
 
             self._human_feature(feature, entry, build,
@@ -659,7 +661,7 @@ class TreeBuilder:
         or None."""
         spec = (feature.get("params") or {}).get("distance") or {}
         if self.style != "human" or symmetric or spec.get("base_shift") != 0.5 \
-                or feature["operation"] != "new_body":
+                or feature["operation"] not in ("new_body", "join", "cut"):
             return None
         plane = dict(sketch["plane"])
         normal = unit(tuple(float(c) for c in plane["normal"]))
@@ -1203,6 +1205,9 @@ class TreeBuilder:
         before = sum(self._volume(body) for body in final)
         made_parameters: list[str] = []
         made_formulas: list[str] = []
+        # Each driven value as it was, put back if the parameters are undone
+        # (removing a formula leaves its last value in place).
+        originals: list[tuple[Any, float]] = []
         try:
             parameters, relations = part.Parameters, part.Relations
             for script in self.plan.parameters.values():
@@ -1212,7 +1217,9 @@ class TreeBuilder:
                 _set_prop(parameter, "Comment", f"from {script.source}")
                 for i, driven in enumerate(script.driven, 1):
                     name = f"{script.name}_f{i}"
-                    relations.CreateFormula(name, f"from {script.source}", driven.target(),
+                    target = driven.target()
+                    originals.append((target, float(target.Value)))
+                    relations.CreateFormula(name, f"from {script.source}", target,
                                             script.expression(driven.scale))
                     made_formulas.append(name)
             part.Update()
@@ -1227,6 +1234,9 @@ class TreeBuilder:
             for name in made_parameters:
                 with contextlib.suppress(Exception):
                     part.Parameters.Remove(name)
+            for target, value in originals:
+                with contextlib.suppress(Exception):
+                    target.Value = value
             with contextlib.suppress(Exception):
                 part.Update()
             record.parameters_note = f"no user parameters: {error}"
@@ -1263,7 +1273,9 @@ class TreeBuilder:
             return
         changed = abs(moved - before) > max(1e-3, FEATURE_REL_TOL * before)
         back = abs(restored - before) <= max(1e-3, PART_REL_TOL * before)
-        record.editable = changed and back
+        # Restored but unmoved: a later feature clips the pad (an intersect),
+        # which proves nothing either way.
+        record.editable = True if changed and back else (None if back else False)
         record.editability_note = (
             f"{pad.Name} length {original:g} -> {original + 1:g} -> {original:g} mm: volume "
             f"{before:.1f} -> {moved:.1f} -> {restored:.1f} mm3")

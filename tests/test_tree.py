@@ -1008,3 +1008,70 @@ def test_parameter_expressions_read_as_a_designer_would_write_them():
     assert one.name == "Chamfer_1_length" and [d.target for d in one.driven] == ["L1", "L2"]
     assert spec_for({"params": {"angle": {"arg": "revolution_arc", "computed": "x"}}},
                     "angle") is None
+
+
+def _with_pocket(tree, expected):
+    """The plate with a 10 x 6 pocket cut 3 deep from its top face, the
+    script's amount being -3 (build123d's extrude(amount=-3, SUBTRACT))."""
+    part = tree["parts"][0]
+    rectangle = [(-15, -3), (-5, -3), (-5, 3), (-15, 3)]
+    part["features"][2:2] = [
+        {"type": "sketch", "id": "sketch2", "plane": {"origin": [0, 0, 4], "x_dir": [1, 0, 0],
+                                                      "normal": [0, 0, 1]},
+         "entities": [{"type": "line", "start": list(rectangle[i]),
+                       "end": list(rectangle[(i + 1) % 4]), "id": f"r{i}"} for i in range(4)],
+         "profiles": [{"outer": ["r0", "r1", "r2", "r3"], "inner": []}]},
+        {"type": "extrude", "id": "extrude2", "name": "Extrude2", "sketch": "sketch2",
+         "distance": -3, "operation": "cut", "bodies": ["Body1"],
+         "params": {"distance": {"arg": "amount", "kind": "literal", "value": -3, "factor": 1.0,
+                                 "slope": 1.0, "intercept": 0.0, "file": "model.py",
+                                 "line": 8, "col": 4}}}]
+    (want,) = expected.values()
+    plate, pocket, hole = 60 * 40 * 8, 180.0, math.pi * 9 * 8
+    after_pocket = plate - pocket
+    final = after_pocket - hole
+    want["features"]["extrude2"] = {"Body1": {
+        "volume_mm3": after_pocket, "cog_mm": [10 * pocket / after_pocket, 0.0,
+                                               -2.5 * pocket / after_pocket]}}
+    want["features"]["hole1"]["Body1"] = {"volume_mm3": final, "cog_mm": [
+        (10 * pocket - 15 * hole) / final, 0.0, -2.5 * pocket / final]}
+    want["volume_mm3"] = final
+    return tree, expected
+
+
+def test_a_negative_script_amount_drives_a_positive_pocket_depth(monkeypatch):
+    part = _FakePart(through_depth=8.0)
+    tree, expected = _with_pocket(_script_tree(), _script_expected())
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    (pocket,) = [f for f in part.pads if f.Name.startswith("Poche")]
+    assert pocket.length == 3
+    assert part.Relations.formulas["Extrude2_amount_f1"] == (pocket.FirstLimit.Dimension,
+                                                            "-Extrude2_amount")
+
+
+def test_undone_parameters_put_every_driven_value_back(monkeypatch):
+    part = _FakePart(through_depth=8.0)
+    relations = _FakeRelations()
+    real = relations.CreateFormula
+
+    def create(name, comment, target, expression):
+        target.Value = -99.0  # what a wrong formula would leave behind
+        if name.startswith("Hole1"):
+            raise RuntimeError("La méthode CreateFormula a échoué")
+        return real(name, comment, target, expression)
+
+    relations.CreateFormula = create
+    part.Relations = relations
+    report = _builder(part, monkeypatch).build(_script_tree(), _script_expected(),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    assert part.pads[0].FirstLimit.Dimension.Value == 4  # back to the pad's length
+    assert relations.removed == ["Extrude1_height_f1"]
+
+
+def test_a_signed_scale_reads_as_a_minus_sign():
+    from catia_mcp.tree.parameters import ScriptParameter
+
+    p = ScriptParameter("A", -6, "mm", 1.0, 1.0, 0.0, "x")
+    assert [p.expression(-1), p.expression(-0.5), p.expression(-3)] == ["-A", "-A/2", "-A*3"]

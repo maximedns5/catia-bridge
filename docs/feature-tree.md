@@ -127,11 +127,16 @@ set is driven by a formula written as a designer would:
 | `fillet(..., radius=4)` | `Fillet1_radius` = 4 mm; the fillet's radius |
 | `chamfer(..., length=0.5)` | `Chamfer1_length` = 0.5 mm; both lengths |
 
+A signed script number keeps its sign in the parameter: `extrude(amount=-6)`
+gives `Extrude2_amount` = -6 mm and a Pocket depth `= -Extrude2_amount`, the
+direction being set apart. A centred primitive joined or cut into a body
+(`body + Cylinder(...)`) is drawn on its middle plane too.
+
 Numbers the script does not write (`computed`) get no parameter; they stay
 editable in their feature. After the formulas the part must keep its
 volume; if it does not, or CATIA refuses a parameter or a formula,
-everything made for the parameters is removed and the report's
-`parameters_note` says why. The editability check then edits the first
+everything made for the parameters is removed, every value they drove is
+put back, and the report's `parameters_note` says why. The editability check then edits the first
 pad's parameter, as a designer would.
 
 Next: rectangular and circular patterns for repeated holes, and constraints
