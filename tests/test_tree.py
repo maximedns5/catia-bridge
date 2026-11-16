@@ -1079,7 +1079,6 @@ def test_a_signed_scale_reads_as_a_minus_sign():
 
 def test_the_report_is_editable_unless_a_part_failed_its_edit(monkeypatch):
     """Live sample2: parts editable True, True and two with no pad (None)."""
-    built = _builder(_FakePart(), monkeypatch)
     for flags, want in (([True, None, None, True], True), ([True, False], False),
                         ([None], None)):
         records = iter(flags)
@@ -1087,4 +1086,11 @@ def test_the_report_is_editable_unless_a_part_failed_its_edit(monkeypatch):
                             lambda self, record: setattr(record, "editable", next(records)))
         tree = load("m1_offset_block")
         tree["parts"] = [dict(tree["parts"][0], id=f"/P{i}") for i in range(len(flags))]
-        assert built.build(tree)["editable"] is want
+        part = _FakePart()
+        built = _builder(part, monkeypatch)
+        # Each tree part in a fresh main body, as each gets a new CATIA part.
+        built.documents = SimpleNamespace(
+            _new_part=lambda name, kind: setattr(part, "MainBody", _Body(name)))
+        report = built.build(tree)
+        assert report["success"], report.get("error")
+        assert report["editable"] is want
