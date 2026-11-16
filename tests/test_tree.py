@@ -1126,14 +1126,15 @@ def test_the_report_is_editable_unless_a_part_failed_its_edit(monkeypatch):
                         ([None], None)):
         records = iter(flags)
         monkeypatch.setattr(TreeBuilder, "_check_editability",
-                            lambda self, record: setattr(record, "editable", next(records)))
+                            lambda self, record, records=records:
+                                setattr(record, "editable", next(records)))
         tree = load("m1_offset_block")
         tree["parts"] = [dict(tree["parts"][0], id=f"/P{i}") for i in range(len(flags))]
         part = _FakePart()
         built = _builder(part, monkeypatch)
         # Each tree part in a fresh main body, as each gets a new CATIA part.
         built.documents = SimpleNamespace(
-            _new_part=lambda name, kind: setattr(part, "MainBody", _Body(name)))
+            _new_part=lambda name, kind, part=part: setattr(part, "MainBody", _Body(name)))
         report = built.build(tree)
         assert report["success"], report.get("error")
         assert report["editable"] is want
@@ -1197,8 +1198,8 @@ def test_a_pattern_catia_refuses_falls_back_to_one_hole_per_position(monkeypatch
 
 
 def test_layouts_are_recognised_from_the_hole_frames():
-    from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect, instance_origins
     from catia_mcp.tree.geometry import frame_axes
+    from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect, instance_origins
 
     grid = detect(load("m7_hole_grid")["parts"][0]["features"][2]["frames"])
     assert isinstance(grid, GridPattern) and grid.counts == (4, 3) and grid.seed == 0

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from itertools import pairwise
 
 from catia_mcp.tree.geometry import Vec, add, cross, dot, frame_axes, scale, unit
 
@@ -77,7 +78,7 @@ def _even(levels: list[float]) -> float | None:
     if len(levels) == 1:
         return 0.0
     step = levels[1] - levels[0]
-    if all(abs(b - a - step) <= TOL for a, b in zip(levels, levels[1:], strict=False)):
+    if all(abs(b - a - step) <= TOL for a, b in pairwise(levels)):
         return step
     return None
 
@@ -130,7 +131,7 @@ def _polar(points):
     else:
         start = (max(range(len(gaps)), key=lambda k: gaps[k]) + 1) % len(order)
     run = order[start:] + order[:start]
-    steps = [(angles[b] - angles[a]) % (2 * math.pi) for a, b in zip(run, run[1:], strict=False)]
+    steps = [(angles[b] - angles[a]) % (2 * math.pi) for a, b in pairwise(run)]
     step = steps[0]
     if step < TOL or any(abs(s - step) > TOL for s in steps):
         return None
