@@ -233,6 +233,11 @@ Two things did not hold:
   with orientation 1 then -1. A refused try leaves the part refusing every
   later one, so the order matters.
 
+  With that order, the fifth live run built every loft and taper fixture
+  (`m4_loft_*`, `m5_*taper*`) and the whole second sample file (Housing,
+  Lofted, Pipe, Cup) within the volume and centre-of-gravity checks, each
+  loft on its first try with 3D closing points.
+
 `tests/fixtures/trees/` holds synthetic trees for each path.
 - **Milestone 1** (`m1_*`): an offset plane, a reversed-normal plane, arcs with a negative distance, join, cut and intersect, the three hole kinds, and a tilted plane (the equation-plane path).
 - **Milestone 2** (`m2_*`):

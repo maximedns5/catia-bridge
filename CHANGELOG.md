@@ -158,7 +158,8 @@ All notable changes to this project are documented here.
   Its second run gave the exact loft with vertex coupling and 3D closing
   points, and refused a sketch vertex: the builder now tries 3D points, then
   CATIA's own closing points, with orientation 1 then -1 (2 builds the same
-  loft as 1).
+  loft as 1). Live, every loft and taper fixture and the second sample
+  file then built exactly.
 - `catia_new_part` in auto mode on 3DEXPERIENCE creates a 3D Shape, unless a
   probe verified that this installation may create a 3D Part (on many roles
   a 3D Part opens a blocking "Operation not authorized" dialog).
