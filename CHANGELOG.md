@@ -24,6 +24,12 @@ All notable changes to this project are documented here.
   one job runs at a time and polling goes on during a build. A reference
   relay plays the app's server for trying the chain on one PC
   (`docs/app-link.md`).
+- **Link installer and start at login:** the app serves `install.ps1` with
+  its address and a pairing code filled in, and the user pastes one line in
+  PowerShell. It finds or installs Python, installs the bridge in a private
+  environment, pairs, registers the link in the user's Run key and starts it
+  with no window. `start`, `stop`, `autostart on|off` and `uninstall` do the
+  same by hand; a lock keeps one link running at a time.
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that

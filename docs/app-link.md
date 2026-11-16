@@ -24,6 +24,44 @@ for one account, used by the tests and for trying the chain on one PC.
 
 ## On the PC
 
+### Installing: one line
+
+The app's "Link CATIA" panel makes a pairing code and shows one line to paste
+in PowerShell on the CATIA PC:
+
+```bash
+irm "https://APP/catia-link/install.ps1?code=ABCD2345" | iex
+```
+
+The script (`catia_mcp/link/install.ps1`) needs no administrator rights. It:
+
+1. finds Python 3.10 or later, 64-bit (`py -3`, then `python`), or installs
+   Python 3.12 for this user from python.org;
+2. makes a private environment in `%LOCALAPPDATA%\catia-bridge\venv` and
+   installs the bridge there with pip (stopping an older link first, so
+   running it again upgrades);
+3. pairs this PC with the code;
+4. registers the link to start at every login and starts it now, with no
+   window.
+
+**What the app serves at `GET /catia-link/install.ps1?code=CODE`:** the
+template with three placeholders filled in. `python -m catia_mcp.link
+installer --server URL --code CODE [--package P]` prints it, and
+`catia_mcp.link.installer.render()` does the same from Python:
+
+- `__SERVER__`: the address the bridge keeps (the app's stable front, not a
+  disposable worker);
+- `__CODE__`: the pairing code, checked against the alphabet before it is
+  written in. Serving the script does not consume the code; the bridge's
+  claim does;
+- `__PACKAGE__`: what pip installs. The default is this repository's main
+  branch archive; the app can pin a release instead.
+
+`render` refuses any value that could end the script's quoted strings, and
+the script checks the code and the address again before it runs.
+
+### The commands behind it
+
 ```bash
 python -m catia_mcp.link pair --server https://APP --code CODE
 ```
@@ -35,15 +73,38 @@ python -m catia_mcp.link run
 - `pair` trades the code the app shows for a token and saves both in
   `%APPDATA%\catia-bridge\link.json` (`$CATIA_LINK_HOME` overrides the folder).
   The token is never printed.
-- `run` polls until stopped and logs to `link.log` next to it. Start it at
-  login (a shortcut in the Startup folder, or a scheduled task) and leave it
-  running: it waits for CATIA, it never starts CATIA.
-- `status` shows the link and whether CATIA is ready; `unlink` forgets the
-  token.
+- `run` polls until stopped and logs to `link.log` next to it. It waits for
+  CATIA; it never starts CATIA. Only one `run` takes jobs at a time
+  (`link.lock`): a second one says so and stops.
+- `start` runs it in the background (no window) and `stop` ends it.
+- `autostart on` adds it to the user's Run key
+  (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
+  `CATIA Bridge Link`, `pythonw -m catia_mcp.link run`); `autostart off`
+  removes it.
+- `status` shows the pairing, whether the link runs and starts at login, and
+  whether CATIA is ready. `unlink` forgets the token.
+
+To remove everything, in PowerShell:
+
+```bash
+& "$env:LOCALAPPDATA\catia-bridge\venv\Scripts\python.exe" -m catia_mcp.link uninstall
+```
+
+```bash
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\catia-bridge", "$env:APPDATA\catia-bridge"
+```
 
 ### Trying it without the app
 
-Three terminals on the CATIA PC, CATIA open:
+The reference relay serves the installer too, so the one-liner can be tried
+on the CATIA PC. Start the relay, then paste the line it prints in another
+PowerShell (`--package` installs a branch that is not merged yet):
+
+```bash
+python -m catia_mcp.link relay --package https://github.com/maximedns5/catia-bridge/archive/refs/heads/BRANCH.zip
+```
+
+Or, from a checkout, in three terminals with CATIA open:
 
 ```bash
 python -m catia_mcp.link relay

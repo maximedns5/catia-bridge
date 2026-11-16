@@ -1,9 +1,15 @@
 """The link between the app and CATIA, on the CATIA PC.
 
     python -m catia_mcp.link pair --server URL --code CODE   pair this PC (once)
-    python -m catia_mcp.link run                             wait for jobs (leave it open)
+    python -m catia_mcp.link run                             wait for jobs (in this window)
+    python -m catia_mcp.link start | stop                    the same, in the background
+    python -m catia_mcp.link autostart on | off              start it at every login
     python -m catia_mcp.link status                          the link and CATIA, as seen here
     python -m catia_mcp.link unlink                          forget the token
+    python -m catia_mcp.link uninstall                       stop, no autostart, forget the token
+
+The app installs all of this with one line it shows the user (install.ps1,
+rendered by `python -m catia_mcp.link installer --server URL --code CODE`).
 
 To try the whole chain on one PC without the app, a reference relay plays
 the app's server:
@@ -38,10 +44,11 @@ def _logging(verbose: bool = False) -> None:
     to_file = logging.handlers.RotatingFileHandler(folder / LOG_NAME, maxBytes=1_000_000,
                                                    backupCount=3, encoding="utf-8")
     to_file.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    console = logging.StreamHandler()
-    console.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
     root.addHandler(to_file)
-    root.addHandler(console)
+    if sys.stderr is not None:  # pythonw (the background run) has no console
+        console = logging.StreamHandler()
+        console.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
+        root.addHandler(console)
 
 
 def _pair(args) -> int:
@@ -66,11 +73,18 @@ def _pair(args) -> int:
 def _run(args) -> int:
     from catia_mcp.link.client import DeviceClient, serve
     from catia_mcp.link.jobs import CatiaJobs, JobRunner
+    from catia_mcp.link.service import InstanceLock, running_pid
 
     config = LinkConfig.load()
     if not config.linked:
         print("This PC is not paired yet: python -m catia_mcp.link pair --server URL --code CODE")
         return 2
+    lock = InstanceLock()
+    if not lock.acquire():
+        # Two bridges would take jobs for the same CATIA.
+        print(f"The link already runs (process {running_pid()}): "
+              "python -m catia_mcp.link stop ends it.")
+        return 0
     _logging(args.verbose)
     log = logging.getLogger("catia_mcp.link")
     log.info("Link to %s; log in %s. Ctrl+C stops it.", config.server, home() / LOG_NAME)
@@ -86,16 +100,24 @@ def _run(args) -> int:
     except KeyboardInterrupt:
         stop.set()
         log.info("Stopped.")
+    finally:
+        lock.release()
     return 0
 
 
 def _status(args) -> int:
+    from catia_mcp.link.service import autostart_enabled, running_pid
+
     config = LinkConfig.load()
     print(f"Folder: {home()}")
     if config.linked:
         print(f"Paired with {config.server} (token saved, not shown).")
     else:
         print("Not paired.")
+    pid = running_pid()
+    print(f"Link: running (process {pid})." if pid else "Link: not running.")
+    if sys.platform == "win32":
+        print("Starts at login." if autostart_enabled() else "Does not start at login.")
     from catia_mcp.link.jobs import CatiaJobs
 
     jobs = CatiaJobs(platform=args.platform)
@@ -119,6 +141,74 @@ def _unlink(args) -> int:
     return 0
 
 
+def _start(args) -> int:
+    from catia_mcp.link.service import running_pid, start_background
+
+    if not LinkConfig.load().linked:
+        print("This PC is not paired yet: python -m catia_mcp.link pair --server URL --code CODE")
+        return 2
+    already = running_pid()
+    pid = start_background()
+    if pid is None:
+        print(f"The link did not start: see {home() / LOG_NAME}")
+        return 1
+    print(f"The link {'already runs' if already else 'runs'} in the background (process {pid}).")
+    return 0
+
+
+def _stop(args) -> int:
+    from catia_mcp.link.service import stop_background
+
+    print("Stopped." if stop_background() else "The link was not running.")
+    return 0
+
+
+def _autostart(args) -> int:
+    from catia_mcp.link.service import disable_autostart, enable_autostart
+
+    if sys.platform != "win32":
+        print("Starting at login is set up on Windows only.")
+        return 2
+    if args.state == "on":
+        print(f"Starts at every login: {enable_autostart()}")
+    else:
+        print("Removed from the login start." if disable_autostart()
+              else "It was not set to start at login.")
+    return 0
+
+
+def _uninstall(args) -> int:
+    from catia_mcp.link.service import disable_autostart, stop_background
+
+    stop_background()
+    if sys.platform == "win32":
+        disable_autostart()
+    config = LinkConfig.load()
+    if config.linked:
+        LinkConfig(server=config.server, token="").save()
+    print("The link is stopped, no longer starts at login, and this PC's token is forgotten.\n"
+          "Unlink it in the app too. To remove the bridge itself, delete its environment "
+          "(the installer puts it in %LOCALAPPDATA%\\catia-bridge).")
+    return 0
+
+
+def _installer(args) -> int:
+    from catia_mcp.link.installer import DEFAULT_PACKAGE, render
+
+    try:
+        script = render(args.server, args.code, args.package or DEFAULT_PACKAGE)
+    except ValueError as error:
+        print(error)
+        return 2
+    if args.out:
+        with open(args.out, "w", encoding="utf-8-sig", newline="\r\n") as handle:
+            handle.write(script)
+        print(f"Written: {args.out}")
+    else:
+        sys.stdout.write(script)
+    return 0
+
+
 def _relay(args) -> int:
     from catia_mcp.link.client import _loopback
     from catia_mcp.link.relay import make_server
@@ -127,14 +217,16 @@ def _relay(args) -> int:
         print("The reference relay has no app-side authentication: it only listens on this PC.")
         return 2
     _logging(args.verbose)
-    server = make_server(args.host, args.port)
+    server = make_server(args.host, args.port, package=args.package)
     code = server.RequestHandlerClass.relay.pair()["code"]
     url = f"http://{args.host}:{args.port}"
-    print(f"Reference relay on {url} (Ctrl+C stops it).\n"
-          f"Pair the bridge (valid 10 minutes):\n"
+    print(f"Reference relay on {url} (Ctrl+C stops it). Pairing code {code}, valid 10 minutes.\n"
+          f"Either install the link as a user would (PowerShell):\n"
+          f'  irm "{url}/catia-link/install.ps1?code={code}" | iex\n'
+          f"or pair this checkout and run it in another terminal:\n"
           f"  python -m catia_mcp.link pair --server {url} --code {code}\n"
-          f"then run it in another terminal:  python -m catia_mcp.link run\n"
-          f"and send a tree from a third one:  python -m catia_mcp.link send TREE.json")
+          f"  python -m catia_mcp.link run\n"
+          f"then send a tree:  python -m catia_mcp.link send TREE.json")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -216,7 +308,19 @@ def main(argv: list[str] | None = None) -> int:
     relay = sub.add_parser("relay", help="reference relay playing the app's server")
     relay.add_argument("--host", default="127.0.0.1")
     relay.add_argument("--port", type=int, default=8770)
+    relay.add_argument("--package", help="what the served installer installs "
+                       "(default: the bridge's main branch archive)")
     relay.add_argument("-v", "--verbose", action="store_true")
+    sub.add_parser("start", help="run the link in the background")
+    sub.add_parser("stop", help="stop the background link")
+    autostart = sub.add_parser("autostart", help="start the link at every login (Windows)")
+    autostart.add_argument("state", choices=["on", "off"])
+    sub.add_parser("uninstall", help="stop, no autostart, forget the token")
+    installer = sub.add_parser("installer", help="the install.ps1 the app serves, filled in")
+    installer.add_argument("--server", required=True)
+    installer.add_argument("--code", required=True)
+    installer.add_argument("--package", help="what pip installs (default: the main branch)")
+    installer.add_argument("--out", help="write it to this file instead of printing it")
     send = sub.add_parser("send", help="send a job through the reference relay, as the app would")
     send.add_argument("tree", nargs="?", help="feature tree JSON (version 1)")
     send.add_argument("--ping", action="store_true", help="only ask whether CATIA is ready")
@@ -229,7 +333,8 @@ def main(argv: list[str] | None = None) -> int:
     send.add_argument("--report", default="link_answer.json")
     args = parser.parse_args(argv)
     return {"pair": _pair, "run": _run, "status": _status, "unlink": _unlink,
-            "relay": _relay, "send": _send}[args.command](args)
+            "start": _start, "stop": _stop, "autostart": _autostart, "uninstall": _uninstall,
+            "installer": _installer, "relay": _relay, "send": _send}[args.command](args)
 
 
 if __name__ == "__main__":

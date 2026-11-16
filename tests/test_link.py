@@ -296,3 +296,135 @@ def test_the_command_line_sends_as_the_app_would_and_pairs(link, tmp_path, monke
     assert LinkConfig.load().server == link.url
     assert LinkConfig.load().token != link.client.token
     assert main(["unlink"]) == 0 and not LinkConfig.load().linked
+
+
+# ── Installer and background run ──
+
+
+def test_the_installer_is_filled_in_only_with_checked_values():
+    from catia_mcp.link.installer import render
+
+    script = render("https://app.example.com/", "abcd2345")
+    assert "$Server = 'https://app.example.com'" in script
+    assert "$Code = 'ABCD2345'" in script
+    assert "'__" not in script  # every placeholder filled in
+    package = "https://github.com/maximedns5/catia-bridge/archive/refs/heads/feat/x.zip"
+    assert f"$Package = '{package}'" in render("https://a.example.com", "ABCD2345", package)
+    assert "$Package = 'catia-v5-mcp-server==0.3.0'" in render(
+        "https://a.example.com", "ABCD2345", "catia-v5-mcp-server==0.3.0")
+    for server, code, package in (
+            ("https://a.example.com", "ABCD234", None),            # 7 characters
+            ("https://a.example.com", "ABCD2340", None),           # 0 is not in the alphabet
+            ("https://a.example.com", "ABCD'; x", None),
+            ("http://a.example.com", "ABCD2345", None),            # plain HTTP off this PC
+            ("https://a.example.com/'+x+'", "ABCD2345", None),
+            ("https://a.example.com", "ABCD2345", "https://x/'; rm"),
+            ("https://a.example.com", "ABCD2345", "-e ."),
+    ):
+        with pytest.raises(ValueError):
+            render(server, code, *([package] if package else []))
+
+
+def test_the_relay_serves_the_installer_with_its_own_address(link):
+    import urllib.request
+
+    with urllib.request.urlopen(f"{link.url}/catia-link/install.ps1?code=ABCD2345") as answer:
+        script = answer.read().decode("utf-8")
+    assert f"$Server = '{link.url}'" in script and "$Code = 'ABCD2345'" in script
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(f"{link.url}/catia-link/install.ps1?code=x'")
+    assert refused.value.code == 400
+
+
+def test_only_one_link_runs_at_a_time(tmp_path, monkeypatch):
+    from catia_mcp.link.__main__ import main
+    from catia_mcp.link.service import InstanceLock, running_pid
+
+    assert running_pid(tmp_path) is None
+    first = InstanceLock(tmp_path)
+    assert first.acquire()
+    try:
+        assert not InstanceLock(tmp_path).acquire()
+        assert running_pid(tmp_path) == os.getpid()
+        monkeypatch.setenv("CATIA_LINK_HOME", str(tmp_path))
+        LinkConfig("https://app.example.com", "cl1.t").save(tmp_path)
+        monkeypatch.setattr("catia_mcp.link.client.serve",
+                            lambda *a, **k: pytest.fail("a second link polled"))
+        assert main(["run"]) == 0
+    finally:
+        first.release()
+    assert running_pid(tmp_path) is None and not (tmp_path / "link.pid").exists()
+
+
+class _Registry:
+    """winreg's calls the autostart uses, on a dict."""
+
+    HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_SZ = "HKCU", 1, 2, 1
+
+    def __init__(self):
+        self.values = {}
+
+    def _key(self, root, path, *rest):
+        class Key:
+            def __enter__(self):
+                return (root, path)
+
+            def __exit__(self, *exc):
+                return False
+
+        return Key()
+
+    OpenKey = CreateKeyEx = _key
+
+    def QueryValueEx(self, key, name):
+        if (*key, name) not in self.values:
+            raise FileNotFoundError(name)
+        return self.values[(*key, name)], self.REG_SZ
+
+    def SetValueEx(self, key, name, reserved, kind, value):
+        self.values[(*key, name)] = value
+
+    def DeleteValue(self, key, name):
+        if self.values.pop((*key, name), None) is None:
+            raise FileNotFoundError(name)
+
+
+def test_autostart_registers_the_windowless_run_for_this_user(monkeypatch, tmp_path):
+    from catia_mcp.link import service
+
+    exe = tmp_path / "Scripts dir" / "python.exe"
+    exe.parent.mkdir()
+    exe.write_text("")
+    (exe.parent / "pythonw.exe").write_text("")
+    monkeypatch.setattr(service.sys, "executable", str(exe))
+    monkeypatch.setattr(service.sys, "platform", "win32")
+    registry = _Registry()
+    assert service.autostart_enabled(registry) is None
+    command = service.enable_autostart(registry)
+    assert command == f'"{exe.parent / "pythonw.exe"}" -m catia_mcp.link run'
+    assert registry.values == {("HKCU", service.RUN_KEY, "CATIA Bridge Link"): command}
+    assert service.autostart_enabled(registry) == command
+    assert service.disable_autostart(registry) is True
+    assert service.disable_autostart(registry) is False and not registry.values
+
+
+def test_start_launches_the_run_detached_and_waits_for_its_lock(monkeypatch, tmp_path):
+    from catia_mcp.link import service
+
+    monkeypatch.setenv("CATIA_LINK_HOME", str(tmp_path))
+    launched, held = [], service.InstanceLock(tmp_path)
+
+    def popen(command, **options):
+        launched.append((command, options))
+        held.acquire()  # the started process takes the lock
+
+    try:
+        assert service.start_background(wait_s=2, popen=popen) == os.getpid()
+        ((command, options),) = launched
+        assert command[1:] == ["-m", "catia_mcp.link", "run"]
+        assert options["stdin"] == options["stdout"] == service.subprocess.DEVNULL
+        # Already running: nothing more is launched.
+        assert service.start_background(wait_s=2, popen=popen) == os.getpid()
+        assert len(launched) == 1
+    finally:
+        held.release()

@@ -13,6 +13,9 @@ App side (what the app's own pages call; loopback only here):
 Device side (what the bridge calls; see client.py):
     POST /api/catia-link/device/claim, GET .../next, POST .../result
 
+Installer (what the user's PowerShell fetches; see installer.py):
+    GET  /catia-link/install.ps1?code=CODE
+
 Tokens are stored as SHA-256 digests only. Pairing codes are single use and
 last 10 minutes. Without a valid token every device route answers 404, like
 a route that does not exist.
@@ -29,11 +32,13 @@ import queue
 import secrets
 import threading
 import time
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from catia_mcp.link import DEVICE_PATH
+from catia_mcp.link.installer import DEFAULT_PACKAGE, render
 
 logger = logging.getLogger("catia_mcp.link.relay")
 
@@ -148,6 +153,7 @@ class Relay:
 
 class _Handler(BaseHTTPRequestHandler):
     relay: Relay
+    package: str = DEFAULT_PACKAGE
     server_version = "catia-link-relay"
 
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -177,13 +183,32 @@ class _Handler(BaseHTTPRequestHandler):
         return auth[7:].strip() if auth.startswith("Bearer ") else None
 
     def do_GET(self) -> None:
-        if self.path == APP_PATH:
+        url = urllib.parse.urlsplit(self.path)
+        if url.path == "/catia-link/install.ps1":
+            self._installer(urllib.parse.parse_qs(url.query).get("code", [""])[0])
+        elif self.path == APP_PATH:
             self._send(200, self.relay.status())
         elif self.path == f"{DEVICE_PATH}/next" and self.relay.known(self._token()):
             job = self.relay.next()
             self._send(200, job) if job is not None else self._send(204)
         else:
             self._send(404, {"error": "not found"})
+
+    def _installer(self, code: str) -> None:
+        """The installer, filled in with this relay's address. The code is
+        checked (by render) but not consumed: the bridge claims it."""
+        host, port = self.server.server_address[:2]
+        try:
+            script = render(f"http://{host}:{port}", code, self.package)
+        except ValueError as error:
+            self._send(400, {"error": str(error)})
+            return
+        data = script.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_POST(self) -> None:
         try:
@@ -224,11 +249,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, answer)
 
 
-def make_server(host: str = "127.0.0.1", port: int = 8770,
-                relay: Relay | None = None) -> ThreadingHTTPServer:
+def make_server(host: str = "127.0.0.1", port: int = 8770, relay: Relay | None = None,
+                package: str | None = None) -> ThreadingHTTPServer:
     """The relay's HTTP server (not started). The app-side routes have no
-    authentication here: keep it on the loopback address."""
-    handler = type("Handler", (_Handler,), {"relay": relay or Relay()})
+    authentication here: keep it on the loopback address. `package` is what
+    the served installer installs."""
+    handler = type("Handler", (_Handler,), {"relay": relay or Relay(),
+                                            "package": package or DEFAULT_PACKAGE})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server

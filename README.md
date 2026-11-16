@@ -284,11 +284,11 @@ the open internet. Full setup and client configurations:
 ### Remote use: a hosted app sends models to CATIA
 
 A web app in the cloud cannot reach the user's PC, so the bridge calls out to
-it. Pair once with the code the app shows, then leave the link running:
+it. The app shows one line to paste in PowerShell; it installs the bridge,
+pairs the PC and starts the link at every login:
 
-```bat
-python -m catia_mcp.link pair --server https://APP --code CODE
-python -m catia_mcp.link run
+```powershell
+irm "https://APP/catia-link/install.ps1?code=CODE" | iex
 ```
 
 The bridge long-polls the app for jobs, builds each feature tree in CATIA and
