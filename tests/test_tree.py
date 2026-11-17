@@ -225,6 +225,8 @@ class _FakePart:
         # reversed; "up to last" goes `through_depth` deep.
         self.holes_reversed, self.through_depth = holes_reversed, through_depth
         self.patterns_refused = set()
+        # Live on R428 the origin planes pointed a rectangular pattern backwards.
+        self.pattern_dirs_reversed = False
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.lofts_reversed, self.deleted = lofts_reversed, []
         self.MainBody = _Body("Corps principal")
@@ -276,7 +278,8 @@ class _FakePart:
             dirs = []
             for ref, rev in zip(pattern.refs, pattern.reversed, strict=True):
                 direction = ref[2] if ref[0] == "axis" else cross(ref[1], ref[2])
-                dirs.append(tuple(-c if rev else c for c in direction))
+                flip = rev != self.pattern_dirs_reversed
+                dirs.append(tuple(-c if flip else c for c in direction))
             (n1, n2), (s1, s2) = pattern.counts, pattern.steps
             offsets = [tuple(i * s1 * dirs[0][k] + j * s2 * dirs[1][k] for k in range(3))
                        for i in range(n1) for j in range(n2) if (i, j) != (0, 0)]
@@ -1215,3 +1218,19 @@ def test_layouts_are_recognised_from_the_hole_frames():
     assert detect(scattered) is None
     tilted = row[:2] + [[[1, 0, 0, 14], [0, 0, -1, 5], [0, 1, 0, 0]]]
     assert detect(tilted) is None  # drilled another way
+
+
+def test_a_pattern_pointing_backwards_is_rebuilt_the_other_way_round(monkeypatch):
+    """Live on R428: the rectangular pattern from the origin planes ran both
+    ways reversed, its copies off the plate."""
+    part = _FakePart(through_depth=10.0)
+    part.pattern_dirs_reversed = True
+    tree, expected = _pattern_expected("m7_hole_grid", GRID_COG_Z)
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    patterns = [f for f in part.pads if getattr(f, "kind", None) == "rectpattern"]
+    assert len(patterns) == 2 and part.deleted == [patterns[0]]
+    assert patterns[1].reversed == (True, True)
+    entry = report["parts_detail"][0]["features"][2]
+    assert entry["catia"] == [patterns[1].seed.Name, patterns[1].Name]
+    assert entry["notes"][0].endswith("(reversed True, True) to match the tree")

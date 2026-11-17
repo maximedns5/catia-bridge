@@ -154,7 +154,15 @@ layout is recognised from the frames' origins, in the first frame's plane:
   the holes' axis.
 
 The holes are checked together against build123d's body after the feature,
-the seed reversed once if needed. If CATIA refuses the pattern (V5 refuses a
+the seed reversed once if needed. Which way an origin plane or an axis
+points a pattern is not documented, so a pattern that does not match is
+deleted and rebuilt the other way round (both directions, then each one; the
+axis reversed for a crown) before giving up.
+
+Live on R428 (French, 3D Shape): a circular pattern of a sketch-placed Hole
+matched build123d on its first try (`m7_hole_circle`). The rectangular one
+from PlaneYZ / PlaneZX ran both directions reversed, its copies off the
+plate, and the build fell back to 12 Holes; it is now rebuilt reversed. If CATIA refuses the pattern (V5 refuses a
 circular pattern in a part holding a geometrical set) or the result does not
 match, the seed and the pattern are deleted and each position gets its own
 Hole; the report notes why.

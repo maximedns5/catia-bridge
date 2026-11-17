@@ -739,6 +739,7 @@ class TreeBuilder:
         holes = made if made is not None else []
         spec = hole_spec(feature)
         frames = feature["frames"] if pattern is None else [feature["frames"][pattern.seed]]
+        before = (self._volume(body), self._cog(body)) if pattern is not None else None
         for matrix in frames:
             origin, x_dir, z_dir = frame_axes(matrix)
             point = {"plane": {"origin": list(origin), "x_dir": list(x_dir),
@@ -760,28 +761,53 @@ class TreeBuilder:
             part.UpdateObject(hole)
             holes.append(hole)
         if pattern is not None:
-            holes.append(self._pattern_of(body, holes[0], pattern))
-            entry["catia"].append(str(holes[-1].Name))
+            self._pattern_of(body, holes[0], pattern, feature["bodies"][0], before, holes, entry)
         return holes
 
-    def _pattern_of(self, body: Any, seed: Any, pattern: GridPattern | PolarPattern) -> Any:
-        """A rectangular or circular pattern of `seed`, the seed first."""
+    def _pattern_of(self, body: Any, seed: Any, pattern: GridPattern | PolarPattern,
+                    target: str, before: tuple[float, Vec], made: list[Any],
+                    entry: dict[str, Any]) -> None:
+        """A rectangular or circular pattern of `seed`, the seed first. Which
+        way an origin plane or an axis points a pattern is not documented (live
+        on R428 a rectangular pattern from PlaneYZ / PlaneZX ran both ways
+        reversed), so each way round is tried until the body matches
+        build123d's; the last one is kept for the caller to judge."""
         part = self.part
         factory = part.ShapeFactory
-        part.InWorkObject = body
         if isinstance(pattern, GridPattern):
             (n1, n2), (s1, s2) = pattern.counts, pattern.steps
             (ref1, rev1), (ref2, rev2) = (self._direction_reference(d) for d in pattern.directions)
-            # A step of 0 (a single row) is refused by CATIA: 1 mm, unused.
-            made = factory.AddNewRectPattern(seed, n1, n2, s1 or 1.0, s2 or 1.0, 1, 1, ref1, ref2,
-                                             rev1, rev2, 0.0)
+            ways = []
+            for flip1, flip2 in ((False, False), (True, True), (True, False), (False, True)):
+                way = (rev1 != flip1 if n1 > 1 else rev1, rev2 != flip2 if n2 > 1 else rev2)
+                if way not in ways:
+                    ways.append(way)
+
+            def build(way):
+                # A step of 0 (a single row) is refused by CATIA: 1 mm, unused.
+                return factory.AddNewRectPattern(seed, n1, n2, s1 or 1.0, s2 or 1.0, 1, 1,
+                                                 ref1, ref2, way[0], way[1], 0.0)
         else:
             axis = self._line_reference(pattern.centre, pattern.axis)
-            centre = part.CreateReferenceFromName("")  # from the axis (live on 3DX)
-            made = factory.AddNewCircPattern(seed, 1, pattern.count, 0.0, pattern.step_deg, 1, 1,
-                                             centre, axis, False, 0.0, True)
-        part.UpdateObject(made)
-        return made
+            ways = [(False,), (True,)]
+
+            def build(way):
+                centre = part.CreateReferenceFromName("")  # from the axis (live on R428)
+                return factory.AddNewCircPattern(seed, 1, pattern.count, 0.0, pattern.step_deg,
+                                                 1, 1, centre, axis, way[0], 0.0, True)
+        for n, way in enumerate(ways):
+            part.InWorkObject = body
+            result = build(way)
+            made.append(result)
+            part.UpdateObject(result)
+            if self._snapshot_error(target, before) is None or n == len(ways) - 1:
+                entry["catia"].append(str(result.Name))
+                if n:
+                    entry.setdefault("notes", []).append(
+                        f"{result.Name}: built the other way round "
+                        f"(reversed {', '.join(str(w) for w in way)}) to match the tree")
+                return
+            self._delete(made.pop())
 
     def _direction_reference(self, direction: Vec) -> tuple[Any, bool]:
         """A pattern direction: the origin plane normal to it when it is an
