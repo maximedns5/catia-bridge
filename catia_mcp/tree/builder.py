@@ -206,6 +206,9 @@ class PartRecord:
     # The first pad's sketch edited by its dimension (None: not tried).
     sketch_editable: bool | None = None
     sketch_edit_note: str = ""
+    # Rebuilt inside an imported product's part: the imported solid's volume.
+    imported_volume_mm3: float | None = None
+    import_note: str = ""
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -241,6 +244,10 @@ class TreeBuilder:
         self.log = log
         self.dressups = DressUps(self, ownership)
         self.part_documents: dict[str, Any] = {}
+        # Part id -> an existing Part to build in (an imported product's,
+        # catia_mcp/tree/adopt.py) instead of a new part document.
+        self.targets: dict[str, Any] = {}
+        self.adopting = False
         self.cog_checked = False
 
     # ── Entry point ──
@@ -268,6 +275,8 @@ class TreeBuilder:
                         self._check_part_cog(part, expected[part["id"]]["cog_mm"])
                 if check_editability:
                     self._check_editability(record)
+                if self.adopting:
+                    self._replace_import(part, record)
             report["success"] = True
             dead = any(r.dead_bodies for r in report["parts_detail"])
             report["native_history"] = "partial" if dead else True
@@ -303,17 +312,26 @@ class TreeBuilder:
         self.first_sketch_dimension = None
         self.sketch_edit_body = None
         self.last_dimensions = []
-        self.log(f"part {part['id']}: creating")
-        if self.conn.is_3dx:
-            self.documents._new_part(record.name, self.plm_type)
+        self.adopting = part["id"] in self.targets
+        if self.adopting:
+            # Inside an imported part: its main body holds the imported solid,
+            # replaced by the native one once it is built and checked.
+            self.log(f"part {part['id']}: rebuilding inside the imported part")
+            self.part = self.targets[part["id"]]
+            self.imported_body = self.part.MainBody
+            record.imported_volume_mm3 = round(self._volume(self.imported_body), 4)
         else:
-            self.documents._new_part(record.name, "auto")
-        self.part = self.conn.get_active_part()
+            self.log(f"part {part['id']}: creating")
+            if self.conn.is_3dx:
+                self.documents._new_part(record.name, self.plm_type)
+            else:
+                self.documents._new_part(record.name, "auto")
+            self.part = self.conn.get_active_part()
         record.catia_name = str(self.part.Name)
         if not self.conn.is_3dx:  # the assembler places V5 part documents
             with contextlib.suppress(Exception):
                 self.part_documents[part["id"]] = self.part.Parent
-        self.main_body_used = False
+        self.main_body_used = self.adopting  # the main body holds the import
         self.bodies: dict[str, Any] = {}
         self.sketches: dict[str, dict[str, Any]] = {}
         self.first_pad: tuple[Any, Any] | None = None
@@ -632,6 +650,36 @@ class TreeBuilder:
         tool = self._new_body(use_main=False)
         make(tool)
         self._combine(self.bodies[target], tool, feature["operation"], entry)
+
+    def _replace_import(self, part: dict[str, Any], record: PartRecord) -> None:
+        """The native body becomes the part's main body and the imported
+        solid goes. Only once the native part has passed every check; if
+        CATIA refuses, the imported body is hidden instead, and noted."""
+        names = part.get("bodies") or list(self.bodies)
+        native = self.bodies[names[0]]
+        old = self.imported_body
+        old_name = str(old.Name)
+        try:
+            self.part.MainBody = native
+            selection = self.conn.hso
+            selection.Clear()
+            selection.Add(old)
+            selection.Delete()
+            selection.Clear()
+            self.part.Update()
+            with contextlib.suppress(Exception):
+                native.Name = old_name
+            record.import_note = (f"the imported solid ({record.imported_volume_mm3:g} mm3) was "
+                                  f"replaced by the native body")
+        except Exception as error:  # the native part stays; the import is hidden
+            with contextlib.suppress(Exception):
+                selection = self.conn.hso
+                selection.Clear()
+                selection.Add(old)
+                selection.VisProperties.SetShow(1)
+                selection.Clear()
+            record.import_note = (f"the imported solid could not be removed ({error}); it is "
+                                  f"kept hidden in '{old_name}'")
 
     # ── Human style ──
 
@@ -1438,6 +1486,8 @@ class TreeBuilder:
     # ── Measures and checks ──
 
     def _ensure_home(self) -> None:
+        if self.adopting:
+            return  # built from the product's window, measured there (live on R428)
         if not _same(self.conn.get_active_part(), self.part):
             raise BuildFailed("the active CATIA window changed during the build: keep the "
                               "new part's window active until the build ends")

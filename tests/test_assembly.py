@@ -237,3 +237,67 @@ def test_sub_assemblies_are_product_components_placed_in_their_parent():
     assert [p.Name for p in fixing.Products.items] == ["Bolt.1", "Bolt.2"]
     assert report["nodes"] == [{"id": "/Bracket/Fixing", "catia_name": "Fixing",
                                 "position_ok": True}]
+
+
+# ── 3DEXPERIENCE: adopting the product imported from the STEP file ──
+
+
+def _leaves(plan):
+    """The imported product's leaf occurrences as R428 gave them."""
+    references = {"/Bracket/Plate": "prd-1", "/Bracket/Bolt": "prd-2"}
+    return [{"path": f"/{i + 1}", "title": placed.name, "reference_id":
+             references[placed.prototype], "reference": references[placed.prototype],
+             "position": catia_components(placed.local)} for i, placed in
+            enumerate(plan.instances)]
+
+
+def test_the_imported_product_is_matched_instance_by_instance():
+    from catia_mcp.tree import adopt
+
+    plan, _ = plan_assembly(_tree(), _structure())
+    references, rows, problems = adopt.match(plan, _leaves(plan))
+    assert problems == [] and references == {"/Bracket/Plate": "prd-1", "/Bracket/Bolt": "prd-2"}
+    assert [(r["id"], r["catia"], r["position_ok"]) for r in rows] == [
+        ("/Bracket/Plate", "/1", True), ("/Bracket/Bolt", "/2", True),
+        ("/Bracket/Bolt#2", "/3", True)]
+
+
+def test_an_imported_product_that_differs_is_refused():
+    from catia_mcp.tree import adopt
+
+    plan, _ = plan_assembly(_tree(), _structure())
+    leaves = _leaves(plan)
+    leaves[0]["title"] = "Washer"
+    leaves[1]["position"][9] += 1.0
+    leaves[2]["reference_id"] = "prd-3"
+    _, _, problems = adopt.match(plan, leaves)
+    assert problems == [
+        "/Bracket/Plate: the product's occurrence /1 is 'Washer', not 'Plate'",
+        "/Bracket/Bolt: /2 is not where the STEP file puts it",
+        "/Bracket/Bolt#2: /3 is a different part from the other instances of /Bracket/Bolt"]
+    _, _, problems = adopt.match(plan, leaves[:2])
+    assert problems[0].startswith("the active product has 2 part occurrence(s), the model 3")
+
+
+def test_a_part_is_rebuilt_inside_the_imported_one_and_replaces_its_solid(monkeypatch):
+    from tests.test_tree import _builder, _FakePart, _mass
+
+    part = _FakePart()
+    imported = part.MainBody
+    imported.solids = [(60 * 40 * 8, (0.0, 0.0, 0.0))]
+    built = _builder(part, monkeypatch)
+    deleted = []
+    built.conn.hso = SimpleNamespace(Clear=lambda: None, Add=deleted.append,
+                                     Delete=lambda: None)
+    plan, _ = plan_assembly(_tree(), _structure())
+    plate_tree = {"version": 1, "parts": [plan.tree["parts"][0]]}
+    built.targets = {"/Bracket/Plate": part}
+    report = built.build(plate_tree, {"/Bracket/Plate": {"volume_mm3": 19200.0}},
+                         check_editability=False)
+    assert report["success"], report.get("error")
+    detail = report["parts_detail"][0]
+    assert detail["imported_volume_mm3"] == 19200.0
+    assert part.MainBody is not imported and deleted == [imported]
+    assert _mass(part.MainBody.solids)[0] == pytest.approx(19200.0)
+    assert part.MainBody.Name == imported.Name  # the native body takes the main body's name
+    assert detail["import_note"].startswith("the imported solid (19200 mm3) was replaced")

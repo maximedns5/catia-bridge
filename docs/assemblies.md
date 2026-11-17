@@ -52,9 +52,9 @@ where the tree puts it: a product grouping the parts, without reuse.
 ## 3DEXPERIENCE
 
 A Physical Product created by script needs licences (E70, VMX) that student
-and many design roles lack: on R428 the student role refused a scripted 3D
-Part. So on 3DEXPERIENCE `--assembly product` builds every part in its own
-frame and stops there, saying so. `scripts/probe_assembly.py` records what a
+and many design roles lack. So on 3DEXPERIENCE `--assembly product` builds
+every part in its own frame and stops there, saying so; `--assembly adopt`
+(below) works inside the product imported from the STEP file instead. `scripts/probe_assembly.py` records what a
 session allows:
 
 - the licences, and with `--create` whether `PLMCreate "VPMReference"` works;
@@ -81,11 +81,35 @@ session allows:
 - An occurrence leads to its Part: `InstanceOccurrenceOf.ReferenceInstanceOf
   .RepInstances.Item(1).ReferenceInstanceOf.GetItem("Part")`.
 
+- The two bolts' occurrences share one reference (`PLM_ExternalID`): a
+  shape placed twice is imported as one part.
+- Inside the plate's imported part, from the product's window, a new body
+  with a pad was built, measured (141.3717 mm3, its centre of gravity in the
+  part's own frame), searched (3 faces) and deleted (`--build-inside`).
+
+### `--assembly adopt`
+
 So on 3DEXPERIENCE the product comes from the imported STEP, and the bridge
-can place, check and reach every instance's part in it. Next: whether native
-features can be built and measured inside an imported part from the
-product's window (`--build-inside`), and whether the two bolts share one
-part.
+rebuilds every part inside it:
+
+```bash
+python -m catia_mcp.tree build MODEL.tree.json --assembly adopt --step MODEL.step
+```
+
+1. The user imports `MODEL.step` and keeps the product's window active.
+2. The product's leaf occurrences are matched to the plan's instances, in
+   order (`catia_mcp/tree/adopt.py`): the same name, the same position as
+   the STEP's (to 1e-4), and one reference for the instances of one part.
+   Any difference stops before anything is built.
+3. Each part is reached from its occurrence and rebuilt once, in its own
+   frame, in a new body of the imported part, with every check of the
+   usual build (human style, parameters, constraints, editability).
+4. The native body becomes the part's main body, takes its name, and the
+   imported solid is deleted; if CATIA refuses, the import is hidden and the
+   report's `import_note` says so.
+
+The report's `assembly` lists every instance with its occurrence and
+`position_ok`; each part records `imported_volume_mm3`.
 
 ## What the app could send
 

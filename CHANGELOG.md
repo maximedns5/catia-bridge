@@ -22,8 +22,11 @@ All notable changes to this project are documented here.
   its STEP instance, each part is built once in its own frame, and on CATIA
   V5 a product places every instance (a part used twice is one CATPart
   placed twice), each position read back. On 3DEXPERIENCE the parts are
-  built in their own frames; `scripts/probe_assembly.py` probes what a
-  session allows for products.
+  built in their own frames; with `--assembly adopt` the model's STEP,
+  imported by hand, is the product: it is checked against the model
+  (names, positions, shared parts) and each part is rebuilt inside it with
+  native features, replacing the imported solid. `scripts/probe_assembly.py`
+  probes what a session allows for products.
 - **Human-style tree** (`--style human`, the default): a join or a cut goes
   straight into its body as a Pad, Pocket, Shaft or Groove, instead of a tool
   body and a boolean. The build123d reference now records every body's volume
