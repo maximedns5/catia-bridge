@@ -66,6 +66,27 @@ session allows:
 - whether an occurrence leads to its Part (to build native features inside
   an imported part later).
 
+### Live on R428 (French, student role)
+
+- A scripted Physical Product is refused: `PLMCreate "VPMReference"` opens
+  "Gestion des licences: Opération non autorisée" (E70 and VMX not
+  authorized, PDG authorized).
+- The model's STEP imported by hand gives a Physical Product with one
+  occurrence per instance (VPMOccurrence → VPMInstance → VPMReference), each
+  titled with the part's name, and **every position equals the STEP's**
+  (the turned bolt included), in the same component order as
+  `catia_components`.
+- `Position.SetComponents` moves an instance: 10 mm along X, read back, and
+  back exactly.
+- An occurrence leads to its Part: `InstanceOccurrenceOf.ReferenceInstanceOf
+  .RepInstances.Item(1).ReferenceInstanceOf.GetItem("Part")`.
+
+So on 3DEXPERIENCE the product comes from the imported STEP, and the bridge
+can place, check and reach every instance's part in it. Next: whether native
+features can be built and measured inside an imported part from the
+product's window (`--build-inside`), and whether the two bolts share one
+part.
+
 ## What the app could send
 
 The STEP of the same compile is enough today. A tree that said it itself

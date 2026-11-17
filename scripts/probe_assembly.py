@@ -17,7 +17,13 @@ probe records what this session allows, without saving anything:
 5. with --move: one instance moved 10 mm along X through
    Position.SetComponents, read back, and moved back;
 6. for the first occurrence: which members reach its part (for building
-   native features inside an imported part later).
+   native features inside an imported part later);
+7. whether occurrences of one part share one reference (a bolt placed twice
+   should be one part);
+8. with --build-inside: in the first occurrence's part, from the product's
+   window, a new body with a 5 mm pad of a 3 mm circle: is it built, can it
+   be measured (volume, centre of gravity) and searched (faces) there, and
+   is it removed again.
 
 Usage (Windows, CATIA started and logged in; for 3 to 6, a product open in
 the active window, for example the model's STEP imported with Ajouter >
@@ -94,6 +100,8 @@ def occurrences(conn: Any) -> list[dict[str, Any]]:
             if reference is not None:
                 row["reference"] = type_name(reference)
                 row["title"] = plm.attribute(reference, "V_Name")
+                row["reference_id"] = plm.attribute(reference, "PLM_ExternalID")
+                row["reference_physical_id"] = plm.attribute(reference, "physicalid")
             holder = instance if instance is not None else child
             row["position"] = _safe(lambda h=holder: [round(float(v), 6) for v in
                                     call_fill_array(conn.app, h.Position, "GetComponents", 12)])
@@ -177,6 +185,67 @@ def reach_part(conn: Any) -> dict[str, Any]:
     return record
 
 
+def first_part(conn: Any) -> Any:
+    from catia_mcp.automation import safe_get
+    from catia_mcp.plm import PLMSession
+
+    child = PLMSession(conn).child_occurrences(conn.root_occurrence())[0]
+    instance = safe_get(child, "InstanceOccurrenceOf")
+    reference = safe_get(instance, "ReferenceInstanceOf")
+    return reference.RepInstances.Item(1).ReferenceInstanceOf.GetItem("Part")
+
+
+def build_inside(conn: Any) -> dict[str, Any]:
+    """A throwaway body inside an imported part, from the product's window:
+    built, measured, searched, then deleted."""
+    import math
+
+    from catia_mcp.measure import Measurer
+    from catia_mcp.references import _search_topology
+
+    record: dict[str, Any] = {}
+    part = first_part(conn)
+    record["part"] = str(part.Name)
+    record["bodies_before"] = _safe(lambda: int(part.Bodies.Count))
+    body = None
+    try:
+        body = part.Bodies.Add()
+        record["body"] = str(body.Name)
+        sketch = body.Sketches.Add(part.CreateReferenceFromObject(part.OriginElements.PlaneXY))
+        factory = sketch.OpenEdition()
+        factory.CreateClosedCircle(0.0, 0.0, 3.0)
+        sketch.CloseEdition()
+        part.InWorkObject = body
+        pad = part.ShapeFactory.AddNewPad(sketch, 5.0)
+        part.UpdateObject(pad)
+        record["pad"] = str(pad.Name)
+        record["expected_mm3"] = round(math.pi * 9 * 5, 4)
+        measure = Measurer(conn)
+        record["volume_mm3"] = _safe(lambda: round(measure.volume_mm3(part, body), 4))
+        record["cog_mm"] = _safe(lambda: [round(c, 4) for c in measure.cog_mm(part, body)])
+        sel = conn.hso
+        record["faces"] = _safe(lambda: _search_topology(sel, body, "Face"))
+        with contextlib.suppress(Exception):
+            sel.Clear()
+    except Exception as error:
+        record["error"] = str(error)
+        record["traceback"] = traceback.format_exc()
+    finally:
+        if body is not None:
+            try:
+                sel = conn.hso
+                sel.Clear()
+                sel.Add(body)
+                sel.Delete()
+                sel.Clear()
+                part.Update()
+                record["removed"] = True
+            except Exception as error:
+                record["removed"] = f"error: {error}"
+        record["bodies_after"] = _safe(lambda: int(part.Bodies.Count))
+    return record
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--report", default="assembly_probe.json")
@@ -185,6 +254,8 @@ def main() -> int:
     parser.add_argument("--step", help="the STEP file imported into the active editor")
     parser.add_argument("--move", action="store_true",
                         help="move the first instance 10 mm along X, read back, move back")
+    parser.add_argument("--build-inside", action="store_true",
+                        help="pad, measure and delete a body inside the first instance's part")
     args = parser.parse_args()
 
     from catia_mcp.com_guard import ComWorker
@@ -214,6 +285,16 @@ def main() -> int:
         report["move"] = _safe(lambda: worker.run_guarded(lambda: move_one(conn), label="move"))
     report["reach_part"] = _safe(lambda: worker.run_guarded(lambda: reach_part(conn),
                                                             label="reach the part"))
+    rows = report.get("occurrences") if isinstance(report.get("occurrences"), list) else []
+    shared: dict[str, list[str]] = {}
+    for row in rows:
+        key = row.get("reference_physical_id") or row.get("reference_id")
+        if key:
+            shared.setdefault(str(key), []).append(row["path"])
+    report["shared_references"] = {k: v for k, v in shared.items() if len(v) > 1}
+    if args.build_inside:
+        report["build_inside"] = _safe(lambda: worker.run_guarded(lambda: build_inside(conn),
+                                                                  label="build inside"))
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False, default=str)
     print(f"Report: {args.report}")
