@@ -317,6 +317,42 @@ def test_a_table_that_does_not_restore_the_part_is_removed(tmp_path):
     assert context.part.Parameters.items["Height"].text == "10mm"
 
 
+def _not_implemented(*_args):
+    raise RuntimeError("(-2147352567, 'Une exception s'est produite.', (0, 'CATIARelations', "
+                       "'La méthode CreateDesignTable a échoué', None, 0, -2147467263), None)")
+
+
+def test_a_table_this_catia_does_not_implement_is_unavailable_not_failed(tmp_path):
+    # Live on 3DEXPERIENCE R428: CreateDesignTable answers E_NOTIMPL.
+    context, step = _block()
+    relations = context.part.Relations
+    relations.CreateDesignTable = relations.CreateHorizontalDesignTable = _not_implemented
+    result = step.design_table(str(tmp_path))
+    assert result["status"] == "unavailable" and not result["removed"]
+    assert [a["route"] for a in result["attempts"]] == [
+        "CreateDesignTable(copy=True)", "CreateDesignTable(copy=False)",
+        "CreateHorizontalDesignTable(copy=True)"]
+    assert context.part.Parameters.items["Height"].text == "10mm"
+
+
+def test_the_table_falls_back_to_a_linked_sheet(tmp_path):
+    context, step = _block()
+    relations = context.part.Relations
+    create = relations.CreateDesignTable
+
+    def linked_only(name, comment, copy, path):
+        if copy:
+            _not_implemented()
+        relations.tables[name] = type(create(name, comment, True, path))(
+            name, path, relations.parameters)
+        return relations.tables[name]
+
+    relations.CreateDesignTable = linked_only
+    result = step.design_table(str(tmp_path))
+    assert result["status"] == "ok"
+    assert [a["ok"] for a in result["attempts"]] == [False, True]
+
+
 def test_a_missing_configured_parameter_fails_before_any_table(tmp_path):
     context, step = _block()
     context.tree_part["configurations"][0]["params"]["Extrude1_height"] = 4

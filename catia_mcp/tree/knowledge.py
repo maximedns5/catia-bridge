@@ -69,6 +69,9 @@ def read_value(parameter: Any) -> str | None:
     return None
 
 
+# HRESULT 0x80004001: the method exists but is not implemented here.
+E_NOTIMPL = "-2147467263"
+
 class KnowledgeStep:
     def __init__(self, ctx: Any) -> None:
         self.ctx = ctx
@@ -226,8 +229,7 @@ class KnowledgeStep:
         before = self.ctx.volume_mm3()
         table = None
         try:
-            table = relations.CreateDesignTable(table_name, "configurations of the tree", True,
-                                                path)
+            table = self._create_table(relations, table_name, path, result)
             result["name"] = str(getattr(table, "Name", table_name))
             for name in names:
                 table.AddAssociation(parameters[name], name)
@@ -264,13 +266,46 @@ class KnowledgeStep:
                     parameter.ValuateFromString(cell(kinds[name], built[name]))
             with contextlib.suppress(Exception):
                 self.ctx.update()
-            result.update(status="failed", error=str(error), removed=table is not None)
+            status = "failed"
+            if table is None and result.get("attempts") and all(
+                    a.get("not_implemented") for a in result["attempts"]):
+                # 3DEXPERIENCE R428 answers E_NOTIMPL: design tables cannot
+                # be made through COM there. The sheet stays for a manual import.
+                status = "unavailable"
+                result["note"] = ("this CATIA does not implement design tables through COM; "
+                                  "the sheet can be imported by hand (Formula > Design Table)")
+            result.update(status=status, error=str(error), removed=table is not None)
             return result
         bad = [c["name"] for c in result["configurations"] if "error" in c]
         result["status"] = "partial" if bad else "ok"
         if bad:
             result["note"] = f"these configurations did not build: {', '.join(bad)}"
         return result
+
+    # Each way to make the table, in turn: the copied sheet, the sheet kept
+    # linked, then the horizontal layout. Every attempt is recorded.
+    TABLE_ROUTES = (("CreateDesignTable", True), ("CreateDesignTable", False),
+                    ("CreateHorizontalDesignTable", True))
+
+    def _create_table(self, relations: Any, table_name: str, path: str,
+                      result: dict[str, Any]) -> Any:
+        attempts = result.setdefault("attempts", [])
+        last: Exception | None = None
+        for method, copy in self.TABLE_ROUTES:
+            entry: dict[str, Any] = {"route": f"{method}(copy={copy})"}
+            try:
+                table = getattr(relations, method)(table_name, "configurations of the tree",
+                                                   copy, path)
+            except Exception as error:
+                entry.update(ok=False, error=str(error),
+                             not_implemented=E_NOTIMPL in str(error))
+                attempts.append(entry)
+                last = error
+                continue
+            entry["ok"] = True
+            attempts.append(entry)
+            return table
+        raise last if last is not None else RuntimeError("no design table route")
 
     # ── Checks ──
 

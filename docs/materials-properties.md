@@ -145,6 +145,19 @@ and `volume_mm3`. The command line prints one line per part, for example
 kg (expected 0.1489), 6 attribute(s), 6 parameter(s) in Plate, design table
 ok, checks skipped`.
 
+## Live on 3DEXPERIENCE R428 (French, student role)
+
+`p1_properties_plate.json` built exactly (18973.8 mm3), then:
+
+| Step | Result |
+| --- | --- |
+| Colours | Body and hole feature coloured and read back (`SetRealColor`) |
+| Parameters | Set `Plate` created, six typed parameters with comments, read back in the French format (`2,5mm`) |
+| PLM attributes | `V_Name`, `V_description`, `PLM_ExternalID` set on the part's PLM object; the V5 product fields went to string parameters |
+| Material | The `CATMatReference` search ran but found no "Steel" (`MATReference` is refused as a type); kept as `Material` / `Density` / `Mass` parameters, `Mass = smartVolume(...) * Density` = 0.149 kg |
+| Design table | `CreateDesignTable` answers E_NOTIMPL. The bridge now also tries a linked sheet and the horizontal layout, then reports `unavailable` (not failed) and leaves the sheet for a manual import |
+| Checks | Skipped: Knowledge Advisor not proven available |
+
 ## Coverage
 
 Status: offline-tested against fakes (`tests/test_properties.py`); nothing

@@ -475,7 +475,9 @@ def instances_3dx(conn: Any, editor: Any, title: str | None = None) -> list[Any]
         raise DrawingSkipped(
             "a standalone 3D Shape: 3DEXPERIENCE generative views project product "
             "instances and CATIA creates no view for a 3D Shape outside a product (live "
-            "R428). Build with --plm-type 3DPart, or --assembly adopt.") from None
+            "R428). Import the model's STEP and build with --assembly adopt (a 3D Part, "
+            "--plm-type 3DPart, also works where the licence allows it; the student "
+            "licence refused it live).") from None
     if title is None:
         return [root]
     from catia_mcp.automation import safe_get
