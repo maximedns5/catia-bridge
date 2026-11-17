@@ -178,6 +178,12 @@ def estimate_geometry(part: dict[str, Any]) -> PartGeometry:
         if feature.get("operation") in ("cut", "intersect"):
             continue
         kind = feature["type"]
+        if kind == "surface" and feature.get("op") in ("extrude", "revolve", "loft", "sweep", "fill"):
+            # A surface spans what the solid feature of the same kind would
+            # (docs/surfaces.md): its inputs are the sketches.
+            inputs = feature.get("inputs") or []
+            feature = {**feature, "sketch": inputs[0] if inputs else None, "sections": inputs}
+            kind = "extrude" if feature["op"] == "fill" else feature["op"]
         if kind == "extrude" and feature.get("sketch") in sketches:
             sketch = sketches[feature["sketch"]]
             base = sketch_points(sketch)
@@ -199,7 +205,9 @@ def estimate_geometry(part: dict[str, Any]) -> PartGeometry:
                            for i in range(steps + 1)]
         elif kind == "loft":
             for name in feature.get("sections") or []:
-                if name in sketches:
+                if isinstance(name, dict) and name.get("point") is not None:
+                    points.append(tuple(float(c) for c in name["point"]))  # a loft to a point
+                elif isinstance(name, str) and name in sketches:
                     points += sketch_points(sketches[name])
         elif kind == "sweep":
             path = [tuple(float(c) for c in e[k]) for e in feature.get("path") or []
