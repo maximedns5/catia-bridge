@@ -158,6 +158,15 @@ engineering connections' API is in the type library.
 - A part reference's `Publications` (`VPMPublications`) only reads
   (`GetItem`, `Item`).
 
+Third live probe: `EngConnections.Add(type, [instances])` made a Fix, a
+Rigid and a Cylindrical connection (the impacteds are instances). Each
+`EngConnection` has `Type`, `Activity`, `GetNbImpacteds`, `GetImpacted`,
+`Get/SetDirection` and an `AssemblyConstraints` collection whose
+`Add(iType As CatAssemblyConstraintType, iGeometries As array)` makes the
+constraints. `EngConnections.Remove(connection)` failed (E_FAIL): the
+probe's connections stayed in the product. `--engcst` now tries which
+geometries `AssemblyConstraints.Add` takes, and other ways to remove.
+
 The next probe creates a Fix, a Rigid and a Cylindrical connection (on
 instances, else occurrences), describes each and the objects it holds (its
 constraints collection), and removes it.

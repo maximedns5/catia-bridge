@@ -301,6 +301,98 @@ def product_window(conn: Any, wanted: str | None = None) -> dict[str, Any]:
     return out
 
 
+# CatAssemblyConstraintType values read live on R428.
+CST_FIX_INSTANCE, CST_PARALLEL_PLANES = 30, 41
+
+
+def engcst(conn: Any) -> dict[str, Any]:
+    """What AssemblyConstraints.Add(iType, iGeometries) takes. Live on R428
+    EngConnections.Add(type, [instances]) made connections, each holding an
+    AssemblyConstraints collection. Here a Fix connection on the plate tries
+    a fix-instance constraint on its instance, occurrence or reference, and a
+    Rigid connection between the plate and the first bolt tries a
+    parallelism of their XY planes (already parallel: nothing should move)
+    given as Part references, plane objects or published names. Each
+    success is described; positions are read before and after; then every
+    way to remove a constraint and a connection is tried."""
+    from catia_mcp.automation import call_fill_array, safe_get
+    from catia_mcp.tree import adopt
+
+    root = conn.root_occurrence()
+    reference = safe_get(root, "ReferenceRootOccurrenceOf")
+    connections = reference.GetItem("CATEngConnections")
+    occurrences = [root.Occurrences.Item(i) for i in range(1, int(root.Occurrences.Count) + 1)]
+    instances = [o.InstanceOccurrenceOf for o in occurrences]
+    references = [i.ReferenceInstanceOf for i in instances]
+
+    def positions() -> list[Any]:
+        return [_safe(lambda i=i: [round(float(c), 6) for c in call_fill_array(
+            conn.app, i.Position, "GetComponents", 12)]) for i in instances[:2]]
+
+    out: dict[str, Any] = {"before": positions(), "count_before": _safe(lambda: int(connections.Count))}
+    made: list[Any] = []
+
+    def attempt(cnx: Any, kind: int, label: str, geometries: list[Any]) -> dict[str, Any]:
+        row: dict[str, Any] = {"geometries": label}
+        try:
+            cst = cnx.AssemblyConstraints.Add(kind, geometries)
+        except Exception as error:
+            row["error"] = str(error)
+            return row
+        row["made"] = _explore(cst)
+        row["count"] = _safe(lambda: int(cnx.AssemblyConstraints.Count))
+        row["after"] = positions()
+        row["remove_constraint"] = _safe(lambda: cnx.AssemblyConstraints.Remove(cst) or True)
+        return row
+
+    fix = connections.Add(2, [instances[0]])  # CatEngConnectionType catFix
+    made.append(fix)
+    out["fix"] = [attempt(fix, CST_FIX_INSTANCE, label, geoms) for label, geoms in (
+        ("[instance]", [instances[0]]), ("[occurrence]", [occurrences[0]]),
+        ("[reference]", [references[0]]))]
+
+    parts = [_safe(lambda r=r: adopt.part_of(r)) for r in references[:2]]
+    rigid = connections.Add(10, instances[:2])  # catRigid
+    made.append(rigid)
+    rows = []
+    if not any(isinstance(p, str) for p in parts):
+        planes = [p.OriginElements.PlaneXY for p in parts]
+        variants = [
+            ("Part.CreateReferenceFromObject(PlaneXY)",
+             lambda: [p.CreateReferenceFromObject(pl) for p, pl in zip(parts, planes)]),
+            ("PlaneXY objects", lambda: list(planes)),
+            ("Part.CreateReferenceFromName(plane name)",
+             lambda: [p.CreateReferenceFromName(str(pl.Name)) for p, pl in zip(parts, planes)]),
+            ("[occurrence, reference] pairs",
+             lambda: [occurrences[0], parts[0].CreateReferenceFromObject(planes[0]),
+                      occurrences[1], parts[1].CreateReferenceFromObject(planes[1])]),
+        ]
+        for label, build in variants:
+            try:
+                geometries = build()
+            except Exception as error:
+                rows.append({"geometries": label, "build_error": str(error)})
+                continue
+            rows.append(attempt(rigid, CST_PARALLEL_PLANES, label, geometries))
+    else:
+        rows.append({"parts": parts})
+    out["parallel"] = rows
+    removal = []
+    for cnx in made:
+        for label, way in (("object", lambda c=cnx: connections.Remove(c)),
+                           ("name", lambda c=cnx: connections.Remove(str(c.Name))),
+                           ("index", lambda: connections.Remove(int(connections.Count)))):
+            result = _safe(lambda w=way: w() or True)
+            removal.append({"connection": _safe(lambda c=cnx: str(c.Name)), "by": label,
+                            "result": result})
+            if result is True:
+                break
+    out["remove"] = removal
+    out["count_after"] = _safe(lambda: int(connections.Count))
+    out["after"] = positions()
+    return out
+
+
 def create(conn: Any, plan: Any) -> dict[str, Any]:
     """A published plane in the first part and a Fix on the first instance,
     both removed again."""
@@ -424,6 +516,9 @@ def main() -> int:
     parser.add_argument("--window", default=None,
                         help="the name of the imported product's window to activate first, "
                              "as CATIA's Window menu shows it (e.g. 'Bracket A:4')")
+    parser.add_argument("--engcst", action="store_true",
+                        help="create a Fix and a Rigid connection and try assembly constraints "
+                             "in them (removed again where CATIA allows)")
     parser.add_argument("--engcnx-create", action="store_true",
                         help="try EngConnections.Add with each candidate argument (each "
                              "connection made is removed again)")
@@ -453,6 +548,8 @@ def main() -> int:
              ("enums", lambda: enums(conn)), ("occurrences", lambda: occurrences(conn, plan)),
              ("members", lambda: members(conn)), ("routes", lambda: routes(conn))]
     steps.append(("engcnx", lambda: engcnx(conn, args.engcnx_create)))
+    if args.engcst:
+        steps.append(("engcst", lambda: engcst(conn)))
     if args.create:
         steps.append(("create", lambda: create(conn, plan)))
     if args.apply and plan is not None:
