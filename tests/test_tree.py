@@ -1498,3 +1498,16 @@ def test_revolve_profiles_are_constrained_in_the_human_style(monkeypatch):
     groove = report["parts_detail"][0]["features"][3]
     assert groove["catia"][0].startswith("groove") and groove["constraints"]["shapes"] == [
         "rectangle"]
+
+
+def test_a_turned_part_is_edited_by_its_profile(monkeypatch):
+    """A part with no pad gets its sketch edit check on the revolve profile."""
+    part = _FakePart()
+    built = _builder(part, monkeypatch)
+    edits = []
+    monkeypatch.setattr(TreeBuilder, "_check_sketch_edit",
+                        lambda self, record: edits.append(self.first_sketch_dimension))
+    report = built.build(load("m2_shaft_axis_off_origin"))
+    assert report["success"], report.get("error")
+    (dimension,) = edits
+    assert dimension is not None and dimension.type == 1  # a distance to an axis

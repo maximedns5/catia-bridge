@@ -206,7 +206,10 @@ and set, as CATIA's own macros do; with it the flange's circle is fully
 constrained. A slot (tangencies, symmetry of the arc centres) and a hexagon
 (construction circle, 5 side formulas) were constrained with no refusal:
 editing the hexagon's radius 12 → 13 mm scaled its volume by exactly
-(13/12)², so it stayed regular.
+(13/12)², so it stayed regular. Stepped revolve profiles (12 constraints on
+sample1's shaft) and groove profiles were constrained with no refusal, line
+distances to the sketch axes included. A turned part with no pad has its
+sketch edit check on its profile's first dimension.
 
 Next: driving sketch dimensions by the script's numbers (the tree gives
 no `params` for them yet: a contract request) (the tree gives no `params` for sketch dimensions yet: a
