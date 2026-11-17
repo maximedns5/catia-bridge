@@ -242,33 +242,23 @@ def _enum_values(conn: Any, near: Any, name: str) -> Any:
 
 
 def product_window(conn: Any) -> dict[str, Any]:
-    """Make the imported product's window the active one. Live, two runs
-    failed because a part built earlier was the active window: each open
-    window is activated in turn until one shows a product structure."""
+    """Whether the active window shows a product, and the open windows'
+    names. Read only: live, activating each window in turn hung CATIA for
+    120 s ('PopupFatherWindow'), so the window to use is clicked by hand."""
     from catia_mcp.errors import WrongDocumentType
 
-    out: dict[str, Any] = {"windows": []}
+    out: dict[str, Any] = {}
     try:
         conn.root_occurrence()
-        out["active"] = "already a product"
-        return out
+        out["active"] = "a product"
     except WrongDocumentType:
-        pass
-    windows = conn.app.Windows
-    for i in range(1, int(windows.Count) + 1):
-        window = windows.Item(i)
-        name = _safe(lambda w=window: str(w.Name))
-        try:
-            window.Activate()
-            conn.root_occurrence()
-        except Exception as error:
-            out["windows"].append({"name": name, "product": False, "why": str(error)[:120]})
-            continue
-        out["windows"].append({"name": name, "product": True})
-        out["active"] = name
-        return out
-    out["active"] = None
-    out["note"] = "no open window shows a product: import bracket.step first"
+        out["active"] = None
+        out["note"] = ("the active window shows no product: click the imported bracket's "
+                       "tab in CATIA, then run the probe again")
+    windows = _safe(lambda: conn.app.Windows)
+    if not isinstance(windows, str):
+        out["windows"] = [_safe(lambda i=i: str(windows.Item(i).Name))
+                          for i in range(1, int(_safe(lambda: windows.Count) or 0) + 1)]
     return out
 
 
