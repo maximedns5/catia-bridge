@@ -25,6 +25,9 @@ All notable changes to this project are documented here.
   then rotated and translated by Part Design transformations, each checked
   by where its centre of gravity goes; a paste without the link and the
   undocumented variants are tried in turn, each refusal noted.
+- **Scales** (`scale`): a Scaling about the frame's origin for equal
+  factors, an Affinity in the frame otherwise, checked by volume and centre
+  of gravity; the reference scales with OpenCascade's general affine map.
 - **Assemblies** (`--assembly product --step MODEL.step`, `docs/assemblies.md`):
   the model's STEP file gives the assembly the tree loses (each part's own
   frame, instances, sub-assemblies, colours). Every tree part is matched to

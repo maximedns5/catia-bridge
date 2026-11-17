@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "/M9/ScaleAffinity",
+      "name": "ScaleAffinity",
+      "bodies": [
+        "Body1"
+      ],
+      "features": [
+        {
+          "type": "sketch",
+          "id": "sketch1",
+          "plane": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          },
+          "entities": [
+            {
+              "type": "line",
+              "start": [
+                5.0,
+                0.0
+              ],
+              "end": [
+                25.0,
+                0.0
+              ],
+              "id": "sketch1e0"
+            },
+            {
+              "type": "line",
+              "start": [
+                25.0,
+                0.0
+              ],
+              "end": [
+                25.0,
+                10.0
+              ],
+              "id": "sketch1e1"
+            },
+            {
+              "type": "line",
+              "start": [
+                25.0,
+                10.0
+              ],
+              "end": [
+                5.0,
+                10.0
+              ],
+              "id": "sketch1e2"
+            },
+            {
+              "type": "line",
+              "start": [
+                5.0,
+                10.0
+              ],
+              "end": [
+                5.0,
+                0.0
+              ],
+              "id": "sketch1e3"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "sketch1e0",
+                "sketch1e1",
+                "sketch1e2",
+                "sketch1e3"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "extrude1",
+          "sketch": "sketch1",
+          "distance": 8,
+          "operation": "new_body",
+          "creates": [
+            "Body1"
+          ]
+        },
+        {
+          "type": "scale",
+          "id": "scale1",
+          "bodies": [
+            "Body1"
+          ],
+          "factors": [
+            2.0,
+            1.0,
+            0.5
+          ],
+          "frame": {
+            "origin": [
+              5,
+              0,
+              0
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "y_dir": [
+              0,
+              1,
+              0
+            ],
+            "z_dir": [
+              0,
+              0,
+              1
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

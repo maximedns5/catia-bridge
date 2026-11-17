@@ -177,6 +177,26 @@ def _location(matrix: Any) -> Location:
     return Location(trsf)
 
 
+def _scaled(shape: Any, feature: dict[str, Any]) -> Any:
+    """A shape scaled along its frame's axes about its origin (a general
+    affine map: BRepBuilderAPI_GTransform, NURBS-converting when needed)."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_GTransform
+    from OCP.gp import gp_GTrsf, gp_Mat, gp_XYZ
+
+    from catia_mcp.tree.geometry import scale_frame, scaled_point
+
+    _, *axes = scale_frame(feature)
+    factors = [float(f) for f in feature["factors"]]
+    m = [[sum(f * a[i] * a[j] for f, a in zip(factors, axes, strict=True)) for j in range(3)]
+         for i in range(3)]
+    shift = [scaled_point(feature, (0.0, 0.0, 0.0))[i] for i in range(3)]
+    gtrsf = gp_GTrsf()
+    gtrsf.SetVectorialPart(gp_Mat(*[m[i][j] for i in range(3) for j in range(3)]))
+    gtrsf.SetTranslationPart(gp_XYZ(*shift))
+    maker = BRepBuilderAPI_GTransform(shape.wrapped, gtrsf, True)
+    return type(shape)(maker.Shape()) if hasattr(shape, "wrapped") else maker.Shape()
+
+
 def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = None) -> Any:
     """The part's solid. `external(part, feature, bodies)` builds the features
     this reference has no rule for, by updating `bodies` (the STEP fallback).
@@ -250,6 +270,9 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
         elif kind == "copy":
             (source,), (created,) = feature["bodies"], feature["creates"]
             bodies[created] = bodies[source].moved(_location(feature["matrix"]))
+        elif kind == "scale":
+            (target,) = feature["bodies"]
+            bodies[target] = _scaled(bodies[target], feature)
         elif kind == "remove":
             for name in feature["bodies"]:
                 bodies.pop(name, None)

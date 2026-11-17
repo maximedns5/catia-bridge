@@ -346,3 +346,33 @@ def chamfer_second(feature: dict[str, Any]) -> float | None:
     if feature.get("angle") is not None:
         return float(feature["distance"]) * math.tan(math.radians(float(feature["angle"])))
     return None
+
+
+def scale_frame(feature: dict[str, Any]) -> tuple[Vec, Vec, Vec, Vec]:
+    """A scale's frame (origin, x, y, z), checked orthonormal and right-handed;
+    the world's when the feature has none. Raises ValueError."""
+    frame = feature.get("frame") or {}
+    try:
+        origin = tuple(float(c) for c in frame.get("origin", (0, 0, 0)))
+        axes = [tuple(float(c) for c in frame.get(k, d)) for k, d in
+                (("x_dir", (1, 0, 0)), ("y_dir", (0, 1, 0)), ("z_dir", (0, 0, 1)))]
+    except (TypeError, ValueError) as error:
+        raise ValueError("the scale's frame is not made of 3D points and directions") from error
+    if len(origin) != 3 or any(len(a) != 3 for a in axes):
+        raise ValueError("the scale's frame is not made of 3D points and directions")
+    x, y, z = (unit(a) for a in axes)
+    if abs(dot(x, y)) > 1e-9 or abs(dot(y, z)) > 1e-9 or abs(dot(x, z)) > 1e-9:
+        raise ValueError("the scale's frame is not orthogonal")
+    if dot(cross(x, y), z) < 0:
+        raise ValueError("the scale's frame is left-handed")
+    return origin, x, y, z
+
+
+def scaled_point(feature: dict[str, Any], point: Vec) -> Vec:
+    """Where a scale moves a point: scaled along each axis of its frame,
+    about the frame's origin."""
+    origin, *axes = scale_frame(feature)
+    factors = [float(f) for f in feature["factors"]]
+    d = add(tuple(float(c) for c in point), scale(origin, -1))
+    return add(origin, tuple(sum(f * dot(d, a) * a[i] for f, a in zip(factors, axes, strict=True))
+                             for i in range(3)))

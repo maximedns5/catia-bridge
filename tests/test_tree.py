@@ -59,6 +59,8 @@ CLOSED_FORM_MM3 = {
     "m8_hexagon_pad": 3 * math.sqrt(3) / 2 * 12**2 * 10,
     # Two ruled bands: prismatoids h/6 (A0 + 4 Am + A1).
     "m9_ruled_three_squares": 10 / 6 * (100 + 4 * 13**2 + 256) + 10 / 6 * (256 + 4 * 12**2 + 64),
+    "m9_scale_uniform": 20 * 10 * 8 * 1.5**3,
+    "m9_scale_affinity": 20 * 10 * 8 * 2.0 * 1.0 * 0.5,
 }
 
 
@@ -1705,3 +1707,105 @@ def test_copies_that_scale_or_mirror_are_refused():
     tree = load("m9_body_copy")
     tree["parts"][0]["features"][4]["matrix"] = [[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]
     assert any("do not move the body rigidly" in r for r in analyze(tree))
+
+
+# ── Scale ──
+
+
+def _scale_part(scaling_refused=False):
+    """A fake part whose Scaling and Affinity scale the body in work about
+    their references, as Part Design transformations do."""
+    part = _FakePart()
+
+    def scaling(ref, factor):
+        if scaling_refused:
+            raise RuntimeError("La méthode AddNewScaling a échoué")
+        return part._feature("scaling", ref=ref, factors=(factor,) * 3)
+
+    def affinity(sx, sy, sz):
+        shape = SimpleNamespace(AxisOrigin=None, AxisPlane=None, AxisFirstDirection=None)
+        return part._feature("affinity", factors=(sx, sy, sz), HybridShape=shape)
+
+    part.ShapeFactory.AddNewScaling = scaling
+    part.ShapeFactory.AddNewAffinity2 = affinity
+    real_update = part.UpdateObject
+
+    def update(obj):
+        kind = getattr(obj, "kind", None)
+        if kind not in ("scaling", "affinity"):
+            return real_update(obj)
+        if not hasattr(obj, "base"):
+            obj.base = list(obj.body.solids)
+        if kind == "scaling":
+            origin, axes = obj.ref[1], [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+        else:
+            shape = obj.HybridShape
+            origin = shape.AxisOrigin[1]
+            x = unit(shape.AxisFirstDirection[2])
+            _, h, v = shape.AxisPlane
+            z = unit(cross(h, v))
+            axes = [x, cross(z, x), z]
+        product = obj.factors[0] * obj.factors[1] * obj.factors[2]
+
+        def moved(c):
+            d = tuple(ci - oi for ci, oi in zip(c, origin))
+            return tuple(origin[i] + sum(f * dot(d, a) * a[i] for f, a in zip(obj.factors, axes))
+                         for i in range(3))
+
+        obj.body.solids = [(v * product, moved(c)) for v, c in obj.base]
+
+    part.UpdateObject = update
+    return part
+
+
+def test_a_uniform_scale_is_a_scaling_and_another_an_affinity(monkeypatch):
+    for name, kind, is_3dx in (("m9_scale_uniform", "scaling", False),
+                               ("m9_scale_uniform", "affinity", True),  # live on R428
+                               ("m9_scale_affinity", "affinity", False)):
+        part = _scale_part()
+        tree = load(name)
+        want = {tree["parts"][0]["id"]: {"volume_mm3": CLOSED_FORM_MM3[name]}}
+        built = _builder(part, monkeypatch)
+        built.conn.is_3dx = is_3dx
+        report = built.build(tree, want, check_editability=False)
+        assert report["success"], (name, report.get("error"))
+        (made,) = [f for f in part.pads if getattr(f, "kind", None) == kind]
+        assert report["parts_detail"][0]["features"][2]["catia"] == [made.Name]
+
+
+def test_a_refused_scaling_falls_back_to_an_affinity(monkeypatch):
+    part = _scale_part(scaling_refused=True)
+    tree = load("m9_scale_uniform")
+    built = _builder(part, monkeypatch)
+    built.conn.is_3dx = False  # CATIA V5 tries the Scaling first
+    report = built.build(tree, check_editability=False)
+    assert report["success"], report.get("error")
+    entry = report["parts_detail"][0]["features"][2]
+    assert entry["catia"][0].startswith("affinity")
+    assert entry["notes"][0].startswith("scaling: La méthode AddNewScaling a échoué")
+
+
+def test_scales_in_a_bad_frame_or_with_bad_factors_are_refused():
+    tree = load("m9_scale_affinity")
+    scale = tree["parts"][0]["features"][2]
+    scale["frame"]["y_dir"] = [0, -1, 0]
+    assert "the scale's frame is left-handed" in analyze(tree)
+    scale["frame"]["y_dir"] = [0, 1, 0]
+    scale["factors"] = [2, 0, 1]
+    assert "scale factors must be three positive numbers" in analyze(tree)
+
+
+def test_the_reference_scales_along_a_turned_frame():
+    pytest.importorskip("build123d")
+    from catia_mcp.tree.reference import expected
+
+    tree = load("m9_scale_affinity")
+    scale = tree["parts"][0]["features"][2]
+    r = math.sqrt(0.5)
+    scale["frame"] = {"origin": [0, 0, 0], "x_dir": [r, r, 0], "y_dir": [-r, r, 0],
+                      "z_dir": [0, 0, 1]}
+    (props,) = expected(tree, features=False).values()
+    assert props["volume_mm3"] == pytest.approx(1600.0, rel=1e-9)
+    from catia_mcp.tree.geometry import scaled_point
+
+    assert props["cog_mm"] == pytest.approx(list(scaled_point(scale, (15, 5, 4))), abs=1e-6)

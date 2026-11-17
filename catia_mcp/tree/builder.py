@@ -91,6 +91,8 @@ from catia_mcp.tree.geometry import (
     profile_area_centroid,
     revolve_expectation,
     scale,
+    scale_frame,
+    scaled_point,
     unit,
 )
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
@@ -694,6 +696,63 @@ class TreeBuilder:
                 return translate
             tried.append(f"translation by {way} left the copy at {_fmt(self._cog(body))}")
         raise BuildFailed(f"'{translate.Name}' did not move the copy to {_fmt(want)}")
+
+    def _feature_scale(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        """A body scaled in place: a Scaling about the frame's origin when the
+        factors are equal, else an Affinity whose origin, XY plane and first
+        direction are the frame's. Checked by the volume (times the factors'
+        product) and the centre of gravity (scaled along the frame's axes)."""
+        (name,) = feature["bodies"]
+        body = self.bodies[name]
+        origin, x_dir, _, z_dir = scale_frame(feature)
+        sx, sy, sz = (float(f) for f in feature["factors"])
+        volume, cog = self._volume(body), self._cog(body)
+        want_volume = volume * sx * sy * sz
+        want_cog = scaled_point(feature, cog)
+        tol = max(1e-3, FEATURE_REL_TOL * max(want_volume, 1e-9) ** (1 / 3))
+        part, factory = self.part, self.part.ShapeFactory
+        ways: list[tuple[str, Callable[[], Any]]] = []
+        # Live on R428 AddNewScaling refused a construction point (the help
+        # asks for a vertex or a planar face of the body) and the Affinity
+        # scaled uniformly as well: 3DEXPERIENCE goes straight to it.
+        if abs(sx - sy) < 1e-12 and abs(sy - sz) < 1e-12 and not self.conn.is_3dx:
+            ways.append(("scaling", lambda: factory.AddNewScaling(
+                self._construction_point(origin), sx)))
+
+        def affinity():
+            made = factory.AddNewAffinity2(sx, sy, sz)
+            shape = made.HybridShape
+            frame = Frame.from_tree({"origin": list(origin), "x_dir": list(x_dir),
+                                     "normal": list(z_dir)})
+            shape.AxisOrigin = self._construction_point(origin)
+            shape.AxisPlane = self._support(frame)[0]
+            shape.AxisFirstDirection = self._line_reference(origin, x_dir)
+            return made
+
+        ways.append(("affinity", affinity))
+        tried: list[str] = []
+        for way, make in ways:
+            made = None
+            try:
+                part.InWorkObject = body
+                made = make()
+                part.UpdateObject(made)
+                got_volume, got_cog = self._volume(body), self._cog(body)
+                if abs(got_volume - want_volume) > max(1e-3, FEATURE_REL_TOL * want_volume):
+                    raise BuildFailed(f"{got_volume:.4f} mm3, expected {want_volume:.4f} mm3")
+                if distance(got_cog, want_cog) > tol:
+                    raise BuildFailed(f"centre of gravity at {_fmt(got_cog)}, expected "
+                                      f"{_fmt(want_cog)}")
+                entry["catia"].append(str(made.Name))
+                if tried:
+                    entry.setdefault("notes", []).append("; ".join(tried))
+                return
+            except Exception as error:  # the next way, then fail with every reason
+                tried.append(f"{way}: {error}")
+                if made is not None:
+                    with contextlib.suppress(Exception):
+                        self._delete(made)
+        raise BuildFailed("CATIA did not scale the body (" + "; ".join(tried) + ")")
 
     def _feature_remove(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         """Bodies the model drops: deleted, or hidden when CATIA keeps them."""
