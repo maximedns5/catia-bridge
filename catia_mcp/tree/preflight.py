@@ -25,8 +25,17 @@ from catia_mcp.tree.geometry import (
 )
 from catia_mcp.tree.loft import plan_loft
 from catia_mcp.tree.nurbs import Nurbs
+from catia_mcp.tree.properties import check as check_properties
+from catia_mcp.tree.partdesign import (
+    check_draft,
+    check_hole_extras,
+    check_point_loft,
+    check_until,
+    native,
+)
 from catia_mcp.tree.requirements import refuse_unavailable
 from catia_mcp.tree.step_source import StepSource
+from catia_mcp.tree.surfaces import SURFACE_TYPES, SurfaceCheck, check_wire_sketch
 from catia_mcp.tree.sweep import sweep_expectation
 
 # Milestones 1 to 4: sketches, extrudes, revolves, combines, holes, mirrors
@@ -34,7 +43,7 @@ from catia_mcp.tree.sweep import sweep_expectation
 # sweeps.
 SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
              "remove", "copy", "scale",
-             "sweep", "fillet", "chamfer", "shell")
+             "sweep", "fillet", "chamfer", "shell", "draft") + SURFACE_TYPES
 ENTITY_TYPES = ("line", "circle", "arc", "spline")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
 COMBINE_OPERATIONS = ("join", "cut", "intersect")
@@ -86,16 +95,18 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
             # in world coordinates; placing world coordinates would move the
             # part twice.
             refuse("parts placed by a parent location are not supported yet", pid)
+        check_properties(part, refuse, pid)  # color, material, properties, parameters...
         ids: set[str] = set()
         sketches: dict[str, dict[str, Any]] = {}
         bodies: set[str] = set()
+        surfaces = SurfaceCheck()  # surface features (surfaces.py)
         features = part.get("features") or []
         for index, feature in enumerate(features):
             kind, fid, where = feature.get("type"), feature.get("id"), _where(feature)
             if fid in ids:
                 refuse(f"duplicate feature id '{fid}'", f"{pid} {where}")
             ids.add(fid)
-            if kind not in SUPPORTED:
+            if kind not in SUPPORTED or not native(feature):
                 why = step.refusal(pid, feature, bodies) if step is not None else ""
                 if why is None:
                     continue
@@ -106,9 +117,18 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
                 # broken only because this one is unsupported.
                 bodies.update(feature.get("creates") or [])
                 continue
-            if kind == "sketch":
+            used = [feature.get("sketch")] if kind in ("extrude", "revolve", "sweep") \
+                else feature.get("sections") or [] if kind == "loft" else []
+            if any((sketches.get(name) or {}).get("wire") for name in used if isinstance(name, str)):
+                refuse("a wire sketch (no closed profile) cannot make a solid", f"{pid} {where}")
+            if kind == "sketch" and feature.get("wire"):
+                check_wire_sketch(feature, refuse, f"{pid} {where}")
+                sketches[fid] = feature
+            elif kind == "sketch":
                 _check_sketch(feature, refuse, f"{pid} {where}")
                 sketches[fid] = feature
+            elif kind in SURFACE_TYPES:
+                surfaces.check(feature, sketches, bodies, refuse, f"{pid} {where}")
             elif kind == "extrude":
                 _check_extrude(feature, sketches, bodies, refuse, f"{pid} {where}")
             elif kind == "revolve":
@@ -132,6 +152,8 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
                 _check_chamfer(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "shell":
                 _check_shell(feature, bodies, refuse, f"{pid} {where}")
+            elif kind == "draft":
+                check_draft(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "remove":
                 _check_remove(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "copy":
@@ -221,7 +243,7 @@ def _check_revolve(feature, sketches, bodies, refuse, where) -> None:
 def _check_loft(feature, sketches, bodies, refuse, where) -> None:
     sections = feature.get("sections") or []
     if any(not isinstance(section, str) for section in sections):
-        refuse("lofts to a point are not supported yet", where)
+        check_point_loft(feature, sketches, refuse, where)  # catia_mcp/tree/partdesign.py
     elif len(sections) > 2 and not feature.get("ruled"):
         # OpenCascade interpolates one smooth surface through every section;
         # CATIA's Multi-sections Solid uses its own: not the same solid.
@@ -367,6 +389,9 @@ def _check_extrude(feature, sketches, bodies, refuse, where) -> None:
     if sketch is None:
         refuse("extrude refers to an unknown sketch", where)
     _check_operation(feature, bodies, refuse, where, "extrude")
+    if feature.get("until") is not None:  # catia_mcp/tree/partdesign.py
+        check_until(feature, sketch, refuse, where)
+        return
     if feature.get("direction") is None and not feature.get("distance"):
         refuse("extrude has no distance", where)
         return
@@ -412,6 +437,7 @@ def _check_hole(feature, bodies, refuse, where) -> None:
             refuse("countersink hole needs a diameter and an angle in (0, 180) degrees", where)
         elif feature["countersink_diameter"] <= feature.get("diameter", 0):
             refuse("countersink diameter must exceed the hole diameter", where)
+    check_hole_extras(feature, refuse, where)  # threads and V bottoms
 
 
 def _positive(value: Any) -> bool:

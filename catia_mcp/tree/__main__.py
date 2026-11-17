@@ -4,6 +4,7 @@
     python -m catia_mcp.tree reference TREE.json     expected solids (needs build123d)
     python -m catia_mcp.tree build TREE.json --plm-type 3DShape
     python -m catia_mcp.tree capabilities [--create] [--risky 3dpart]
+    python -m catia_mcp.tree mates TREE.json --step MODEL.step   assembly constraints, no CATIA
 
 build attaches to a running CATIA (it never starts one), builds every part in
 a new part, compares each part's volume with build123d's when build123d is
@@ -13,6 +14,8 @@ results of earlier capability probes) and refuses a tree that needs something
 found unavailable. CATIA runs on a guarded worker thread: a dialog that blocks
 the build ends it with a report naming the part, the feature and the dialog's
 text. --part and --until build a prefix of one part, for development.
+--drawing auto then makes the drawing of each part and of the product
+(docs/drafting.md).
 --step-dir DIR lets STEP files stand in for features with no native rule
 (CATIA V5 only; see docs/step.md).
 
@@ -75,9 +78,10 @@ def _check(tree, step=None) -> int:
     print(f"Accepted: {len(tree['parts'])} part(s), "
           f"{sum(len(p['features']) for p in tree['parts'])} feature(s).")
     if step is not None:
-        from catia_mcp.tree.preflight import SUPPORTED
+        from catia_mcp.tree.preflight import SUPPORTED, native
 
-        dead = sum(f.get("type") not in SUPPORTED for p in tree["parts"] for f in p["features"])
+        dead = sum(f.get("type") not in SUPPORTED or not native(f)
+                   for p in tree["parts"] for f in p["features"])
         if dead:
             print(f"{dead} of them from STEP files in {step.directory}, as bodies without "
                   "history (the build needs CATIA V5).")
@@ -100,6 +104,8 @@ def _reference(tree, step_dir=None) -> int:
         cog = ", ".join(f"{c:.4f}" for c in props["cog_mm"])
         print(f"{part_id}: volume {props['volume_mm3']:.4f} mm3, area {props['area_mm2']:.4f} mm2, "
               f"cog ({cog})")
+        for name, surface in (props.get("surfaces") or {}).items():  # docs/surfaces.md
+            print(f"  surface {name}: area {surface['area_mm2']:.4f} mm2")
     return 0
 
 
@@ -173,10 +179,37 @@ def _adopt(conn, worker, plan, builder):
         builder.targets[prototype] = worker.run_guarded(lambda r=reference: adopt.part_of(r),
                                                          label="the imported part")
     print(f"Adopted the imported product: {len(rows)} instance(s) of {len(references)} part(s).")
-    return rows
+    return rows, leaves, references
 
 
-def _assemble(conn, worker, builder, plan, report) -> None:
+def _mates(plan, args):
+    """The assembly constraints to put (--constraints), offline; None when
+    there are none or they cannot be inferred (the build goes on without)."""
+    if plan is None or args.constraints == "none":
+        return None
+    from catia_mcp.tree.assembly_constraints import plan_mates
+
+    try:
+        mate_plan, components = plan_mates(plan, args.constraints, args.step, args.ground)
+    except Exception as error:  # no OCP, an unreadable shape: placed without constraints
+        print(f"Assembly constraints skipped: {error}")
+        return None
+    print(f"Assembly constraints: {mate_plan.summary()}")
+    return mate_plan, components
+
+
+def _constrain(report, apply) -> None:
+    """Put the constraints; a failure is reported, never fatal (every
+    instance stays where the STEP file puts it)."""
+    try:
+        report["assembly"]["constraints"] = result = apply()
+        print(f"Constraints: {result.get('counts')}, positions kept: {result.get('positions_ok')}")
+    except Exception as error:
+        report["assembly"]["constraints"] = {"ok": False, "error": str(error)}
+        print(f"Constraints not applied: {error}")
+
+
+def _assemble(conn, worker, builder, plan, report, mates=None) -> None:
     """Place the built parts in a product (V5); on failure the parts stay
     built and the report says why."""
     from catia_mcp.tree.assembler import AssemblerV5
@@ -188,10 +221,10 @@ def _assemble(conn, worker, builder, plan, report) -> None:
                     "Physical Product needs licences most roles lack (see "
                     "scripts/probe_assembly.py). Import the model's STEP to get the product."}
         return
+    assembler = AssemblerV5(conn.app, log=print)
     try:
         report["assembly"] = worker.run_guarded(
-            lambda: AssemblerV5(conn.app, log=print).assemble(plan, builder.part_documents),
-            label="the assembly")
+            lambda: assembler.assemble(plan, builder.part_documents), label="the assembly")
         print(f"Assembled {report['assembly']['catia_product']}: "
               f"{len(report['assembly']['instances'])} instance(s).")
     except Exception as error:  # the parts stay built
@@ -199,6 +232,46 @@ def _assemble(conn, worker, builder, plan, report) -> None:
         report["success"] = False
         report["error"] = {"part": None, "feature": "assembly", "message": str(error),
                            "note": "The parts are built; the product may be partial."}
+        return
+    if mates is not None:
+        from catia_mcp.tree.assembly_constraints import apply_v5
+
+        _constrain(report, lambda: worker.run_guarded(
+            lambda: apply_v5(conn.app, assembler, plan, *mates, builder.part_documents,
+                             report["assembly"], log=print), label="the assembly constraints"))
+
+
+def _properties(tree, args, capabilities):
+    """The properties step (docs/materials-properties.md), or None when off.
+    Parts without a colour take their STEP instance's when --step is given."""
+    from catia_mcp.tree.properties import PartProperties
+
+    if args.properties == "off":
+        return None
+    if args.step:
+        try:
+            from catia_mcp.tree.properties import colours_from_step
+            from catia_mcp.tree.step_structure import read
+
+            coloured = colours_from_step(tree, read(args.step))
+            if coloured:
+                print(f"Colours from the STEP file: {', '.join(coloured)}")
+        except Exception as error:  # a colour is a bonus
+            print(f"No colours read from the STEP file: {error}")
+    status = ((capabilities or {}).get("capabilities") or {}).get("knowledge.rules") or {}
+    advisor = {"on": True, "off": False}.get(
+        args.checks, status.get("status") in ("verified", "authorized"))
+    return PartProperties(args.properties, catalog=args.material_catalog,
+                          sheet_dir=args.sheet_dir, knowledge_advisor=advisor)
+def _drawings(conn, worker, tree, builder, report, plan, adopted: bool, args) -> None:
+    """The drawing of every built part and of the product (docs/drafting.md):
+    the report's `drawing` section. A failed drawing leaves the build a success."""
+    from catia_mcp.tree.drawing_builder import make_drawings
+    from catia_mcp.tree.drawing_plan import DrawingOptions
+
+    options = DrawingOptions(projection=args.drawing_projection)
+    report["drawing"] = make_drawings(conn, worker, tree, builder, report, plan, options,
+                                      pdf_dir=args.drawing_pdf, adopted=adopted, log=print)
 
 
 def _build(tree, args) -> int:
@@ -217,6 +290,7 @@ def _build(tree, args) -> int:
             return 1
         print(plan.summary())
         tree = plan.tree  # one part per prototype, in its own frame
+    mates = _mates(plan, args)
     try:
         expected = _expected(tree, args.expect, args.step_dir)
     except Exception as error:
@@ -251,6 +325,7 @@ def _build(tree, args) -> int:
         return 1
     builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print,
                           ownership=args.ownership, step_dir=args.step_dir, style=args.style)
+    builder.properties = _properties(tree, args, capabilities)
     adopted = None
     if args.assembly == "adopt":
         adopted = _adopt(conn, worker, plan, builder)
@@ -268,10 +343,20 @@ def _build(tree, args) -> int:
     if worker.dismissed:
         report["dismissed_dialogs"] = worker.dismissed
     if adopted is not None:
+        rows, leaves, references = adopted
         report["assembly"] = {"ok": bool(report.get("success")), "mode": "adopt",
-                              "product": plan.root.name, "instances": adopted}
+                              "product": plan.root.name, "instances": rows}
+        if mates is not None and report.get("success"):
+            from catia_mcp.tree.assembly_constraints import apply_3dx
+
+            _constrain(report, lambda: worker.run_guarded(
+                lambda: apply_3dx(conn, plan, *mates, leaves, builder.targets, references,
+                                  log=print), label="the assembly constraints"))
     elif plan is not None and report.get("success"):
         _assemble(conn, worker, builder, plan, report)
+    if args.drawing == "auto" and report.get("success"):
+        _drawings(conn, worker, tree, builder, report, plan, adopted is not None, args)
+        _assemble(conn, worker, builder, plan, report, mates)
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
     for part in report["parts_detail"]:
@@ -279,6 +364,11 @@ def _build(tree, args) -> int:
         versus = f" (build123d {want:.4f})" if want is not None else ""
         print(f"{part['id']}: {part['catia_name']}, volume {part['volume_mm3']}{versus}, "
               f"editable {part['editable']}")
+        if part.get("properties"):
+            from catia_mcp.tree.properties import summary
+
+            ok = "ok" if part["properties"].get("ok") else "NOT ok"
+            print(f"  properties {ok}: {summary(part['properties'])}")
     _report_dead(report)
     if report["success"]:
         print(f"Built in {report['elapsed_s']} s. Report: {args.report}")
@@ -287,6 +377,29 @@ def _build(tree, args) -> int:
     print(f"FAILED at {error['part']} / {error['feature']}: {error['message']}\n{error['note']}")
     print(f"Report: {args.report}")
     return 1
+
+
+def _mates_command(tree, args) -> int:
+    """The assembly constraints the build would put, without CATIA."""
+    if args.constraints == "none":
+        args.constraints = "infer"
+    plan = _assembly_plan(tree, args)
+    if plan is None:
+        return 1
+    mates = _mates(plan, args)
+    if mates is None:
+        return 1
+    with open(args.report, "w", encoding="utf-8") as handle:
+        json.dump(mates[0].to_dict(), handle, indent=2, ensure_ascii=False)
+    for placement in mates[0].placements:
+        print(f"  {placement.component}: {placement.status}"
+              f"{f' ({placement.note})' if placement.note else ''}")
+        for mate in placement.mates:
+            value = f" {mate.value:g}" if mate.value is not None else ""
+            print(f"    {mate.kind}{value}: {mate.element.kind} {mate.element.face} with "
+                  f"{mate.other} {mate.other_element.face}")
+    print(f"Report: {args.report}")
+    return 0
 
 
 def _capabilities(args) -> int:
@@ -318,7 +431,8 @@ def _capabilities(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m catia_mcp.tree",
                                      description=__doc__.split("\n")[0])
-    parser.add_argument("command", choices=["check", "reference", "build", "capabilities"])
+    parser.add_argument("command", choices=["check", "reference", "build", "capabilities",
+                                            "mates"])
     parser.add_argument("tree", nargs="?", help="feature tree JSON (version 1)")
     parser.add_argument("--part", help="only this part id (development)")
     parser.add_argument("--until", help="only the features up to this id (development)")
@@ -343,6 +457,31 @@ def main(argv: list[str] | None = None) -> int:
                              "rebuilt there with native features, replacing the imported solid")
     parser.add_argument("--step", help="the model's STEP file (same compile as the tree): "
                         "its assembly structure, part frames, names and colours")
+    parser.add_argument("--properties", default="auto", choices=["auto", "on", "off"],
+                        help="colour, material and mass, product properties and "
+                             "Knowledgeware after each part (docs/materials-properties.md): "
+                             "auto (default) for parts whose tree carries those fields, on for "
+                             "every part (part number and tree id at least), off")
+    parser.add_argument("--material-catalog", help="CATIA V5 material catalog "
+                        "(.CATMaterial); default: materials/*.CATMaterial under CATStartupPath")
+    parser.add_argument("--sheet-dir", help="folder for the design table sheets the bridge "
+                        "writes (default: the temporary folder)")
+    parser.add_argument("--checks", default="auto", choices=["auto", "on", "off"],
+                        help="create the tree's checks (Knowledge Advisor): auto when the "
+                             "capability probe found its licence, on, off")
+    parser.add_argument("--drawing", default="none", choices=["none", "auto"],
+                        help="auto: after the build, a drawing of each part (and of the "
+                             "product) with the views, scale and sheet a designer would choose; "
+                             "the report's 'drawing' section (docs/drafting.md)")
+    parser.add_argument("--drawing-projection", default="first", choices=["first", "third"],
+                        help="first angle (ISO E, default) or third angle (ISO A)")
+    parser.add_argument("--drawing-pdf", help="folder to export each drawing to as PDF")
+    parser.add_argument("--constraints", default="none", choices=["none", "fix", "infer"],
+                        help="with --assembly: none (default), fix every instance in place, or "
+                             "infer coincidence, contact and offset constraints from the faces "
+                             "(docs/assembly-constraints.md)")
+    parser.add_argument("--ground", help="--constraints infer: the instance id to ground "
+                        "(default: the largest)")
     parser.add_argument("--no-edit", action="store_true", help="skip the editability check")
     parser.add_argument("--deadline", type=float, default=170.0, help="build budget in seconds")
     parser.add_argument("--report", help="JSON report path (default tree_report.json, "
@@ -361,12 +500,15 @@ def main(argv: list[str] | None = None) -> int:
         return _capabilities(args)
     if not args.tree:
         parser.error(f"{args.command} needs a feature tree JSON file")
-    args.report = args.report or "tree_report.json"
+    args.report = args.report or ("mates_report.json" if args.command == "mates"
+                                  else "tree_report.json")
     tree = _load(args)
     if args.command == "check":
         return _check(tree, _step_source(args))
     if args.command == "reference":
         return _reference(tree, args.step_dir)
+    if args.command == "mates":
+        return _mates_command(tree, args)
     return _build(tree, args)
 
 

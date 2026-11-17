@@ -1,0 +1,109 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S5/Ribbon",
+   "name": "Ribbon",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Ribbon",
+     "wire": true,
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       1,
+       0
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -3,
+        0
+       ],
+       "end": [
+        3,
+        0
+       ],
+       "id": "r1"
+      }
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Sweep1",
+     "op": "sweep",
+     "inputs": [
+      "sketch1"
+     ],
+     "path": [
+      {
+       "type": "line",
+       "start": [
+        0,
+        0,
+        0
+       ],
+       "end": [
+        0,
+        30,
+        0
+       ]
+      },
+      {
+       "type": "arc",
+       "start": [
+        0,
+        30,
+        0
+       ],
+       "mid": [
+        4.393398282201787,
+        40.60660171779821,
+        0
+       ],
+       "end": [
+        15.0,
+        45.0,
+        0
+       ]
+      }
+     ],
+     "creates": [
+      "Band"
+     ]
+    },
+    {
+     "type": "thicken",
+     "id": "thicken1",
+     "name": "Thicken1",
+     "inputs": [
+      "Band"
+     ],
+     "thickness": 1,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

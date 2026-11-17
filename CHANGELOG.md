@@ -185,6 +185,60 @@ All notable changes to this project are documented here.
   `effects.modified=false` when nothing was touched.
 - `scripts/live_smoke_test.py`: builds and measures a throw-away part on a
   live V5 or 3DEXPERIENCE session and writes a JSON report.
+- **Materials and properties** (`--properties`, docs/materials-properties.md):
+  after each part, its colour (on its bodies, read back; per feature too),
+  its material (V5 catalog or a new material, the tree's density; else
+  `Material` / `Density` / `Mass` parameters) with the measured mass checked
+  against volume x density, the product properties for the BOM (V5 product
+  fields and user properties; 3DEXPERIENCE PLM attributes, the rest as
+  parameters), typed parameters with comments in a parameter set named for
+  the part, a design table for the tree's configurations (each one built
+  and measured, then restored), and checks from bounds when Knowledge
+  Advisor is licensed. New optional tree fields `color`, `material`,
+  `properties`, `parameters`, `configurations`, `checks`. Every step is
+  recorded per route and never fails the part. `scripts/probe_properties.py`
+  probes each route live.
+- **Part Design additions** (`docs/part-design.md`, not validated live yet):
+  `draft` (one Draft on the anchored faces about the neutral plane, its angle
+  a parameter), `extrude` with `until` (a Pad or Pocket up to next, last, a
+  plane or a face, straight into its body), tapped holes (`thread`: ISO
+  designation, depth, pitch, side; the hole keeps its tap drill) and V-bottomed
+  holes (`bottom`), and lofts to a point (a Multi-sections Solid to a
+  construction point, a Shaft for a right cone CATIA will not loft). Each has
+  preflight rules, a build123d reference and a fixture (`m10_*`);
+  `scripts/probe_part_design.py` reads their enums and builds every fixture on
+  a live CATIA. A Part Design coverage table lists every CATIA Part Design
+  feature with its status.
+- Drawings in the tree build (`--drawing auto`, docs/drafting.md): for each
+  built part, the main view, projections, section, detail and isometric
+  views, sheet and ISO scale a designer would choose, laid out without
+  overlap; generated dimensions, hole callouts, frame and title block with
+  the projection symbol, optional PDF; for an assembly, front and isometric
+  views, a bill of materials and balloons. Planned offline
+  (`python -m catia_mcp.tree.drawing_plan`), recorded step by step in the
+  report's `drawing` section. `scripts/probe_drawing.py` records every route
+  to a drawing on a live session.
+- Assembly constraints: `--constraints fix|infer` with `--assembly`. The
+  inference (`catia_mcp/tree/mates.py`) finds coincidences of axes,
+  contacts and offsets between the parts' faces, grounds the largest part
+  and gives each other one a minimal set that holds it (a pin may spin),
+  else a fix. V5: published axis lines and planes in each part, then
+  `CATIAConstraints`, every position read back, a constraint that moves a
+  part replaced by a fix. 3DEXPERIENCE: tried behind the flag;
+  `scripts/probe_constraints.py` records what the API allows. `python -m
+  catia_mcp.tree mates` shows them offline. Three synthetic fixtures
+  (pin through a plate, box on a base, bolted plates);
+  docs/assembly-constraints.md.
+- **Reference geometry and surfaces** (`docs/surfaces.md`): sketch planes
+  are named elements made once per distinct plane (`Plane Z+20`, angle
+  planes about an axis confirmed by their first sketch, else equation
+  planes), with named axes and points, listed in each part's
+  `construction`; a sketch's `params.offset` / `params.angle` drive them.
+  New optional surface features (`surface` extrude, revolve, loft, sweep,
+  fill, offset; `join_surfaces`, `split_surface`; `thicken` and
+  `close_surface` into bodies) are built as GSD features checked by area
+  against build123d, and Thick / Close Surface solids by volume. Seven
+  new fixtures (`m10_reference_planes`, `s1` to `s6`).
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart

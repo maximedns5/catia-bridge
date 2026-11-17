@@ -1,0 +1,159 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S4/Frustum",
+   "name": "Frustum",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Base",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 10,
+       "id": "k1"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "k1"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Head",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       20
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 6,
+       "id": "k2"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "k2"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Loft1",
+     "op": "loft",
+     "inputs": [
+      "sketch1",
+      "sketch2"
+     ],
+     "creates": [
+      "Skin"
+     ]
+    },
+    {
+     "type": "split_surface",
+     "id": "split1",
+     "name": "Split1",
+     "inputs": [
+      "Skin"
+     ],
+     "plane": {
+      "origin": [
+       0,
+       0,
+       10
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "keep": "bottom",
+     "creates": [
+      "Lower"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface2",
+     "name": "Offset1",
+     "op": "offset",
+     "inputs": [
+      "Lower"
+     ],
+     "distance": 1,
+     "creates": [
+      "Outer"
+     ]
+    },
+    {
+     "type": "thicken",
+     "id": "thicken1",
+     "name": "Thicken1",
+     "inputs": [
+      "Outer"
+     ],
+     "thickness": 1.5,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

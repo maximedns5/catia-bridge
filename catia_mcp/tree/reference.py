@@ -51,6 +51,8 @@ from catia_mcp.tree.geometry import (
 )
 from catia_mcp.tree.nurbs import Nurbs, clamped
 from catia_mcp.tree.placement import place_part
+from catia_mcp.tree.surface_reference import solid_of, surface_of, surface_properties
+from catia_mcp.tree.surfaces import SOLID_FROM_SURFACE, SURFACE_TYPES
 
 
 class ReferenceError(Exception):
@@ -212,17 +214,25 @@ def _scaled(shape: Any, feature: dict[str, Any]) -> Any:
     return type(shape)(maker.Shape()) if hasattr(shape, "wrapped") else maker.Shape()
 
 
-def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = None) -> Any:
-    """The part's solid. `external(part, feature, bodies)` builds the features
-    this reference has no rule for, by updating `bodies` (the STEP fallback).
-    `on_feature(feature, bodies)` sees the live bodies after each feature."""
+def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = None,
+               surface_out: dict[str, Any] | None = None) -> Any:
+    """The part's solid (None when it has no body, only surfaces).
+    `external(part, feature, bodies)` builds the features this reference has
+    no rule for, by updating `bodies` (the STEP fallback). `on_feature(feature,
+    bodies)` sees the live bodies after each feature. `surface_out` receives
+    each surface's area and centre (`surfaces`) and the solid each thicken or
+    close_surface makes (`solids`, by feature id)."""
     part = place_part(part)
     sketches: dict[str, dict[str, Any]] = {}
     bodies: dict[str, Any] = {}
+    surfaces: dict[str, Any] = {}
+    out = surface_out if surface_out is not None else {}
     for feature in part.get("features") or []:
         kind = feature["type"]
         if kind == "sketch":
             sketches[feature["id"]] = feature
+        elif kind == "extrude" and feature.get("until") is not None:
+            _plus(feature, bodies, sketches)
         elif kind == "extrude":
             sketch = sketches[feature["sketch"]]
             # The full vector the profile travels along, as build123d's
@@ -246,6 +256,8 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
             else:
                 (target,) = feature["bodies"]
                 bodies[target] = _combine(bodies[target], solid, feature["operation"])
+        elif kind == "loft" and any(not isinstance(s, str) for s in feature["sections"]):
+            _plus(feature, bodies, sketches)
         elif kind == "loft":
             sections = [sketch_faces(sketches[name])[0] for name in feature["sections"]]
             _add_solid(bodies, feature, loft(sections, ruled=bool(feature.get("ruled"))))
@@ -282,6 +294,7 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
                 for radius, top, bottom in hole_segments(feature):
                     plane = Plane(origin=add(origin, scale(z_dir, bottom)), x_dir=x_dir, z_dir=z_dir)
                     bodies[target] = bodies[target] - Solid.make_cylinder(radius, top - bottom, plane)
+            _plus(feature, bodies, sketches)  # a V bottom's tip
         elif kind == "copy":
             (source,), (created,) = feature["bodies"], feature["creates"]
             bodies[created] = bodies[source].moved(_location(feature["matrix"]))
@@ -294,6 +307,16 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
         elif kind in ("fillet", "chamfer", "shell"):
             (target,) = feature["bodies"]
             bodies[target] = _dressup(feature, bodies[target])
+        elif kind == "draft" and "faces" in feature and "neutral_plane" in feature:
+            _plus(feature, bodies, sketches)
+        elif kind in SOLID_FROM_SURFACE:
+            solid = solid_of(feature, surfaces)
+            out.setdefault("solids", {})[str(feature.get("id"))] = mass(solid)
+            _add_solid(bodies, feature, solid)
+        elif kind in SURFACE_TYPES:
+            (name,) = feature["creates"]
+            surfaces[name] = surface_of(feature, sketches, surfaces)
+            out.setdefault("surfaces", {})[name] = surface_properties(surfaces[name])
         elif external is not None:
             external(part, feature, bodies)
         else:
@@ -301,13 +324,47 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
         if on_feature is not None and kind != "sketch":
             on_feature(feature, bodies)
     final = [bodies[name] for name in (part.get("bodies") or bodies)]
+    if not final:
+        return None
     result = final[0]
     for other in final[1:]:
         result = result + other
     return result
 
 
+def _plus(feature: dict[str, Any], bodies: dict[str, Any],
+          sketches: dict[str, dict[str, Any]]) -> None:
+    """Drafts, extrudes up to a limit, V-bottomed holes and lofts to a point
+    (catia_mcp/tree/reference_plus.py)."""
+    from catia_mcp.tree import reference_plus as plus
+
+    kind = feature["type"]
+    try:
+        if kind == "draft":
+            (target,) = feature["bodies"]
+            bodies[target] = plus.draft(feature, bodies[target], _face_candidates)
+        elif kind == "extrude":
+            (target,) = feature["bodies"]
+            sketch = sketches[feature["sketch"]]
+            tool = plus.until_solid(feature, sketch, sketch_faces(sketch), bodies[target])
+            bodies[target] = _combine(bodies[target], tool, feature["operation"])
+        elif kind == "loft":
+            plan = plus.point_loft(feature)
+            _add_solid(bodies, feature,
+                       plus.point_loft_solid(feature, sketch_faces(sketches[plan.sketch])))
+        elif kind == "hole":
+            (target,) = feature["bodies"]
+            for matrix in feature["frames"]:
+                tip = plus.hole_tip(feature, matrix, sketch_faces)
+                if tip is not None:
+                    bodies[target] = bodies[target] - tip
+    except plus.PlusReferenceError as error:
+        raise ReferenceError(str(error)) from error
+
+
 def properties(solid: Any) -> dict[str, Any]:
+    if solid is None:  # a part of surfaces only
+        return {"volume_mm3": 0.0, "area_mm2": 0.0, "cog_mm": [0.0, 0.0, 0.0]}
     cog = solid.center(CenterOf.MASS)
     return {"volume_mm3": _volume(solid), "area_mm2": float(solid.area),
             "cog_mm": [float(cog.X), float(cog.Y), float(cog.Z)]}
@@ -349,8 +406,11 @@ def expected(tree: dict[str, Any], external: Any = None,
                    snapshots: dict[str, dict[str, Any]] = snapshots) -> None:
             snapshots[str(feature.get("id"))] = {name: mass(body) for name, body in bodies.items()}
 
-        props = properties(build_part(part, external, record if features else None))
+        surface_out: dict[str, Any] = {}
+        props = properties(build_part(part, external, record if features else None,
+                                      surface_out))
         if features:
             props["features"] = snapshots
+        props.update(surface_out)
         out[part["id"]] = props
     return out

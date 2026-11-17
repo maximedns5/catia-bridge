@@ -51,6 +51,7 @@ def leaf_occurrences(conn: Any) -> list[dict[str, Any]]:
                 "position": [float(v) for v in
                              call_fill_array(conn.app, holder.Position, "GetComponents", 12)],
                 "reference": reference,
+                "holder": holder,  # its Position (assembly constraints)
             })
 
     visit(conn.root_occurrence(), "")

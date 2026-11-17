@@ -118,6 +118,12 @@ frames (constrained sketch, symmetric pad, user parameter), both exact in
 volume, both editable by parameter and by sketch dimension; each imported
 solid was replaced by the native body. 2.3 s in all.
 
+## Constraints
+
+`--constraints fix|infer` adds assembly constraints a designer would have
+put (fix, coincidence of axes, contact, offset), inferred from the faces,
+without moving any instance: see [assembly-constraints.md](assembly-constraints.md).
+
 ## What the app could send
 
 The STEP of the same compile is enough today. A tree that said it itself
