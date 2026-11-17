@@ -300,6 +300,7 @@ class TreeBuilder:
         self.edit_parameter = None
         self.first_pad_feature = None
         self.first_sketch_dimension = None
+        self.sketch_edit_body = None
         self.last_dimensions = []
         self.log(f"part {part['id']}: creating")
         if self.conn.is_3dx:
@@ -418,7 +419,8 @@ class TreeBuilder:
                 self.first_pad_feature = feature.get("id")
                 widths = [c for c, spec in getattr(self, "last_dimensions", [])
                           if spec.name in ("width", "radius")]
-                self.first_sketch_dimension = widths[0] if widths else None
+                if widths:
+                    self.first_sketch_dimension, self.sketch_edit_body = widths[0], body
             return
         (target,) = feature["bodies"]
         tool = self._new_body(use_main=False)
@@ -435,6 +437,11 @@ class TreeBuilder:
             body = self._new_body(use_main=True)
             self._verified_shaft(body, sketch, origin, direction, angle, entry)
             self.bodies[feature["creates"][0]] = body
+            if self.first_sketch_dimension is None and self.last_dimensions:
+                # A turned part with no pad: its profile's first dimension
+                # (a radius or a step) is what a designer would edit.
+                self.first_sketch_dimension = self.last_dimensions[0][0]
+                self.sketch_edit_body = body
             return
         if feature["operation"] in ("join", "cut") and self._human(feature):
             self._human_feature(
@@ -720,7 +727,8 @@ class TreeBuilder:
         """A Shaft (join) or a Groove (cut) drawn in the body it changes."""
         frame = Frame.from_tree(sketch["plane"])
         want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
-        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry,
+                                                  constrain=self.style == "human")
         self.record.spline_allowance_mm3 += \
             approximation_area(sketch) * math.radians(angle) * want.max_radius
         part = self.part
@@ -968,7 +976,8 @@ class TreeBuilder:
                         axis_direction: Vec, angle: float, entry: dict[str, Any]) -> Any:
         frame = Frame.from_tree(sketch["plane"])
         want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
-        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry,
+                                                  constrain=self.style == "human")
         approximation = approximation_area(sketch)
         allowance = approximation * math.radians(angle) * want.max_radius
         self.record.spline_allowance_mm3 += allowance
@@ -1526,11 +1535,12 @@ class TreeBuilder:
 
     def _check_sketch_edit(self, record: PartRecord) -> None:
         """A designer edits a profile by its sketch dimension: +1 mm on the
-        first pad's sketch width (or radius), update, measure, restore."""
+        first pad's sketch width (or radius), or a turned part's first profile
+        dimension, update, measure, restore."""
         constraint = getattr(self, "first_sketch_dimension", None)
-        if constraint is None or self.first_pad is None:
+        body = getattr(self, "sketch_edit_body", None)
+        if constraint is None or body is None:
             return
-        body = self.first_pad[1]
         try:
             dimension = constraint.Dimension
             original = float(dimension.Value)
