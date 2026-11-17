@@ -102,6 +102,19 @@ feature, and the build stopped.
   and views have no `GenerativeBehavior`. A product is needed (above).
 - PDF export: `ExportData` on the drawing is missing, on the document E_FAIL.
 
+### First live drawings (bracket, `--assembly adopt --drawing auto`)
+
+Every step ran: one drawing per part and one for the product, A4 landscape,
+first angle, frame, title block (8 texts), generated dimensions.
+
+| Drawing | Scale | Views | Dimensions | Extras |
+| --- | --- | --- | --- | --- |
+| Plate (8 mm thick) | 2:1 | front, top, isometric | 3 | |
+| Bolt (part of revolution) | 5:1 | front across the axis, left, isometric | 2 | |
+| Bracket (product) | 2:1 (isometric 1:1) | front, isometric | 3 | BOM of 2 rows, 2 balloons |
+
+No PDF: `ExportData` is refused (above).
+
 A failed view is removed from the sheet and recorded. The views derived
 from it are skipped. Everything else goes on. A dialog that blocks a
 drawing stops the drafting step (`stopped`); the build report is still
