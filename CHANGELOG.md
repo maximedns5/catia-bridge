@@ -16,6 +16,11 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **More features:** ruled lofts through three or more sections (one
+  checked two-section loft per pair, joined: OpenCascade's ruled bands),
+  chamfers given by an angle (build123d's two-distance conversion), Frenet
+  sweeps along planar paths (the same solid), and `remove` (dropped bodies
+  deleted). New fixture: a ruled loft through three squares.
 - **Assemblies** (`--assembly product --step MODEL.step`, `docs/assemblies.md`):
   the model's STEP file gives the assembly the tree loses (each part's own
   frame, instances, sub-assemblies, colours). Every tree part is matched to

@@ -57,6 +57,8 @@ CLOSED_FORM_MM3 = {
     "m4_sweep_offset_profile": 3 * 2 * (40 + (15 - 2) * math.pi / 2 + 20),
     "m4_sweep_cut_groove": 60 * 40 * 20 - math.pi * 2**2 / 2 * (20 + 10 * math.pi / 2),
     "m8_hexagon_pad": 3 * math.sqrt(3) / 2 * 12**2 * 10,
+    # Two ruled bands: prismatoids h/6 (A0 + 4 Am + A1).
+    "m9_ruled_three_squares": 10 / 6 * (100 + 4 * 13**2 + 256) + 10 / 6 * (256 + 4 * 12**2 + 64),
 }
 
 
@@ -422,6 +424,9 @@ class _FakePart:
 
     def delete(self, feature):
         self.deleted.append(feature)
+        if isinstance(feature, _Body):  # a whole body
+            feature.solids = []
+            return
         feature.body.solids = getattr(feature, "base", [])
 
     def _hole(self, sketch, depth):
@@ -1511,3 +1516,81 @@ def test_a_turned_part_is_edited_by_its_profile(monkeypatch):
     assert report["success"], report.get("error")
     (dimension,) = edits
     assert dimension is not None and dimension.type == 1  # a distance to an axis
+
+
+# ── Features added from the missing-features research ──
+
+
+def test_a_ruled_loft_through_three_sections_is_two_lofts_joined(monkeypatch):
+    part = _FakePart()
+    tree = load("m9_ruled_three_squares")
+    want = {"/M9/RuledTower": {"volume_mm3": CLOSED_FORM_MM3["m9_ruled_three_squares"]}}
+    report = _builder(part, monkeypatch).build(tree, want, check_editability=False)
+    assert report["success"], report.get("error")
+    assert len(_lofts(part)) == 2
+    entry = report["parts_detail"][0]["features"][3]
+    assert entry["catia"][-1].startswith("add")
+    assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(3213.3333, abs=1e-3)
+
+
+def test_smooth_lofts_through_three_sections_and_mixed_ruled_chains_are_refused():
+    tree = load("m9_ruled_three_squares")
+    tree["parts"][0]["features"][3]["ruled"] = False
+    assert "smooth lofts through more than two sections are not supported yet" in analyze(tree)
+    tree = load("m9_ruled_three_squares")
+    tree["parts"][0]["features"][1] = dict(
+        tree["parts"][0]["features"][1],
+        entities=[{"type": "circle", "center": [0, 0], "radius": 8, "id": "c"}],
+        profiles=[{"outer": ["c"], "inner": []}])
+    assert any("same number of edges" in r for r in analyze(tree))
+
+
+def test_frenet_sweeps_along_planar_paths_are_accepted_as_the_same_solid():
+    tree = load("m4_sweep_pipe")
+    next(f for f in tree["parts"][0]["features"] if f["type"] == "sweep")["frenet"] = True
+    assert not analyze(tree)
+    pytest.importorskip("build123d")
+    from catia_mcp.tree.reference import expected
+
+    (frenet,) = expected(tree, features=False).values()
+    assert frenet["volume_mm3"] == pytest.approx(CLOSED_FORM_MM3["m4_sweep_pipe"], rel=1e-6)
+
+
+def test_a_chamfer_by_angle_is_build123d_s_two_distance_chamfer():
+    from catia_mcp.tree.geometry import chamfer_second
+
+    assert chamfer_second({"distance": 2.0, "angle": 30.0}) == pytest.approx(
+        2 * math.tan(math.radians(30)))
+    assert chamfer_second({"distance": 2.0, "distance2": 1.0, "angle": 30.0}) == 1.0
+    assert chamfer_second({"distance": 2.0}) is None
+    tree = load("m3_asymmetric_chamfer")
+    chamfer = next(f for f in tree["parts"][0]["features"] if f["type"] == "chamfer")
+    second = chamfer.pop("distance2")
+    chamfer["angle"] = math.degrees(math.atan(second / chamfer["distance"]))
+    assert not analyze(tree)
+    pytest.importorskip("build123d")
+    from catia_mcp.tree.reference import expected
+
+    (by_angle,) = expected(tree, features=False).values()
+    (by_lengths,) = expected(load("m3_asymmetric_chamfer"), features=False).values()
+    assert by_angle["volume_mm3"] == pytest.approx(by_lengths["volume_mm3"], rel=1e-9)
+
+
+def test_removed_bodies_leave_the_part(monkeypatch):
+    tree = load("m1_offset_block")
+    part_tree = tree["parts"][0]
+    sketch = dict(part_tree["features"][0], id="sketch9")
+    part_tree["features"] += [
+        sketch,
+        {"type": "extrude", "id": "extrude9", "sketch": "sketch9", "distance": 5,
+         "operation": "new_body", "creates": ["Scratch"]},
+        {"type": "remove", "id": "remove1", "bodies": ["Scratch"]}]
+    part_tree.pop("bodies", None)
+    assert not analyze(tree)
+    part = _FakePart()
+    built = _builder(part, monkeypatch)
+    report = built.build(tree, {part_tree["id"]: {"volume_mm3": 80000.0}},
+                         check_editability=False)
+    assert report["success"], report.get("error")
+    assert report["parts_detail"][0]["features"][-1]["catia"][0].endswith("deleted")
+    assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(80000.0)

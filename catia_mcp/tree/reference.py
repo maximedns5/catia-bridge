@@ -41,6 +41,7 @@ from catia_mcp.tree.extrude import extrude_vector
 from catia_mcp.tree.geometry import (
     Frame,
     add,
+    chamfer_second,
     frame_axes,
     hole_profile_sketch,
     hole_segments,
@@ -160,9 +161,8 @@ def _dressup(feature: dict[str, Any], body: Any) -> Any:
         if feature.get("face"):
             (match,) = match_faces([feature["face"]], _face_candidates(body))
             face = match.handle
-        second = feature.get("distance2")
-        return body.chamfer(float(feature["distance"]),
-                            None if second is None else float(second), edges, face)
+        second = chamfer_second(feature)
+        return body.chamfer(float(feature["distance"]), second, edges, face)
     except AnchorError as error:
         raise ReferenceError(f"{kind} {feature.get('id')}: {error}") from error
 
@@ -237,6 +237,9 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
                 for radius, top, bottom in hole_segments(feature):
                     plane = Plane(origin=add(origin, scale(z_dir, bottom)), x_dir=x_dir, z_dir=z_dir)
                     bodies[target] = bodies[target] - Solid.make_cylinder(radius, top - bottom, plane)
+        elif kind == "remove":
+            for name in feature["bodies"]:
+                bodies.pop(name, None)
         elif kind in ("fillet", "chamfer", "shell"):
             (target,) = feature["bodies"]
             bodies[target] = _dressup(feature, bodies[target])

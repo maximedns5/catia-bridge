@@ -335,3 +335,14 @@ def frame_axes(matrix: list[list[float]]):
         return tuple(float(matrix[i][j]) for i in range(3))
 
     return column(3), column(0), column(2)
+
+
+def chamfer_second(feature: dict[str, Any]) -> float | None:
+    """A chamfer's second distance: `distance2`, or for a chamfer given by
+    an angle, build123d's own conversion length * tan(angle) (it builds a
+    two-distance chamfer); None for an equal-distance chamfer."""
+    if feature.get("distance2") is not None:
+        return float(feature["distance2"])
+    if feature.get("angle") is not None:
+        return float(feature["distance"]) * math.tan(math.radians(float(feature["angle"])))
+    return None
