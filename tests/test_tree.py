@@ -168,9 +168,8 @@ class _Factory:
         return self._curve({"type": "line", "start": [u0, v0], "end": [u1, v1]})
 
     def CreateClosedCircle(self, cu, cv, r):
-        circle = self._curve({"type": "circle", "center": [cu, cv], "radius": r})
-        circle.CenterPoint = SimpleNamespace(uv=(cu, cv))
-        return circle
+        self.entities.append({"type": "circle", "center": [cu, cv], "radius": r})
+        return _Circle(self.entities[-1])
 
     def CreateCircle(self, cu, cv, r, a0, a1):
         point = lambda a: [cu + r * math.cos(a), cv + r * math.sin(a)]
@@ -180,6 +179,23 @@ class _Factory:
     def CreatePoint(self, u, v):
         self.points.append(SimpleNamespace(uv=(u, v)))
         return self.points[-1]
+
+
+class _Circle:
+    """A closed circle: live on R428 its CenterPoint fails until one is set."""
+
+    def __init__(self, entity):
+        self.entity, self.StartPoint, self.EndPoint, self._centre = entity, None, None, None
+
+    @property
+    def CenterPoint(self):
+        if self._centre is None:
+            raise RuntimeError("La méthode CenterPoint a échoué")
+        return self._centre
+
+    @CenterPoint.setter
+    def CenterPoint(self, point):
+        self._centre = point
 
 
 class _Constraints:
@@ -1343,3 +1359,15 @@ def test_exact_style_sketches_stay_unconstrained(monkeypatch):
     assert report["success"], report.get("error")
     assert not part.pads[0].sketch.Constraints.made
     assert "constraints" not in report["parts_detail"][0]["features"][1]
+
+
+def test_a_constrained_circle_is_given_its_centre_point(monkeypatch):
+    """Live on R428 a closed circle's CenterPoint failed until one was set."""
+    part = _FakePart(through_depth=8.0)
+    tree, expected = _pattern_expected("m7_hole_circle", 4.0)
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    assert report["parts_detail"][0]["features"][1]["constraints"] == {
+        "added": 2, "shapes": ["circle"], "free": []}
+    made = part.pads[0].sketch.Constraints.made
+    assert [k.type for k in made] == [14, 2]  # radius, centre on the origin

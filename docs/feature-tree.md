@@ -192,6 +192,12 @@ profiles (slots, polygons, arcs, splines) stay free, listed in
 `constraints.free`. The editability check also edits the first pad's sketch
 width (or radius) by 1 mm and back (`sketch_editable`, `sketch_edit_note`).
 
+Live on R428 (French): every rectangle and hole position was fully
+constrained with status 0, and the sketch width edit moved and restored the
+volume on every part (sample1's plate 60 → 61 → 60 mm). A closed circle has
+no centre point until one is given (`CenterPoint` failed), so one is created
+and set, as CATIA's own macros do.
+
 Next: constraints for slots, polygons and revolve profiles, and driving
 sketch dimensions by the script's numbers (the tree gives no `params` for sketch dimensions yet: a
 contract request).

@@ -1267,7 +1267,13 @@ class TreeBuilder:
                 drawn[key] = {"type": "line", "id": key, "start": (u0, v0), "end": (u1, v1)}
             elif kind == "circle":
                 cu, cv = local(entity["center"])
-                objects[key] = factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
+                circle = factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
+                if connect:
+                    # A closed circle has no centre point until one is given
+                    # (live on R428 CenterPoint failed): as CATIA's macros do.
+                    with contextlib.suppress(Exception):
+                        circle.CenterPoint = factory.CreatePoint(cu, cv)
+                objects[key] = circle
                 drawn[key] = {"type": "circle", "id": key, "center": (cu, cv),
                               "radius": float(entity["radius"])}
             elif kind == "point":  # a Hole's position (not a tree entity)
