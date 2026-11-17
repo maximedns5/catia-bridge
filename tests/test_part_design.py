@@ -680,6 +680,8 @@ def _standard_read_only(part, hole):
         def CreateStandardThreadDesignTable(self, kind):  # noqa: N802
             self.__dict__["loaded"] = kind
             self.__dict__["HoleThreadStandard"] = partdesign_com.COARSE_STANDARD
+            name = f"ThreadTable.{len(part.tables) + 1}"
+            part.tables[name] = self
 
     copy = ReadOnly.__new__(ReadOnly)
     copy.__dict__.update(hole.__dict__)
@@ -688,9 +690,48 @@ def _standard_read_only(part, hole):
     return copy
 
 
+class _Relations:
+    """The part's relations: thread standard tables, removable by name."""
+
+    def __init__(self, tables):
+        self.tables = tables
+
+    @property
+    def Count(self):  # noqa: N802
+        return len(self.tables)
+
+    def Item(self, i):  # noqa: N802
+        return SimpleNamespace(Name=list(self.tables)[i - 1])
+
+    def Remove(self, name):  # noqa: N802
+        hole = self.tables.pop(name)
+        hole.__dict__["HoleThreadStandard"] = ""  # the diameter is free again
+
+
+def test_a_standard_table_that_locks_another_drill_is_removed(monkeypatch):
+    # Live on R428 an M8 table locked the Hole's diameter away from the
+    # tree's tap drill, and every later edit of the Hole failed.
+    tree = truncate(load("m10_tapped_holes"), None, "hole1")
+    part = _PlusPart(standard_locks_diameter=True)
+    part.tables = {}
+    part.Relations = _Relations(part.tables)
+    original = part._hole
+    part.ShapeFactory.AddNewHoleFromSketch = \
+        lambda sketch, depth: _standard_read_only(part, original(sketch, depth))
+    report = _plus_builder(part, monkeypatch).build(tree, _expected(tree), check_editability=False)
+    assert report["success"], report.get("error")
+    (hole,) = _holes(part)
+    assert not part.tables and hole.Diameter.Value == 5.0
+    thread = _entry(report, "hole1")["thread"]
+    assert thread["standard"] == "No Standard"
+    assert "Metric Thick Pitch" in thread["tried"][0]
+
+
 def test_a_standard_that_cannot_be_set_is_loaded_from_its_table(monkeypatch):
     tree = truncate(load("m10_tapped_holes"), None, "hole1")
     part = _PlusPart()
+    part.tables = {}
+    part.Relations = _Relations(part.tables)
     original = part._hole
 
     def read_only(sketch, depth):

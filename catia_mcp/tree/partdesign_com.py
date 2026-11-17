@@ -91,6 +91,7 @@ class PartDesignPlus:
     def __init__(self, builder: Any) -> None:
         self.builder = builder
         self._enums: dict[str, dict[str, int]] = {}
+        self._loaded: list[str] = []  # relations a thread standard's table added
 
     # ── Draft ──
 
@@ -150,14 +151,18 @@ class PartDesignPlus:
         # (live on R428 AddNewDraft failed without it). The faces are given
         # at creation, or added to the domain after an empty first face (the
         # route Thickness takes).
-        routes = (("no parting element", lambda: empty(""), False),
-                  ("parting = neutral", lambda: neutral, False),
-                  ("faces added after", lambda: empty(""), True))
-        for parting_label, parting, later in routes:
+        # A fourth route gives CATIA nothing at creation, then sets the
+        # neutral element and the faces on the draft's domain.
+        routes = (("no parting element", lambda: empty(""), False, False),
+                  ("parting = neutral", lambda: neutral, False, False),
+                  ("faces added after", lambda: empty(""), True, False),
+                  ("all set on the domain", lambda: empty(""), True, True))
+        for parting_label, parting, later, bare in routes:
             part.InWorkObject = body
             try:
                 first = empty("") if later else refs[0]
-                made = factory.AddNewDraft(first, neutral, DRAFT_NO_PROPAGATION, parting(),
+                made = factory.AddNewDraft(first, empty("") if bare else neutral,
+                                           DRAFT_NO_PROPAGATION, parting(),
                                            pull[0], pull[1], pull[2], DRAFT_STANDARD, angle,
                                            DRAFT_MULTISELECTION)
             except Exception as error:  # the next route
@@ -167,6 +172,11 @@ class PartDesignPlus:
             with contextlib.suppress(Exception):
                 domain = made.DraftDomains.Item(1)
             holder = domain if domain is not None else made
+            if bare and not _set_neutral(holder, neutral):
+                refused.append(f"{parting_label}: no way to set the neutral element")
+                with contextlib.suppress(Exception):
+                    self.builder._delete(made)
+                continue
             for ref in (refs if later else refs[1:]):
                 holder.AddFaceToDraft(ref)
             with contextlib.suppress(Exception):
@@ -436,7 +446,7 @@ class PartDesignPlus:
         record["threading_mode"] = f"{mode} ({how})"
         record["verified"] = how == "type library"
         if not _set_prop(hole, "ThreadingMode", mode):
-            self._smooth(hole, record, entry, ["CATIA refused ThreadingMode"])
+            self._smooth(hole, record, entry, ["CATIA refused ThreadingMode"], None)
             return
         tap = float(feature["diameter"])
         standards = [(COARSE_STANDARD if spec.coarse else FINE_STANDARD, spec.designation),
@@ -468,7 +478,8 @@ class PartDesignPlus:
                 return
             except Exception as error:  # the next standard
                 tried.append(f"{standard}: {error}")
-        self._smooth(hole, record, entry, tried)
+                self._unload_standard(hole, tap)
+        self._smooth(hole, record, entry, tried, tap)
 
     def _set_standard(self, hole: Any, standard: str, designated: bool,
                       tried: list[str]) -> None:
@@ -487,18 +498,37 @@ class PartDesignPlus:
         try:
             kind = self._enum("CatHoleThreadStandard",
                               "thick" if standard == COARSE_STANDARD else "thin")
+            relations = self.builder.part.Relations
+            before = _relation_names(relations)
             hole.CreateStandardThreadDesignTable(kind)
+            self._loaded = [n for n in _relation_names(relations) if n not in before]
         except Exception as error:
             raise PartDesignFailed(f"{first}; CreateStandardThreadDesignTable: {error}") \
                 from error
 
+    def _unload_standard(self, hole: Any, tap: float) -> None:
+        """Undo a standard's table that did not fit: it drives the Hole's
+        diameter (live on R428 an M8 table locked the diameter away from the
+        tree's 6.8 mm tap drill, and every later edit of the Hole failed).
+        The relations it added are removed and the tap drill set again."""
+        relations = self.builder.part.Relations
+        for name in self._loaded:
+            with contextlib.suppress(Exception):
+                relations.Remove(name)
+        self._loaded = []
+        with contextlib.suppress(Exception):
+            hole.Diameter.Value = tap
+
     def _smooth(self, hole: Any, record: dict[str, Any], entry: dict[str, Any],
-                tried: list[str]) -> None:
+                tried: list[str], tap: float | None) -> None:
         """The Hole stays, smooth: its volume is the tree's either way. A
         threading mode left on with no valid thread breaks the part's update
         (live on R428), so the Hole is set back to smooth and updated."""
         with contextlib.suppress(Exception):
             hole.ThreadingMode = self._enum("CatHoleThreadingMode", "smooth")
+        if tap is not None:
+            self._unload_standard(hole, tap)
+        with contextlib.suppress(Exception):
             self.builder.part.UpdateObject(hole)
         record["tried"] = tried
         entry.setdefault("notes", []).append(
@@ -530,6 +560,26 @@ class PartDesignPlus:
             raise PartDesignFailed(f"cannot tell which {name} value means '{wanted}' "
                                    f"(type library: {self._enums[name]})")
         return hits[0]
+
+
+def _set_neutral(domain: Any, neutral: Any) -> bool:
+    """The neutral element of a draft domain, by the setter or the property
+    (the help names both in different releases)."""
+    for way in (lambda: domain.SetNeutralElement(neutral),
+                lambda: setattr(domain, "NeutralElement", neutral)):
+        try:
+            way()
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _relation_names(relations: Any) -> list[str]:
+    try:
+        return [str(relations.Item(i).Name) for i in range(1, int(relations.Count) + 1)]
+    except Exception:  # no Relations to read: nothing to undo later
+        return []
 
 
 def _fmt(p: Vec) -> str:
