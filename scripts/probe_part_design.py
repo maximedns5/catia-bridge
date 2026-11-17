@@ -51,14 +51,15 @@ FIXTURES = (
 )
 ENUMS = ("CatLimitMode", "CatHoleThreadingMode", "CatHoleThreadSide", "CatHoleBottomType",
          "CatHoleType", "CatDraftMode", "CatDraftNeutralPropagationMode",
-         "CatDraftMultiselectionMode", "CatDraftPartingMode")
+         "CatDraftMultiselectionMode", "CatDraftPartingMode", "CatHoleThreadStandard")
+SIGNATURES = ("AddNewDraft", "AddNewCloseSurface", "AddNewHoleFromSketch", "AddNewLoft")
 
 
 def facts(platform: str, plm_type: str) -> dict[str, Any]:
     """The enums, read from the type library in a scratch part."""
     from catia_mcp.com_guard import ComWorker
     from catia_mcp.connection import CATIAConnection
-    from catia_mcp.introspect import find_enum
+    from catia_mcp.introspect import find_enum, method_params
     from catia_mcp.tools.document import DocumentTools
 
     conn = CATIAConnection(platform=platform, allow_launch=False)
@@ -69,7 +70,10 @@ def facts(platform: str, plm_type: str) -> dict[str, Any]:
         DocumentTools(conn)._new_part("PartDesignProbe", plm_type if conn.is_3dx else "auto")
         part = conn.get_active_part()
         objs = [part.ShapeFactory, conn.app]
-        return {name: find_enum(objs, name) for name in ENUMS}
+        found: dict[str, Any] = {name: find_enum(objs, name) for name in ENUMS}
+        # The exact signatures: live on R428 AddNewDraft failed every way tried.
+        found["signatures"] = {m: method_params(part.ShapeFactory, m) for m in SIGNATURES}
+        return found
 
     out["enums"] = worker.run_guarded(read, label="the enums")
     return out

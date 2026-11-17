@@ -200,6 +200,18 @@ V 1, trimmed 2), `CatDraftMode`, `CatDraftNeutralPropagationMode` and
 `CatDraftMultiselectionMode` (0 first). `CatHoleThreadStandard` and
 `CatDraftPartingMode` were not found.
 
+Second run, after those changes:
+
+- `m10_loft_pyramid_tip`: exact (2000 mm3), as a Close Surface of its faces.
+- `m10_tapped_holes`: the blind M6 threaded live ("Metric Thick Pitch",
+  loaded from its table). The through M8 failed: the M8 table locked the
+  Hole's diameter away from the tree's 6.8 mm tap drill, and the hole was
+  rebuilt as cut cylinders. A table that does not fit is now removed (the
+  relations it added) and the tap drill set again, before "No Standard".
+- Drafts: still refused, with every route above. A fourth route sets the
+  neutral element on the draft's domain, and the probe now reads the exact
+  signature of `AddNewDraft` from the type library.
+
 ## Not done yet
 
 - Stiffener: no build123d operation, so no tree carries one.
