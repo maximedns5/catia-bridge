@@ -1,0 +1,268 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/Props/Plate",
+   "name": "Plate",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       -4
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30,
+        -20
+       ],
+       "end": [
+        30,
+        -20
+       ],
+       "id": "e0"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        -20
+       ],
+       "end": [
+        30,
+        20
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        20
+       ],
+       "end": [
+        -30,
+        20
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        -30,
+        20
+       ],
+       "end": [
+        -30,
+        -20
+       ],
+       "id": "e3"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e0",
+        "e1",
+        "e2",
+        "e3"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 8,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ],
+     "params": {
+      "distance": {
+       "arg": "height",
+       "kind": "literal",
+       "value": 8,
+       "factor": 1.0,
+       "slope": 1.0,
+       "intercept": 0.0,
+       "file": "model.py",
+       "line": 3,
+       "col": 4,
+       "base_shift": 0.5
+      }
+     }
+    },
+    {
+     "type": "hole",
+     "id": "hole1",
+     "name": "Hole1",
+     "kind": "simple",
+     "diameter": 6,
+     "depth": null,
+     "effective_depth": 16.0,
+     "positions": [
+      [
+       15,
+       0,
+       4
+      ]
+     ],
+     "direction": [
+      0,
+      0,
+      -1
+     ],
+     "frames": [
+      [
+       [
+        1,
+        0,
+        0,
+        15
+       ],
+       [
+        0,
+        1,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        1,
+        4
+       ]
+      ]
+     ],
+     "bodies": [
+      "Body1"
+     ],
+     "params": {
+      "diameter": {
+       "arg": "radius",
+       "kind": "literal",
+       "value": 3,
+       "factor": 2.0,
+       "slope": 1.0,
+       "intercept": 0.0,
+       "file": "model.py",
+       "line": 6,
+       "col": 4
+      }
+     },
+     "color": [
+      0.2,
+      0.4,
+      0.8
+     ]
+    }
+   ],
+   "color": [
+    0.8,
+    0.1,
+    0.1
+   ],
+   "material": {
+    "name": "Steel",
+    "catalog_name": "Steel",
+    "density_kg_m3": 7850
+   },
+   "properties": {
+    "part_number": "PLATE-001",
+    "revision": "A",
+    "definition": "Mounting plate",
+    "nomenclature": "Plate",
+    "description": "60 x 40 x 8 plate with one hole",
+    "source": "made",
+    "user": {
+     "AppModelId": "demo-plate",
+     "Finish": "painted"
+    }
+   },
+   "parameters": [
+    {
+     "name": "Wall",
+     "type": "length",
+     "value": 2.5,
+     "comment": "minimum wall left by a hole"
+    },
+    {
+     "name": "DraftAngle",
+     "type": "angle",
+     "value": 1.5,
+     "comment": "casting draft"
+    },
+    {
+     "name": "Margin",
+     "type": "real",
+     "value": 1.2
+    },
+    {
+     "name": "HoleCount",
+     "type": "integer",
+     "value": 1
+    },
+    {
+     "name": "Painted",
+     "type": "boolean",
+     "value": true
+    },
+    {
+     "name": "Supplier",
+     "type": "string",
+     "value": "in-house"
+    }
+   ],
+   "configurations": [
+    {
+     "name": "Thin",
+     "params": {
+      "Extrude1_height": 6,
+      "Hole1_radius": 2.5,
+      "Wall": 2
+     }
+    },
+    {
+     "name": "Thick",
+     "params": {
+      "Extrude1_height": 12,
+      "Hole1_radius": 4,
+      "Wall": 3
+     }
+    }
+   ],
+   "checks": [
+    {
+     "name": "WallCheck",
+     "parameter": "Wall",
+     "min": 1,
+     "max": 10,
+     "comment": "a wall under 1 mm does not cast"
+    }
+   ]
+  }
+ ]
+}

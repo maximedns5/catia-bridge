@@ -30,6 +30,10 @@ Keep the new part's window active during a build. The build stops if the
 active window changes, because 3DEXPERIENCE measures and searches only in the
 active editor.
 
+Colours, materials and mass, product properties and Knowledgeware (a
+parameter set, a design table, checks) are applied after each part when the
+tree carries them: see [materials-properties.md](materials-properties.md).
+
 ## Supported features (milestones 1 to 5)
 
 | Tree feature | CATIA |

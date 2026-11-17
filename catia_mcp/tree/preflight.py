@@ -25,6 +25,7 @@ from catia_mcp.tree.geometry import (
 )
 from catia_mcp.tree.loft import plan_loft
 from catia_mcp.tree.nurbs import Nurbs
+from catia_mcp.tree.properties import check as check_properties
 from catia_mcp.tree.requirements import refuse_unavailable
 from catia_mcp.tree.step_source import StepSource
 from catia_mcp.tree.sweep import sweep_expectation
@@ -86,6 +87,7 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
             # in world coordinates; placing world coordinates would move the
             # part twice.
             refuse("parts placed by a parent location are not supported yet", pid)
+        check_properties(part, refuse, pid)  # color, material, properties, parameters...
         ids: set[str] = set()
         sketches: dict[str, dict[str, Any]] = {}
         bodies: set[str] = set()
