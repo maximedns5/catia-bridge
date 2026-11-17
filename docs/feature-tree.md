@@ -54,6 +54,12 @@ active editor.
 | `chamfer` with one or two distances on line and circle edges | One Chamfer (`AddNewChamfer`, two-length mode, tangency propagation). With two distances, `distance` goes on the plane `face`, which must hold every edge |
 | `shell` with at least one removed face, inside or outside, `Kind.ARC` or `Kind.INTERSECTION` | One Shell (`AddNewShell`, then `AddFaceToRemove`), the thickness inside (`thickness` < 0) or outside |
 
+Live on R428 (French), each on its first try and exact in volume: a body
+copied once turned 90° (pasted as a result with its link, then a Rotate)
+and once moved 30 mm (a Translate by direction and distance), a ruled loft
+through three squares (two lofts joined), a chamfer given by an angle, a
+Frenet sweep and a removed body.
+
 A sweep with `frenet` is accepted: along a planar path the Frenet frame's
 binormal is constant, so it is the same solid (build123d gives the same
 volume and centre of gravity to 1e-6). A chamfer given by an `angle` is
