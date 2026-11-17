@@ -128,6 +128,23 @@ object model), with `--create` a published plane and a Fix (both removed
 again), and with `--apply fix|infer|contact` the build's own code (left in
 place: close without saving).
 
+### First live probe (3DEXPERIENCE R428, French, student role, bracket imported)
+
+- The three instances are matched by name, position and shared reference.
+- None of the five routes has `AddMonoEltCst` / `AddBiEltCst`. Route 2
+  answers: `GetItem("CATEngConnections")` gives an `EngConnections`
+  collection (`Add`, `AddWithContext`, `Count`, `Item`, `Remove`), empty on
+  an imported STEP. That is the engineering connections' API; how `Add` is
+  called is not known yet.
+- The `CatConstraint*` enums are not in the type libraries reached.
+- `Publications` exists on the `VPMReference` of the product and of each
+  part, not on the `Part` object.
+
+The probe's `engcnx` step now reads the signatures of `EngConnections`, the
+enums whose names mention connections or constraints, and the publications
+of a part reference; with `--engcnx-create` it tries `Add` with a few
+candidate arguments, describes what each makes, and removes it.
+
 ## Assembly Design coverage
 
 | Capability | Status |
