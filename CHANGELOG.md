@@ -39,7 +39,10 @@ All notable changes to this project are documented here.
   geometry so nothing moves. The editability check also edits the first
   pad's sketch width. Slots (tangencies, radii, length, position) and
   regular polygons (vertices on a construction circle, sides driven by
-  formulas from its radius, so they stay regular when edited) too.
+  formulas from its radius, so they stay regular when edited) too, and
+  stepped outlines (a stepped shaft's revolve profile, an L-shaped pad):
+  each line horizontal or vertical and placed by its distance to the sketch
+  axes. Shaft and groove sketches are now constrained as well.
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that

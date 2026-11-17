@@ -1460,3 +1460,41 @@ def test_slot_and_hexagon_sketches_are_built_constrained(monkeypatch):
     assert entry["constraints"]["formulas"] == 5 and "refused" not in entry["constraints"]
     formulas = list(part.Relations.formulas.values())
     assert formulas[0][1].startswith("2*`Contrainte.7`*sin(180deg/6)")
+
+
+def test_stepped_profiles_are_placed_line_by_line_from_the_sketch_axes():
+    from catia_mcp.tree import constraints as c
+
+    def outline(points):
+        return [{"type": "line", "id": f"e{i}", "start": points[i],
+                 "end": points[(i + 1) % len(points)]} for i in range(len(points))]
+
+    shaft = c.plan([outline([(10, 0), (18, 0), (18, 25), (15, 25), (15, 40), (10, 40)])])
+    assert shaft.shapes == ["stepped profile (6 lines)"] and len(shaft.constraints) == 12
+    placed = [(k.name, k.value) for k in shaft.constraints[6:]]
+    assert placed == [("on the H axis", None), ("x", 18), ("y", 25), ("x", 15), ("y", 40),
+                      ("x", 10)]
+    ell = c.plan([outline([(0, 0), (30, 0), (30, 10), (10, 10), (10, 25), (0, 25)])])
+    assert ell.shapes == ["stepped profile (6 lines)"]
+    collinear = outline([(0, 0), (10, 0), (20, 0), (20, 10), (0, 10)])
+    collinear.append({"type": "line", "id": "x", "start": (0, 10), "end": (0, 0)})
+    assert c.plan([collinear]).shapes == []
+    slanted = outline([(0, 0), (30, 0), (30, 10), (12, 10), (10, 25), (0, 25)])
+    assert c.plan([slanted]).free == ["6 curve(s): line"]
+
+
+def test_revolve_profiles_are_constrained_in_the_human_style(monkeypatch):
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(load("m2_shaft_axis_off_origin"),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    entry = next(f for f in report["parts_detail"][0]["features"] if f["type"] == "revolve")
+    assert entry["constraints"] == {"added": 12, "shapes": ["stepped profile (6 lines)"],
+                                    "free": []}
+    part = _FakePart()
+    tree, expected = _human_tree("m2_partial_revolve_cut_h_axis")
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    groove = report["parts_detail"][0]["features"][3]
+    assert groove["catia"][0].startswith("groove") and groove["constraints"]["shapes"] == [
+        "rectangle"]

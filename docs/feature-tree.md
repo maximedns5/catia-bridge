@@ -173,7 +173,8 @@ match, the seed and the pattern are deleted and each position gets its own
 Hole; the report notes why.
 
 **Sketch constraints** (`catia_mcp/tree/constraints.py`). In the human
-style the sketches of pads, pockets and holes are drawn as connected
+style the sketches of pads, pockets, holes, shafts and grooves are drawn as
+connected
 contours and constrained as a designer would, in the CATIA sketch's own
 frame:
 
@@ -183,6 +184,7 @@ frame:
 | circle | radius, and its centre on the origin, on an axis, or at a distance from each |
 | a Hole's position point | on the origin, on an axis, or at a distance from each |
 | slot (two lines, two arcs tangent where they meet, along H or V) | 4 tangencies, each arc's radius, the lines' length, and its position: the arc centres symmetric about the axis across the slot when centred along it, else horizontal (or vertical) and the first centre's distance to the axes |
+| stepped profile (a closed outline of alternately horizontal and vertical lines: a stepped shaft's revolve profile, an L or T pad) | each line horizontal or vertical, and its distance to the sketch axis it is parallel to (or on it): for a revolve profile on a sketch whose axis is the revolve axis, the radii and the step heights |
 | regular polygon | vertices on a construction circle, its radius and centre, one side horizontal or vertical when one is; the sides are driven by formulas from the radius (side 1 `= 2*R*sin(180deg/n)`, the others `= side 1`), so editing the radius keeps it regular |
 
 Each constraint is made on the geometry as drawn, so it already holds and
@@ -206,8 +208,8 @@ constrained. A slot (tangencies, symmetry of the arc centres) and a hexagon
 editing the hexagon's radius 12 → 13 mm scaled its volume by exactly
 (13/12)², so it stayed regular.
 
-Next: constraints for revolve profiles, and driving sketch dimensions by the
-script's numbers (the tree gives no `params` for sketch dimensions yet: a
+Next: driving sketch dimensions by the script's numbers (the tree gives
+no `params` for them yet: a contract request) (the tree gives no `params` for sketch dimensions yet: a
 contract request).
 
 ## How the build stays faithful

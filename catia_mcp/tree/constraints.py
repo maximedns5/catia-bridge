@@ -20,7 +20,13 @@ Recognised, each fully constrained (its degrees of freedom counted):
 - a regular polygon: its vertices on a construction circle, the circle's
   radius and centre, one side horizontal or vertical when one is, and the
   sides driven by formulas from the radius (side = 2 R sin(180 deg / n)),
-  so editing the radius keeps it regular (2n + 3).
+  so editing the radius keeps it regular (2n + 3);
+- a stepped profile (a closed outline of alternately horizontal and
+  vertical lines, such as a stepped shaft's revolve profile or an L-shaped
+  pad): each line horizontal or vertical, and each one's distance to the
+  sketch axis it is parallel to, or on it (2n). A revolve profile drawn on
+  a sketch whose axis is the revolve axis gets its radii as distances to
+  that axis.
 
 Other profiles (irregular polygons, open arcs, splines) are left free, and
 the report says so. Coordinates are in the CATIA sketch's own frame (H, V).
@@ -106,6 +112,9 @@ def plan(loops: list[list[dict[str, Any]]]) -> Plan:
             out.shapes.append("slot")
         elif len(loop) >= 3 and set(kinds) == {"line"} and _polygon(loop, out):
             out.shapes.append(f"regular polygon ({len(loop)} sides)")
+        elif set(kinds) == {"line"} and (stepped := _stepped(loop)) is not None:
+            out.constraints += stepped
+            out.shapes.append(f"stepped profile ({len(loop)} lines)")
         else:
             out.free.append(f"{len(loop)} curve(s): {', '.join(sorted(set(kinds)))}")
     return out
@@ -246,3 +255,35 @@ def _length(line) -> float:
 
 def _dist(a, b) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def _stepped(loop: list[dict[str, Any]]) -> list[Constraint] | None:
+    """A closed outline whose lines turn between horizontal and vertical at
+    every vertex: each line made horizontal or vertical (n), then placed by
+    its distance to the axis it is parallel to (n), which fixes its 2n
+    points. Collinear neighbours would make two distances one too many, so
+    the lines must alternate."""
+    n = len(loop)
+    if n < 4 or n % 2:
+        return None
+    if any(not _close(loop[i]["end"], loop[(i + 1) % n]["start"]) for i in range(n)):
+        return None
+    kinds = []
+    for e in loop:
+        flat = abs(e["start"][1] - e["end"][1]) < TOL
+        upright = abs(e["start"][0] - e["end"][0]) < TOL
+        if flat == upright:
+            return None  # slanted (or a point)
+        kinds.append("H" if flat else "V")
+    if any(kinds[i] == kinds[(i + 1) % n] for i in range(n)):
+        return None
+    out = [Constraint(HORIZONTAL if k == "H" else VERTICAL, (("entity", e["id"]),))
+           for e, k in zip(loop, kinds, strict=True)]
+    for e, k in zip(loop, kinds, strict=True):
+        # A horizontal line is placed from the H axis, a vertical one from V.
+        at = e["start"][1] if k == "H" else e["start"][0]
+        ref = ("entity", e["id"])
+        out.append(Constraint(ON, (ref, ("axis", k)), f"on the {k} axis") if abs(at) < TOL
+                   else Constraint(DISTANCE, (ref, ("axis", k)),
+                                   "y" if k == "H" else "x", abs(at)))
+    return out

@@ -720,7 +720,8 @@ class TreeBuilder:
         """A Shaft (join) or a Groove (cut) drawn in the body it changes."""
         frame = Frame.from_tree(sketch["plane"])
         want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
-        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry,
+                                                  constrain=self.style == "human")
         self.record.spline_allowance_mm3 += \
             approximation_area(sketch) * math.radians(angle) * want.max_radius
         part = self.part
@@ -968,7 +969,8 @@ class TreeBuilder:
                         axis_direction: Vec, angle: float, entry: dict[str, Any]) -> Any:
         frame = Frame.from_tree(sketch["plane"])
         want = revolve_expectation(frame, sketch, axis_origin, axis_direction, angle)
-        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry)
+        catia_sketch, _, catia_frame = self._draw(body, sketch, frame, entry,
+                                                  constrain=self.style == "human")
         approximation = approximation_area(sketch)
         allowance = approximation * math.radians(angle) * want.max_radius
         self.record.spline_allowance_mm3 += allowance
