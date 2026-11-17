@@ -234,7 +234,49 @@ class DressUps:
             self._drive(feature, "distance", lambda: chamfer.Length1)
             self._drive(feature, "distance2", lambda: chamfer.Length2)
 
+    def offset(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        """A shell with no removed face: the whole solid offset, as a
+        Thickness on every face of the body (each face moved, its neighbours
+        re-intersected). The sign CATIA gives a positive offset is not
+        documented: a Thickness that moves the volume the wrong way is
+        deleted and made again with the other sign."""
+        body = self._body(feature)
+        thickness = float(feature["thickness"])
+        refs = [cell.reference for cell in self.owned_cells(body, "Face", entry)]
+        if not refs:
+            raise DressUpFailed("the body has no face to offset")
+        part = self.builder.part
+        before, area = self.builder._volume(body), self._area(body)
+        t = abs(thickness)
+        slack = max(1e-3, 1e-3 * before)
+        if thickness < 0:
+            low, high = before - area * t - slack, before - slack
+        else:
+            low, high = before + slack, before + 2 * area * t + 32 / 3 * math.pi * t ** 3 + slack
+        tried = []
+        for sign in (1.0, -1.0):
+            part.InWorkObject = body
+            made = part.ShapeFactory.AddNewThickness(refs[0], sign * thickness)
+            for ref in refs[1:]:
+                made.AddFaceToThicken(ref)
+            part.UpdateObject(made)
+            after = self.builder._volume(body)
+            if low <= after <= high:
+                entry["catia"].append(str(made.Name))
+                if sign < 0:
+                    entry.setdefault("notes", []).append(
+                        f"{made.Name}: offset given the other sign to move the volume the "
+                        "tree's way")
+                return
+            tried.append(f"offset {sign * thickness:g} mm left {after:.4f} mm3")
+            self.builder._delete(made)
+        raise DressUpFailed(f"no Thickness moved {before:.4f} mm3 between {max(low, 0):.4f} and "
+                            f"{high:.4f} mm3 ({'; '.join(tried)})")
+
     def shell(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        if not feature.get("faces"):
+            self.offset(feature, entry)
+            return
         body = self._body(feature)
         thickness = float(feature["thickness"])
         candidates = self.face_candidates(body, entry)

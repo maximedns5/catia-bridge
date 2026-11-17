@@ -195,7 +195,9 @@ def test_preflight_refuses_dressups_it_cannot_build():
     cases.append((tree, "a chamfer angle must be a number of degrees in (0, 90)"))
     tree = load("m3_shell_open_top")
     _first(tree, "shell")["faces"] = []
-    cases.append((tree, "shells with no removed face (offset solids) are not supported yet"))
+    _first(tree, "shell")["thickness"] = 2
+    _first(tree, "shell")["join"] = "Kind.ARC"
+    cases.append((tree, "outward offsets with rounded edges (Kind.ARC) are not supported yet"))
     tree = load("m3_shell_open_top")
     _first(tree, "shell")["join"] = "Kind.TANGENT"
     cases.append((tree, "shell join 'Kind.TANGENT' is not supported"))
@@ -409,6 +411,9 @@ class _TopoPart(_FakePart):
         self.ShapeFactory.AddNewSolidEdgeFilletWithConstantRadius = self._fillet
         self.ShapeFactory.AddNewChamfer = self._chamfer
         self.ShapeFactory.AddNewShell = self._shell
+        self.ShapeFactory.AddNewThickness = self._thickness
+        # Whether a positive Thickness offset shrinks the body (unknown live).
+        self.thickness_reversed = False
         self.brep_calls = []
 
     @staticmethod
@@ -443,10 +448,26 @@ class _TopoPart(_FakePart):
         feature.AddFaceToRemove = feature.refs.append
         return feature
 
+    def _thickness(self, ref, offset):
+        feature = self._feature("thickness", refs=[ref], offset=offset)
+        feature.AddFaceToThicken = feature.refs.append
+        return feature
+
+    def _thickness_solids(self, thickness):
+        """Axis-aligned box bodies only: every face moved out by the offset."""
+        faces = [c for c in thickness.cells_before if c.kind == "Face"]
+        assert len(thickness.refs) == len(faces)  # every face thickened
+        t = thickness.offset * (-1 if self.thickness_reversed else 1)
+        lo = [min(c.centroid[i] for c in faces) - t for i in range(3)]
+        hi = [max(c.centroid[i] for c in faces) + t for i in range(3)]
+        volume, cog = _mass(thickness.before)
+        grown = math.prod(b - a for a, b in zip(lo, hi, strict=True))
+        return [(-volume, cog), (grown, tuple((a + b) / 2 for a, b in zip(lo, hi, strict=True)))]
+
     def UpdateObject(self, obj):
         kind = getattr(obj, "kind", None)
         body = getattr(obj, "body", None) or getattr(obj, "target", None)
-        if kind in ("fillet", "chamfer", "shell"):
+        if kind in ("fillet", "chamfer", "shell", "thickness"):
             if not hasattr(obj, "before"):
                 obj.before = list(body.solids)
                 obj.cells_before = list(body.shape_list[-1].cells)
@@ -834,3 +855,28 @@ def test_edge_lengths_read_in_metres_still_match(monkeypatch):
     report = _build("m3_fillet_corners", part, monkeypatch, length_unit=1e-3)
     assert report["success"], report.get("error")
     assert len(_of(part, "fillet")[0].refs) == 4
+
+
+@pytest.mark.parametrize("reversed_", [False, True])
+def test_an_offset_without_openings_is_a_thickness_on_every_face(monkeypatch, reversed_):
+    part = _TopoPart()
+    part.thickness_reversed = reversed_
+    tree = load("m9_offset_inward")
+    report = _topo_builder(part, monkeypatch).build(
+        tree, {"/M9/OffsetInward": {"volume_mm3": 26 * 16 * 6}}, check_editability=False)
+    assert report["success"], report.get("error")
+    made = _of(part, "thickness")
+    assert len(made[-1].refs) == 6 and made[-1].offset == (2 if reversed_ else -2)
+    entry = _entry(report, "shell")
+    assert entry["catia"] == [made[-1].Name]
+    assert bool(entry.get("notes")) == reversed_
+    assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(26 * 16 * 6)
+
+
+def test_an_outward_offset_grows_the_whole_solid(monkeypatch):
+    part = _TopoPart()
+    report = _topo_builder(part, monkeypatch).build(
+        load("m9_offset_outward"), {"/M9/OffsetOutward": {"volume_mm3": 22 * 12 * 10}},
+        check_editability=False)
+    assert report["success"], report.get("error")
+    assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(22 * 12 * 10)

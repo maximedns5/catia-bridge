@@ -28,6 +28,9 @@ All notable changes to this project are documented here.
 - **Scales** (`scale`): a Scaling about the frame's origin for equal
   factors, an Affinity in the frame otherwise, checked by volume and centre
   of gravity; the reference scales with OpenCascade's general affine map.
+- **Offsets without openings** (`shell` with no removed face, build123d's
+  `offset`): a Thickness on every face of the body, its sign set by the
+  volume; intersection joins either way, arc joins inward.
 - **Assemblies** (`--assembly product --step MODEL.step`, `docs/assemblies.md`):
   the model's STEP file gives the assembly the tree loses (each part's own
   frame, instances, sub-assemblies, colours). Every tree part is matched to

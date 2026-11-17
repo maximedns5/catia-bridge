@@ -53,6 +53,7 @@ active editor.
 | `sweep` of one profile along a planar, tangent-continuous path of lines and arcs, the profile perpendicular to the path where it starts, every operation | Rib in its own body, along the path drawn as a sketch in its own plane |
 | `fillet` with a constant radius on line and circle edges | One Edge Fillet (`AddNewSolidEdgeFilletWithConstantRadius`, tangency propagation) on the matched edges, one edge per tangent chain |
 | `chamfer` with one or two distances on line and circle edges | One Chamfer (`AddNewChamfer`, two-length mode, tangency propagation). With two distances, `distance` goes on the plane `face`, which must hold every edge |
+| `shell` with no removed face (build123d's `offset` without openings): `Kind.INTERSECTION` either way, `Kind.ARC` inward | One Thickness (`AddNewThickness`, then `AddFaceToThicken`) on every face of the body: each face moved, its neighbours re-intersected. The sign CATIA gives the offset is not documented: a Thickness that moves the volume the wrong way is deleted and made again with the other sign |
 | `shell` with at least one removed face, inside or outside, `Kind.ARC` or `Kind.INTERSECTION` | One Shell (`AddNewShell`, then `AddFaceToRemove`), the thickness inside (`thickness` < 0) or outside |
 
 Live on R428 (French), each on its first try and exact in volume: a body
@@ -69,9 +70,8 @@ and is built as one.
 
 Everything else is refused by `check`, for now: variable-radius fillets,
 fillets and chamfers on edges other than lines and circles, asymmetric chamfers without a plane reference face holding their
-edges or with three edges meeting at a corner, shells with no removed face
-(build123d's `offset` without openings shrinks or grows the solid rather than
-hollowing it), smooth (not ruled) lofts through more than two sections, ruled
+edges or with three edges meeting at a corner, outward offsets with rounded
+edges (`Kind.ARC`: a Thickness does not round the convex edges), smooth (not ruled) lofts through more than two sections, ruled
 ones mixing circles and polygons or different edge counts, lofts to a point,
 between sections that are not parallel or with correspondence rails, sweeps
 along 3D paths or paths with corners, tapers whose offset changes the
