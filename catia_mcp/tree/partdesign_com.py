@@ -351,7 +351,7 @@ class PartDesignPlus:
         corners = polygon_vertices(sketch)
         if cone is None and corners is not None:
             with contextlib.suppress(Exception):
-                b._delete(catia_sketch)  # the faces are drawn from the corners
+                self._hide(catia_sketch)  # the faces are drawn from the corners
             try:
                 made = self._faceted_cone(body, corners, plan.point, want, tol)
             except Exception as error:
@@ -367,7 +367,7 @@ class PartDesignPlus:
             raise PartDesignFailed(f"no Multi-sections Solid to the point gave {want.volume:.4f} "
                                    f"mm3 at {_fmt(want.cog)} (" + "; ".join(tried) + ")")
         with contextlib.suppress(Exception):
-            b._delete(catia_sketch)  # the section a Shaft does not use
+            self._hide(catia_sketch)  # the section a Shaft does not use
         profile, origin, axis = cone_profile(*cone)
         try:
             b._verified_shaft(body, profile, origin, axis, 360.0, entry)
@@ -424,6 +424,18 @@ class PartDesignPlus:
             raise PartDesignFailed(f"the Close Surface gave {volume:.4f} mm3 at {_fmt(cog)}, "
                                    f"not {want.volume:.4f} mm3 at {_fmt(want.cog)}")
         return str(closed.Name)
+
+    def _hide(self, sketch: Any) -> None:
+        """Hide the section a fallback does not use. Live on R428 deleting it
+        after the refused lofts was refused with a dialog ("Erreur de
+        suppression") that then blocked the next build."""
+        selection = self.builder.conn.hso
+        with contextlib.suppress(Exception):
+            selection.Clear()
+            selection.Add(sketch)
+            selection.VisProperties.SetShow(1)  # catVisPropertyNoShowAttr
+        with contextlib.suppress(Exception):
+            selection.Clear()
 
     # ── Hole threads ──
 
