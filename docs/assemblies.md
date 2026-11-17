@@ -111,6 +111,13 @@ python -m catia_mcp.tree build MODEL.tree.json --assembly adopt --step MODEL.ste
 The report's `assembly` lists every instance with its occurrence and
 `position_ok`; each part records `imported_volume_mm3`.
 
+Live on R428 with the bracket (a plate and one bolt placed twice, once
+turned): the imported product matched (3 instances, 2 parts, every position
+exact); the plate and the bolt were each rebuilt once, natively, in their own
+frames (constrained sketch, symmetric pad, user parameter), both exact in
+volume, both editable by parameter and by sketch dimension; each imported
+solid was replaced by the native body. 2.3 s in all.
+
 ## What the app could send
 
 The STEP of the same compile is enough today. A tree that said it itself
