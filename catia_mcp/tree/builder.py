@@ -98,6 +98,8 @@ from catia_mcp.tree.geometry import (
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.nurbs import Nurbs, drawing
 from catia_mcp.tree.parameters import ParameterPlan
+from catia_mcp.tree.partdesign import bottom_angle, native, thread_spec, tip_height, tip_sketch
+from catia_mcp.tree.partdesign_com import PartDesignFailed, PartDesignPlus
 from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect
 from catia_mcp.tree.placement import place_part, placement_transform
 from catia_mcp.tree.preflight import SUPPORTED, check
@@ -120,7 +122,7 @@ EPS = 1e-9
 # Hole.Type (CatHoleType), Hole.BottomType, Limit.LimitMode (CatLimitMode),
 # Hole.CounterSunkMode and Hole.AnchorMode, from the Automation help.
 HOLE_TYPES = {"simple": 0, "counterbore": 2, "countersink": 3}
-HOLE_FLAT_BOTTOM = 0
+HOLE_FLAT_BOTTOM, HOLE_V_BOTTOM = 0, 1
 LIMIT_DIMENSION, LIMIT_UP_TO_LAST = 0, 2
 CONSTRAINT_DRIVING = 0  # Constraint.Mode (CatConstraintMode): driving dimension
 # Body copies: a pasted result linked to its source, else without the link
@@ -139,9 +141,10 @@ class HoleSpec:
     head_diameter: float | None = None
     head_depth: float | None = None
     head_angle: float | None = None
+    bottom_angle: float | None = None  # a V bottom's point angle (degrees)
 
 
-def hole_spec(feature: dict[str, Any]) -> HoleSpec:
+def hole_spec(feature: dict[str, Any], tip_in_depth: bool = False) -> HoleSpec:
     """CATIA's Hole values for a tree hole (build123d's Hole, CounterBoreHole
     or CounterSinkHole). A countersink is given by its depth and angle (the
     documented mode): depth = (D_cs - D) / 2 / tan(angle / 2)."""
@@ -156,6 +159,10 @@ def hole_spec(feature: dict[str, Any]) -> HoleSpec:
         spec.head_angle = angle
         spec.head_depth = (float(feature["countersink_diameter"]) - spec.diameter) / 2 \
             / math.tan(math.radians(angle) / 2)
+    spec.bottom_angle = bottom_angle(feature)
+    if spec.bottom_angle is not None and tip_in_depth and spec.depth is not None:
+        # Should CATIA measure a V-bottomed hole's depth to its tip.
+        spec.depth += tip_height(feature)
     return spec
 
 
@@ -251,6 +258,7 @@ class TreeBuilder:
         self.deadline_s = deadline_s
         self.log = log
         self.dressups = DressUps(self, ownership)
+        self.plus = PartDesignPlus(self)  # catia_mcp/tree/partdesign_com.py
         self.part_documents: dict[str, Any] = {}
         # Part id -> an existing Part to build in (an imported product's,
         # catia_mcp/tree/adopt.py) instead of a new part document.
@@ -354,7 +362,8 @@ class TreeBuilder:
             record.features.append(entry)
             self.log(f"  {feature['type']} {feature.get('id')}")
             try:
-                kind = feature["type"] if feature["type"] in SUPPORTED else "from_step"
+                kind = feature["type"] if feature["type"] in SUPPORTED and native(feature) \
+                    else "from_step"
                 getattr(self, f"_feature_{kind}")(feature, entry)
             except BuildFailed as error:
                 error.part, error.feature = part["id"], feature.get("id")
@@ -401,6 +410,9 @@ class TreeBuilder:
         entry["note"] = "drawn with the feature that consumes it"
 
     def _feature_extrude(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        if feature.get("until") is not None:  # up to next, last, a plane, a face
+            self._plus(self.plus.extrude_until, feature, entry)
+            return
         sketch = self.sketches[feature["sketch"]]
         symmetric = bool(feature.get("symmetric"))
         if feature.get("taper"):
@@ -533,17 +545,24 @@ class TreeBuilder:
             # One Hole and a pattern when the positions form a grid or a
             # circle; else, or if that fails, one Hole per position; else
             # (a through hole whose frame is not on an outer face: build123d
-            # drills both ways from it, a Hole only one) cut cylinders.
-            for layout in ([pattern] if pattern else []) + [None]:
+            # drills both ways from it, a Hole only one) cut cylinders. A
+            # V-bottomed hole's depth is the cylinder's, else its tip's.
+            ways = [(layout, False) for layout in ([pattern] if pattern else []) + [None]]
+            if bottom_angle(feature) is not None:
+                ways.append((None, True))
+            for layout, tip in ways:
                 made: list[Any] = []
                 try:
                     self._human_feature(
                         feature, entry,
-                        lambda body, layout=layout, made=made:
-                            self._holes_into(body, feature, entry, layout, made),
+                        lambda body, layout=layout, made=made, tip=tip:
+                            self._holes_into(body, feature, entry, layout, made, tip),
                         flip=_reverse_hole)
                     if layout is not None:
                         entry.setdefault("notes", []).append(_pattern_note(layout))
+                    if tip:
+                        entry.setdefault("notes", []).append(
+                            "the V-bottomed hole's depth is measured to its tip")
                     return
                 except Exception as error:  # a mismatch, or CATIA refused the pattern
                     for item in reversed(made):
@@ -554,7 +573,15 @@ class TreeBuilder:
                     entry.setdefault("notes", []).append(f"{what}: {error}")
             entry["notes"][-1] += "; built as cut cylinders instead"
         (target,) = feature["bodies"]
+        if thread_spec(feature) is not None:
+            entry.setdefault("notes", []).append(
+                "the thread is not modelled: cut solids carry no thread (cosmetic in CATIA)")
         for matrix in feature["frames"]:
+            tip = tip_sketch(feature, matrix)
+            if tip is not None:  # a V bottom's cone, turned and cut
+                tool = self._new_body(use_main=False)
+                self._verified_shaft(tool, tip[0], tip[1], tip[2], 360.0, entry)
+                self._combine(self.bodies[target], tool, "cut", entry)
             if feature["kind"] == "countersink":
                 sketch, origin, z_dir = hole_profile_sketch(feature, matrix)
                 tool = self._new_body(use_main=False)
@@ -575,6 +602,9 @@ class TreeBuilder:
                 self._combine(self.bodies[target], tool, "cut", entry)
 
     def _feature_loft(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        if any(not isinstance(name, str) for name in feature["sections"]):  # to a point
+            self._plus(self.plus.point_loft, feature, entry)
+            return
         sections = [self.sketches[name] for name in feature["sections"]]
         pairs = list(pairwise(sections))
 
@@ -786,6 +816,16 @@ class TreeBuilder:
 
     def _feature_shell(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         self._dressup(self.dressups.shell, feature, entry)
+
+    def _feature_draft(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        self._plus(self.plus.draft, feature, entry)
+
+    @staticmethod
+    def _plus(build: Callable[..., None], feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        try:
+            build(feature, entry)
+        except (PartDesignFailed, DressUpFailed) as error:
+            raise BuildFailed(str(error)) from error
 
     @staticmethod
     def _dressup(build: Callable[..., None], feature: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -1001,14 +1041,14 @@ class TreeBuilder:
 
     def _holes_into(self, body: Any, feature: dict[str, Any], entry: dict[str, Any],
                     pattern: GridPattern | PolarPattern | None = None,
-                    made: list[Any] | None = None) -> list[Any]:
+                    made: list[Any] | None = None, tip_in_depth: bool = False) -> list[Any]:
         """One Hole feature per position, each placed by a sketch holding one
         point on the hole frame's XY plane, or the seed Hole and a pattern of
         it. A through hole goes up to last. `made` collects what was created,
         for the caller to delete if the result does not match."""
         part = self.part
         holes = made if made is not None else []
-        spec = hole_spec(feature)
+        spec = hole_spec(feature, tip_in_depth)
         frames = feature["frames"] if pattern is None else [feature["frames"][pattern.seed]]
         before = (self._volume(body), self._cog(body)) if pattern is not None else None
         for matrix in frames:
@@ -1028,10 +1068,11 @@ class TreeBuilder:
                                 ("counterbore_depth", "HeadDepth"),
                                 ("countersink_angle", "HeadAngle")):
                 self.plan.drive(feature, key, lambda h=hole, m=member: getattr(h, m))
-            if spec.depth is not None:
+            if spec.depth is not None and not tip_in_depth:
                 self.plan.drive(feature, "depth", lambda h=hole: h.BottomLimit.Dimension)
             part.UpdateObject(hole)
             holes.append(hole)
+            self.plus.thread(hole, feature, entry)  # after the first update
         if pattern is not None:
             self._pattern_of(body, holes[0], pattern, feature["bodies"][0], before, holes, entry)
         return holes
@@ -1888,7 +1929,9 @@ def _apply_hole_spec(hole: Any, spec: HoleSpec) -> None:
     if not _set_prop(hole, "Type", spec.type):
         raise BuildFailed(f"CATIA refused the hole type of '{hole.Name}'")
     _set_value(hole, "Diameter", spec.diameter)
-    hole.BottomType = HOLE_FLAT_BOTTOM
+    hole.BottomType = HOLE_FLAT_BOTTOM if spec.bottom_angle is None else HOLE_V_BOTTOM
+    if spec.bottom_angle is not None:
+        _set_value(hole, "BottomAngle", spec.bottom_angle)
     limit = hole.BottomLimit
     if spec.depth is None:
         limit.LimitMode = LIMIT_UP_TO_LAST

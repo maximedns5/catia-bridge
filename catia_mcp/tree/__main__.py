@@ -75,9 +75,10 @@ def _check(tree, step=None) -> int:
     print(f"Accepted: {len(tree['parts'])} part(s), "
           f"{sum(len(p['features']) for p in tree['parts'])} feature(s).")
     if step is not None:
-        from catia_mcp.tree.preflight import SUPPORTED
+        from catia_mcp.tree.preflight import SUPPORTED, native
 
-        dead = sum(f.get("type") not in SUPPORTED for p in tree["parts"] for f in p["features"])
+        dead = sum(f.get("type") not in SUPPORTED or not native(f)
+                   for p in tree["parts"] for f in p["features"])
         if dead:
             print(f"{dead} of them from STEP files in {step.directory}, as bodies without "
                   "history (the build needs CATIA V5).")

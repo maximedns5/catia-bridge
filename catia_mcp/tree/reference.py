@@ -223,6 +223,8 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
         kind = feature["type"]
         if kind == "sketch":
             sketches[feature["id"]] = feature
+        elif kind == "extrude" and feature.get("until") is not None:
+            _plus(feature, bodies, sketches)
         elif kind == "extrude":
             sketch = sketches[feature["sketch"]]
             # The full vector the profile travels along, as build123d's
@@ -246,6 +248,8 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
             else:
                 (target,) = feature["bodies"]
                 bodies[target] = _combine(bodies[target], solid, feature["operation"])
+        elif kind == "loft" and any(not isinstance(s, str) for s in feature["sections"]):
+            _plus(feature, bodies, sketches)
         elif kind == "loft":
             sections = [sketch_faces(sketches[name])[0] for name in feature["sections"]]
             _add_solid(bodies, feature, loft(sections, ruled=bool(feature.get("ruled"))))
@@ -282,6 +286,7 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
                 for radius, top, bottom in hole_segments(feature):
                     plane = Plane(origin=add(origin, scale(z_dir, bottom)), x_dir=x_dir, z_dir=z_dir)
                     bodies[target] = bodies[target] - Solid.make_cylinder(radius, top - bottom, plane)
+            _plus(feature, bodies, sketches)  # a V bottom's tip
         elif kind == "copy":
             (source,), (created,) = feature["bodies"], feature["creates"]
             bodies[created] = bodies[source].moved(_location(feature["matrix"]))
@@ -294,6 +299,8 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
         elif kind in ("fillet", "chamfer", "shell"):
             (target,) = feature["bodies"]
             bodies[target] = _dressup(feature, bodies[target])
+        elif kind == "draft" and "faces" in feature and "neutral_plane" in feature:
+            _plus(feature, bodies, sketches)
         elif external is not None:
             external(part, feature, bodies)
         else:
@@ -305,6 +312,36 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
     for other in final[1:]:
         result = result + other
     return result
+
+
+def _plus(feature: dict[str, Any], bodies: dict[str, Any],
+          sketches: dict[str, dict[str, Any]]) -> None:
+    """Drafts, extrudes up to a limit, V-bottomed holes and lofts to a point
+    (catia_mcp/tree/reference_plus.py)."""
+    from catia_mcp.tree import reference_plus as plus
+
+    kind = feature["type"]
+    try:
+        if kind == "draft":
+            (target,) = feature["bodies"]
+            bodies[target] = plus.draft(feature, bodies[target], _face_candidates)
+        elif kind == "extrude":
+            (target,) = feature["bodies"]
+            sketch = sketches[feature["sketch"]]
+            tool = plus.until_solid(feature, sketch, sketch_faces(sketch), bodies[target])
+            bodies[target] = _combine(bodies[target], tool, feature["operation"])
+        elif kind == "loft":
+            plan = plus.point_loft(feature)
+            _add_solid(bodies, feature,
+                       plus.point_loft_solid(feature, sketch_faces(sketches[plan.sketch])))
+        elif kind == "hole":
+            (target,) = feature["bodies"]
+            for matrix in feature["frames"]:
+                tip = plus.hole_tip(feature, matrix, sketch_faces)
+                if tip is not None:
+                    bodies[target] = bodies[target] - tip
+    except plus.PlusReferenceError as error:
+        raise ReferenceError(str(error)) from error
 
 
 def properties(solid: Any) -> dict[str, Any]:
