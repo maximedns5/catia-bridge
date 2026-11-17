@@ -200,7 +200,11 @@ Live on R428 (French): every rectangle and hole position was fully
 constrained with status 0, and the sketch width edit moved and restored the
 volume on every part (sample1's plate 60 → 61 → 60 mm). A closed circle has
 no centre point until one is given (`CenterPoint` failed), so one is created
-and set, as CATIA's own macros do.
+and set, as CATIA's own macros do; with it the flange's circle is fully
+constrained. A slot (tangencies, symmetry of the arc centres) and a hexagon
+(construction circle, 5 side formulas) were constrained with no refusal:
+editing the hexagon's radius 12 → 13 mm scaled its volume by exactly
+(13/12)², so it stayed regular.
 
 Next: constraints for revolve profiles, and driving sketch dimensions by the
 script's numbers (the tree gives no `params` for sketch dimensions yet: a
