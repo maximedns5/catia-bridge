@@ -246,6 +246,7 @@ class _Diameter:
 
     def _locked(self):
         return self.part.standard_locks_diameter and \
+            getattr(self.hole, "ThreadingMode", 1) == 0 and \
             getattr(self.hole, "HoleThreadStandard", "") == partdesign_com.COARSE_STANDARD
 
     @property
@@ -725,6 +726,26 @@ def test_a_standard_table_that_locks_another_drill_is_removed(monkeypatch):
     thread = _entry(report, "hole1")["thread"]
     assert thread["standard"] == "No Standard"
     assert "Metric Thick Pitch" in thread["tried"][0]
+
+
+def test_a_hole_made_after_a_threaded_one_starts_smooth(monkeypatch):
+    # Live on R428 the through M8 came out threaded to the M6's standard,
+    # its diameter locked, and setting 6.8 mm failed.
+    tree = load("m10_tapped_holes")
+    part = _PlusPart(through_depth=15.0, standard_locks_diameter=True)
+    original = part._hole
+
+    def inherits(sketch, depth):
+        hole = original(sketch, depth)
+        hole.ThreadingMode, hole.HoleThreadStandard = 0, partdesign_com.COARSE_STANDARD
+        return hole
+
+    part.ShapeFactory.AddNewHoleFromSketch = inherits
+    report = _plus_builder(part, monkeypatch).build(tree, _expected(tree), check_editability=False)
+    assert report["success"], report.get("error")
+    _, through = _holes(part)
+    assert through.Diameter.Value == 6.8
+    assert _entry(report, "hole2")["catia"] == [through.Name]
 
 
 def test_a_standard_that_cannot_be_set_is_loaded_from_its_table(monkeypatch):

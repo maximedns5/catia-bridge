@@ -25,6 +25,8 @@ alone while it runs; build123d installed for the expected volumes):
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import sys
@@ -79,6 +81,22 @@ def facts(platform: str, plm_type: str) -> dict[str, Any]:
     return out
 
 
+class _Tee(io.TextIOBase):
+    """Writes to the console and keeps a copy for the report."""
+
+    def __init__(self, *streams) -> None:
+        self.streams = streams
+
+    def write(self, text: str) -> int:
+        for stream in self.streams:
+            stream.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+
 def build(name: str, args) -> dict[str, Any]:
     """One fixture through the tree command; its report, read back."""
     from catia_mcp.tree.__main__ import main
@@ -89,9 +107,16 @@ def build(name: str, args) -> dict[str, Any]:
     argv = ["build", path, "--report", out, "--platform", args.platform,
             "--plm-type", args.plm_type]
     started = time.monotonic()
-    code = main(argv)
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(_Tee(sys.stdout, printed)):
+            code = main(argv)
+    except Exception as error:  # recorded: the next fixture still runs
+        code, printed = -1, io.StringIO(printed.getvalue() + f"\n{error!r}")
     record: dict[str, Any] = {"fixture": name, "exit_code": code,
                               "elapsed_s": round(time.monotonic() - started, 2)}
+    if code != 0:  # why: live the last fixture once stopped in 0.03 s with no report
+        record["output"] = printed.getvalue().splitlines()[-40:]
     try:
         with open(out, encoding="utf-8") as report:
             record["report"] = json.load(report)

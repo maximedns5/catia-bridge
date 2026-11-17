@@ -212,6 +212,20 @@ Second run, after those changes:
   neutral element on the draft's domain, and the probe now reads the exact
   signature of `AddNewDraft` from the type library.
 
+Third run:
+
+- Drafts: both exact (23371.1066 and 21631.9629 mm3) through the fourth
+  route: `AddNewDraft` with an empty face, neutral and parting element, then
+  the neutral element and the faces set on its domain. The type library
+  confirms the documented signature (ten arguments).
+- `m10_loft_cone_join`: exact (10005.3096 mm3) as a Shaft when run on its
+  own; in the probe it stopped in 0.03 s with no report, so the probe now
+  keeps the command's output of a failed build.
+- `m10_tapped_holes`: the M8 still fell back to cut cylinders. The second
+  Hole came out threaded to the first one's standard, its diameter locked,
+  and setting 6.8 mm failed. Every new Hole is now set smooth before its
+  diameter. `CatHoleThreadStandard` read live: thin pitch 0, thick pitch 1.
+
 ## Not done yet
 
 - Stiffener: no build123d operation, so no tree carries one.

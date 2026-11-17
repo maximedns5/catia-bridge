@@ -1063,6 +1063,7 @@ class TreeBuilder:
             part.InWorkObject = body
             hole = part.ShapeFactory.AddNewHoleFromSketch(catia_sketch, spec.depth or 1.0)
             entry["catia"].append(str(hole.Name))
+            self.plus.start_smooth(hole)
             _apply_hole_spec(hole, spec)
             for key, member in (("diameter", "Diameter"), ("counterbore_diameter", "HeadDiameter"),
                                 ("counterbore_depth", "HeadDepth"),
