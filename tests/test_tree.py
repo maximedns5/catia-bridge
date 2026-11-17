@@ -168,7 +168,9 @@ class _Factory:
         return self._curve({"type": "line", "start": [u0, v0], "end": [u1, v1]})
 
     def CreateClosedCircle(self, cu, cv, r):
-        return self._curve({"type": "circle", "center": [cu, cv], "radius": r})
+        circle = self._curve({"type": "circle", "center": [cu, cv], "radius": r})
+        circle.CenterPoint = SimpleNamespace(uv=(cu, cv))
+        return circle
 
     def CreateCircle(self, cu, cv, r, a0, a1):
         point = lambda a: [cu + r * math.cos(a), cv + r * math.sin(a)]
@@ -178,6 +180,46 @@ class _Factory:
     def CreatePoint(self, u, v):
         self.points.append(SimpleNamespace(uv=(u, v)))
         return self.points[-1]
+
+
+class _Constraints:
+    """Sketch.Constraints: records each constraint and gives dimensions the
+    drawn value, as CATIA does when a constraint is made on solved geometry."""
+
+    def __init__(self, h):
+        self.made, self.h = [], h
+
+    def axis(self, ref):
+        """'H' or 'V' for a sketch axis reference."""
+        return "H" if tuple(ref[2]) == tuple(self.h) else "V"
+
+    def _add(self, kind, *refs):
+        value = None
+        first = refs[0]
+        if kind == 5:  # length of a line
+            value = math.dist(first.entity["start"], first.entity["end"])
+        elif kind == 14:
+            value = first.entity["radius"]
+        elif kind == 1:  # distance to an axis
+            axis = self.axis(refs[1])
+            if hasattr(first, "uv"):
+                at = first.uv
+            else:
+                at = first.entity["start"]
+            value = abs(at[0] if axis == "V" else at[1])
+        constraint = SimpleNamespace(Name=f"Contrainte.{len(self.made) + 1}", type=kind, refs=refs,
+                                     Mode=1, Status=0, Dimension=SimpleNamespace(Value=value))
+        self.made.append(constraint)
+        return constraint
+
+    def AddMonoEltCst(self, kind, a):
+        return self._add(kind, a)
+
+    def AddBiEltCst(self, kind, a, b):
+        return self._add(kind, a, b)
+
+    def AddTriEltCst(self, kind, a, b, c):
+        return self._add(kind, a, b, c)
 
 
 def _localized(name):
@@ -191,7 +233,9 @@ class _Sketch:
         origin, h, v = ref
         self.GeometricElements = SimpleNamespace(Item=_localized)
         self.AbsoluteAxis = SimpleNamespace(HorizontalReference=("axis", origin, h),
-                                            VerticalReference=("axis", origin, v))
+                                            VerticalReference=("axis", origin, v),
+                                            Origin=("origin", origin))
+        self.Constraints = _Constraints(h)
 
     def OpenEdition(self):
         return self.factory
@@ -802,9 +846,11 @@ def test_loft_sections_are_drawn_as_connected_contours(monkeypatch):
     (loft,) = _lofts(part)
     for sketch, _, _ in loft.HybridShape.sections:
         assert len(sketch.factory.points) == 4  # one shared point per corner
-    # A pad's sketch is left as drawn.
+    # In the exact style a pad's sketch is left as drawn.
     part = _FakePart()
-    _builder(part, monkeypatch).build(load("m1_offset_block"), check_editability=False)
+    built = _builder(part, monkeypatch)
+    built.style = "exact"
+    built.build(load("m1_offset_block"), check_editability=False)
     assert all(not pad.sketch.factory.points for pad in part.pads if hasattr(pad, "sketch"))
 
 
@@ -1235,3 +1281,65 @@ def test_a_pattern_pointing_the_other_way_is_rebuilt_the_other_way_round(monkeyp
     entry = report["parts_detail"][0]["features"][2]
     assert entry["catia"] == [patterns[1].seed.Name, patterns[1].Name]
     assert entry["notes"][0].endswith("(reversed False, False) to match the tree")
+
+
+# ── Sketch constraints ──
+
+
+def test_constraint_plans_fix_rectangles_circles_and_points_as_a_designer_would():
+    from catia_mcp.tree import constraints as c
+
+    def rectangle(u0, v0, u1, v1, prefix="e"):
+        pts = [(u0, v0), (u1, v0), (u1, v1), (u0, v1)]
+        return [{"type": "line", "id": f"{prefix}{i}", "start": pts[i], "end": pts[(i + 1) % 4]}
+                for i in range(4)]
+
+    centred = c.plan([rectangle(-30, -20, 30, 20)])
+    assert centred.shapes == ["rectangle"] and len(centred.constraints) == 8  # 4 points x 2
+    kinds = [k.type for k in centred.constraints]
+    assert kinds.count(c.HORIZONTAL) == 2 and kinds.count(c.VERTICAL) == 2
+    assert kinds.count(c.SYMMETRY) == 2
+    assert {(k.name, k.value) for k in centred.constraints if k.dimensional} == {
+        ("width", 60), ("height", 40)}
+    placed = c.plan([rectangle(10, 5, 22, 13)])
+    assert {(k.name, k.value) for k in placed.constraints if k.type == c.DISTANCE} == {
+        ("x", 10), ("y", 5)}
+    on_axis = c.plan([rectangle(0, -4, 12, 4)])
+    assert [k.name for k in on_axis.constraints[6:]] == ["on the V axis", "symmetric about H"]
+    circle = c.plan([[{"type": "circle", "id": "c", "center": (0, 0), "radius": 4}],
+                     [{"type": "circle", "id": "d", "center": (15, -7), "radius": 2}]])
+    assert [(k.name, k.value) for k in circle.constraints] == [
+        ("radius", 4), ("on the origin", None), ("radius", 2), ("x", 15), ("y", 7)]
+    point = c.plan([[{"type": "point", "id": "p", "at": (0, 12)}]])
+    assert [k.name for k in point.constraints] == ["on the V axis", "y"]
+    slot = c.plan([[{"type": "line", "id": "a", "start": (0, 0), "end": (1, 0)},
+                    {"type": "arc", "id": "b"}]])
+    assert not slot.constraints and slot.free == ["2 curve(s): arc, line"]
+
+
+def test_pad_pocket_and_hole_sketches_are_constrained(monkeypatch):
+    part = _FakePart(through_depth=8.0)
+    tree, expected = _with_pocket(_script_tree(), _script_expected())
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    features = {f["id"]: f for f in report["parts_detail"][0]["features"]}
+    assert features["extrude1"]["constraints"] == {"added": 8, "shapes": ["rectangle"], "free": []}
+    assert features["extrude2"]["constraints"]["shapes"] == ["rectangle"]
+    assert features["hole1"]["constraints"] == {"added": 2, "shapes": ["point"], "free": []}
+    pad_sketch = part.pads[0].sketch
+    made = pad_sketch.Constraints.made
+    assert [k.Mode for k in made if k.type == 5] == [0, 0]  # driving dimensions
+    assert sorted(k.Dimension.Value for k in made if k.type == 5) == [40, 60]
+    # The centred plate: symmetric about both sketch axes.
+    assert sorted(pad_sketch.Constraints.axis(k.refs[2]) for k in made if k.type == 15) == \
+        ["H", "V"]
+
+
+def test_exact_style_sketches_stay_unconstrained(monkeypatch):
+    part = _FakePart()
+    built = _builder(part, monkeypatch)
+    built.style = "exact"
+    report = built.build(load("m1_offset_block"), check_editability=False)
+    assert report["success"], report.get("error")
+    assert not part.pads[0].sketch.Constraints.made
+    assert "constraints" not in report["parts_detail"][0]["features"][1]
