@@ -169,13 +169,22 @@ Status of each GSD tool in the tree builder (the interactive MCP tools in
 
 ## Live status
 
-Not yet run live. To run on 3DEXPERIENCE (PowerShell, CATIA open, a 3D Shape
-can be created):
+Run live on 3DEXPERIENCE R428 (French, student role): every fixture built,
+every surface area and every volume exact.
 
-```powershell
-python -m catia_mcp.tree build tests\fixtures\trees\m10_reference_planes.json --report m10.json
-python -m catia_mcp.tree build tests\fixtures\trees\s1_extrude_curve_thicken.json --report s1.json
-```
+| Fixture | Result | Senses CATIA needed |
+| --- | --- | --- |
+| `m10_reference_planes` | 12047.6107 mm3; `Plane Z+20` driven by `Sketch1_amount`, `Plane XY +30deg about X` verified | none flipped |
+| `s1_extrude_curve_thicken` | surface 1542.4778 mm2, thickened 3156.7985 mm3 | none |
+| `s2_revolve_close` | surface 3063.0528 mm2, closed 17671.4587 mm3 | none |
+| `s3_fill_join_close` | Tube 900, Floor 200, Lid 200, Skin 1300 mm2; closed 3000 mm3 | none |
+| `s4_loft_split_offset_thicken` | Skin 1025.2186, Lower 576.6855, Outer 639.5173 mm2; 1029.9618 mm3 | split orientation -1, offset orientation True |
+| `s5_sweep_ribbon_thicken` | Band 321.3717 mm2, 321.3717 mm3 | thicken orientation 1 |
+| `s6_surfaces_only` | Quarter 314.1593, Vault 502.6548 mm2, no body | none |
+
+Also live with the new reference geometry, each exact: `p1_properties_plate`
+(`Plane Z+4`), the m10 Part Design fixtures (`Plane Z+5`, `Plane Z+25`,
+`Plane Z+40`, an equation plane for a tilted limit).
 
 What to read in each report: `success`, each part's `construction` (names,
 `verified`, notes), `surfaces` (measured against expected area) and the
