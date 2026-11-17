@@ -149,12 +149,14 @@ def _dressup(feature: dict[str, Any], body: Any) -> Any:
     kind = feature["type"]
     try:
         if kind == "shell":
-            faces = [c.handle for c in match_faces(feature["faces"], _face_candidates(body))]
-            if not faces:
-                raise ReferenceError("no reference for a shell with no opening")
+            # No opening: OpenCascade offsets the whole solid (build123d's
+            # offset() without openings).
+            faces = [c.handle for c in match_faces(feature["faces"], _face_candidates(body))] \
+                if feature["faces"] else []
             join = Kind.INTERSECTION if feature.get("join", "").endswith("INTERSECTION") \
                 else Kind.ARC
-            return body.offset_3d(faces, float(feature["thickness"]), kind=join)
+            result = body.offset_3d(faces, float(feature["thickness"]), kind=join)
+            return _closed_solid(result) if not faces else result
         edges = [c.handle for c in match_edges(feature["edges"], _edge_candidates(body))]
         if kind == "fillet":
             return body.fillet(float(feature["radius"]), edges)
@@ -166,6 +168,19 @@ def _dressup(feature: dict[str, Any], body: Any) -> Any:
         return body.chamfer(float(feature["distance"]), second, edges, face)
     except AnchorError as error:
         raise ReferenceError(f"{kind} {feature.get('id')}: {error}") from error
+
+
+def _closed_solid(shape: Any) -> Any:
+    """The solid inside the closed shell an offset without openings gives."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid
+    from OCP.TopAbs import TopAbs_SHELL
+    from OCP.TopoDS import TopoDS
+
+    if shape.wrapped.ShapeType() != TopAbs_SHELL:
+        return shape
+    solid = BRepBuilderAPI_MakeSolid(TopoDS.Shell(shape.wrapped)).Solid()
+    # The outward offset's shell comes inside out (a negative volume).
+    return Solid(solid) if _volume(Solid(solid)) >= 0 else Solid(solid.Reversed())
 
 
 def _location(matrix: Any) -> Location:

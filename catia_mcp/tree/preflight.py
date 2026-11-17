@@ -513,9 +513,12 @@ def _check_shell(feature, bodies, refuse, where) -> None:
     if not isinstance(faces, list):
         refuse("shell has no list of removed faces", where)
     elif not faces:
-        # build123d's offset() without openings shrinks or grows the solid
-        # rather than hollowing it, and AddNewShell needs a face to remove.
-        refuse("shells with no removed face (offset solids) are not supported yet", where)
+        # build123d's offset() without openings shrinks or grows the whole
+        # solid: a Thickness on every face. Faces meeting by intersection
+        # are what a Thickness gives; arcs round the edges an offset opens
+        # (the convex ones outward), which a Thickness does not.
+        if join != "Kind.INTERSECTION" and isinstance(thickness, (int, float)) and thickness > 0:
+            refuse("outward offsets with rounded edges (Kind.ARC) are not supported yet", where)
     else:
         for problem in dict.fromkeys(face_anchor_problem(face) for face in faces):
             if problem:
