@@ -139,8 +139,40 @@ everything made for the parameters is removed, every value they drove is
 put back, and the report's `parameters_note` says why. The editability check then edits the first
 pad's parameter, as a designer would.
 
-Next: rectangular and circular patterns for repeated holes, and constraints
-in the sketches (the tree gives no `params` for sketch dimensions yet: a
+**Patterns** (`catia_mcp/tree/patterns.py`). build123d's `GridLocations`
+and `PolarLocations` reach the tree only as a hole's list of frames, so the
+layout is recognised from the frames' origins, in the first frame's plane:
+
+- a **grid**: every combination of nx equally spaced X values and ny equally
+  spaced Y values (a single row when one count is 1) becomes one Hole at the
+  corner with the lowest X and Y and a **Rectangular Pattern** (counts and
+  spacings), its two directions given by construction lines along the
+  layout's X and Y;
+- a **crown**: three or more positions equally far from a centre at equal
+  angular steps (a full circle or an arc) becomes one Hole at the start of the
+  run and a **Circular Pattern** about the line through the centre, along
+  the holes' axis.
+
+The holes are checked together against build123d's body after the feature,
+the seed reversed once if needed. Which way an origin plane or an axis
+points a pattern is not documented, so a pattern that does not match is
+deleted and rebuilt the other way round (both directions, then each one; the
+axis reversed for a crown) before giving up.
+
+Live on R428 (French, 3D Shape): a circular pattern of a sketch-placed Hole
+matched build123d on its first try (`m7_hole_circle`). A rectangular one
+with PlaneYZ / PlaneZX as directions (the V5 recipe) matched none of the
+four ways round: one way left a single hole, another a single column of 3,
+so the plane did not give the X direction. With construction lines from
+the seed's frame along +X and +Y, the grid matched with both directions
+reversed (`m7_hole_grid`): on R428 a pattern runs against its direction
+lines, so that way is tried first. When no way round matches, the report
+lists what each one removed. If CATIA refuses the pattern (V5 refuses a
+circular pattern in a part holding a geometrical set) or the result does not
+match, the seed and the pattern are deleted and each position gets its own
+Hole; the report notes why.
+
+Next: constraints in the sketches (the tree gives no `params` for sketch dimensions yet: a
 contract request).
 
 ## How the build stays faithful

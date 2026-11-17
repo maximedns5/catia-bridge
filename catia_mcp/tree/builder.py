@@ -93,6 +93,7 @@ from catia_mcp.tree.geometry import (
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.nurbs import Nurbs, drawing
 from catia_mcp.tree.parameters import ParameterPlan
+from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect
 from catia_mcp.tree.placement import place_part
 from catia_mcp.tree.preflight import SUPPORTED, check
 from catia_mcp.tree.step_source import StepSource
@@ -481,20 +482,30 @@ class TreeBuilder:
 
     def _feature_hole(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         if self._human(feature):
-            try:
-                self._human_feature(feature, entry,
-                                    lambda body: self._holes_into(body, feature, entry),
-                                    flip=_reverse_hole)
-                return
-            except HumanMismatch as error:
-                # A through hole whose frame is not on an outer face (build123d
-                # drills both ways from it, a Hole only one): cut it as tool
-                # bodies instead.
-                for item in reversed(error.items):
-                    self._delete(item)
-                entry["catia"] = []
-                entry.setdefault("notes", []).append(
-                    f"as Hole features: {error}; built as cut cylinders instead")
+            pattern = detect(feature["frames"])
+            # One Hole and a pattern when the positions form a grid or a
+            # circle; else, or if that fails, one Hole per position; else
+            # (a through hole whose frame is not on an outer face: build123d
+            # drills both ways from it, a Hole only one) cut cylinders.
+            for layout in ([pattern] if pattern else []) + [None]:
+                made: list[Any] = []
+                try:
+                    self._human_feature(
+                        feature, entry,
+                        lambda body, layout=layout, made=made:
+                            self._holes_into(body, feature, entry, layout, made),
+                        flip=_reverse_hole)
+                    if layout is not None:
+                        entry.setdefault("notes", []).append(_pattern_note(layout))
+                    return
+                except Exception as error:  # a mismatch, or CATIA refused the pattern
+                    for item in reversed(made):
+                        with contextlib.suppress(Exception):
+                            self._delete(item)
+                    entry["catia"] = []
+                    what = "as a Hole and a pattern" if layout is not None else "as Hole features"
+                    entry.setdefault("notes", []).append(f"{what}: {error}")
+            entry["notes"][-1] += "; built as cut cylinders instead"
         (target,) = feature["bodies"]
         for matrix in feature["frames"]:
             if feature["kind"] == "countersink":
@@ -717,13 +728,19 @@ class TreeBuilder:
         part.UpdateObject(revolution)
         return revolution
 
-    def _holes_into(self, body: Any, feature: dict[str, Any], entry: dict[str, Any]) -> list[Any]:
+    def _holes_into(self, body: Any, feature: dict[str, Any], entry: dict[str, Any],
+                    pattern: GridPattern | PolarPattern | None = None,
+                    made: list[Any] | None = None) -> list[Any]:
         """One Hole feature per position, each placed by a sketch holding one
-        point on the hole frame's XY plane. A through hole goes up to last."""
+        point on the hole frame's XY plane, or the seed Hole and a pattern of
+        it. A through hole goes up to last. `made` collects what was created,
+        for the caller to delete if the result does not match."""
         part = self.part
-        holes = []
+        holes = made if made is not None else []
         spec = hole_spec(feature)
-        for matrix in feature["frames"]:
+        frames = feature["frames"] if pattern is None else [feature["frames"][pattern.seed]]
+        before = (self._volume(body), self._cog(body)) if pattern is not None else None
+        for matrix in frames:
             origin, x_dir, z_dir = frame_axes(matrix)
             point = {"plane": {"origin": list(origin), "x_dir": list(x_dir),
                                "normal": list(z_dir)},
@@ -743,7 +760,74 @@ class TreeBuilder:
                 self.plan.drive(feature, "depth", lambda h=hole: h.BottomLimit.Dimension)
             part.UpdateObject(hole)
             holes.append(hole)
+        if pattern is not None:
+            self._pattern_of(body, holes[0], pattern, feature["bodies"][0], before, holes, entry)
         return holes
+
+    def _pattern_of(self, body: Any, seed: Any, pattern: GridPattern | PolarPattern,
+                    target: str, before: tuple[float, Vec], made: list[Any],
+                    entry: dict[str, Any]) -> None:
+        """A rectangular or circular pattern of `seed`, the seed first. Which
+        way an origin plane or an axis points a pattern is not documented (live
+        on R428 a rectangular pattern from PlaneYZ / PlaneZX ran both ways
+        reversed, and no way round of the origin planes gave the grid), so the
+        directions are construction lines from the seed's frame, and each way
+        round is tried until the body matches build123d's. The last one is
+        kept for the caller to judge; the report lists what each removed."""
+        part = self.part
+        factory = part.ShapeFactory
+        if isinstance(pattern, GridPattern):
+            (n1, n2), (s1, s2) = pattern.counts, pattern.steps
+            ref1, ref2 = (self._line_reference((0.0, 0.0, 0.0), d) for d in pattern.directions)
+            rev1 = rev2 = False
+            ways = []
+            # Live on R428 a pattern along a construction line runs against
+            # the line, so both reversed comes first.
+            for flip1, flip2 in ((True, True), (False, False), (True, False), (False, True)):
+                way = (rev1 != flip1 if n1 > 1 else rev1, rev2 != flip2 if n2 > 1 else rev2)
+                if way not in ways:
+                    ways.append(way)
+
+            def build(way):
+                # A step of 0 (a single row) is refused by CATIA: 1 mm, unused.
+                return factory.AddNewRectPattern(seed, n1, n2, s1 or 1.0, s2 or 1.0, 1, 1,
+                                                 ref1, ref2, way[0], way[1], 0.0)
+        else:
+            axis = self._line_reference(pattern.centre, pattern.axis)
+            ways = [(False,), (True,)]
+
+            def build(way):
+                centre = part.CreateReferenceFromName("")  # from the axis (live on R428)
+                return factory.AddNewCircPattern(seed, 1, pattern.count, 0.0, pattern.step_deg,
+                                                 1, 1, centre, axis, way[0], 0.0, True)
+        tried = []
+        for n, way in enumerate(ways):
+            part.InWorkObject = body
+            result = build(way)
+            made.append(result)
+            part.UpdateObject(result)
+            error = self._snapshot_error(target, before)
+            tried.append(f"reversed {', '.join(str(w) for w in way)}: "
+                         f"{self._volume(body) - before[0]:+.4f} mm3")
+            if error is None or n == len(ways) - 1:
+                entry["catia"].append(str(result.Name))
+                if n and error is None:
+                    entry.setdefault("notes", []).append(
+                        f"{result.Name}: built the other way round "
+                        f"(reversed {', '.join(str(w) for w in way)}) to match the tree")
+                elif error is not None:
+                    entry.setdefault("notes", []).append(
+                        f"{result.Name}: no way round matched ({'; '.join(tried)})")
+                return
+            self._delete(made.pop())
+
+    def _line_reference(self, origin: Vec, direction: Vec) -> Any:
+        points = [self._construction_point(point)
+                  for point in (origin, add(origin, scale(unit(direction), 100.0)))]
+        line = self.part.HybridShapeFactory.AddNewLinePtPt(*points)
+        self._construction_set().AppendHybridShape(line)
+        self.part.UpdateObject(line)
+        return self.part.CreateReferenceFromObject(line)
 
     def _new_body(self, use_main: bool) -> Any:
         if use_main and not self.main_body_used:
@@ -1373,12 +1457,25 @@ def _apply_hole_spec(hole: Any, spec: HoleSpec) -> None:
         _set_prop(hole, "AnchorMode", HOLE_ANCHOR_EXTREME)
 
 
-def _reverse_hole(hole: Any) -> bool:
+def _reverse_hole(item: Any) -> bool:
+    """Reverse a Hole; a pattern follows its seed and has nothing to reverse."""
     try:
-        hole.Reverse()
+        reverse = item.Reverse
+    except AttributeError:
+        return True
+    try:
+        reverse()
         return True
     except Exception:
         return False
+
+
+def _pattern_note(pattern: GridPattern | PolarPattern) -> str:
+    if isinstance(pattern, GridPattern):
+        (n1, n2), (s1, s2) = pattern.counts, pattern.steps
+        return f"one Hole and a {n1} x {n2} rectangular pattern ({s1:g} x {s2:g} mm)"
+    return (f"one Hole and a circular pattern of {pattern.count} at {pattern.step_deg:g} deg "
+            f"about {_fmt(pattern.centre)}")
 
 
 def _flip_direction(prism: Any) -> bool:

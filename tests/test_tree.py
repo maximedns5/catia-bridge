@@ -224,6 +224,9 @@ class _FakePart:
         # Holes drill against their sketch's normal (live on R428) unless
         # reversed; "up to last" goes `through_depth` deep.
         self.holes_reversed, self.through_depth = holes_reversed, through_depth
+        self.patterns_refused = set()
+        # Live on R428 a rectangular pattern runs against its direction lines.
+        self.pattern_dirs_reversed = True
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.lofts_reversed, self.deleted = lofts_reversed, []
         self.MainBody = _Body("Corps principal")
@@ -243,6 +246,12 @@ class _FakePart:
             AddNewPocket=lambda sketch, length: self._pad(sketch, length, "Poche", -1),
             AddNewGroove=lambda sketch: self._shaft(sketch, "groove"),
             AddNewHoleFromSketch=self._hole,
+            AddNewRectPattern=lambda seed, n1, n2, s1, s2, p1, p2, r1, r2, rev1, rev2, angle:
+                self._pattern("rect", seed, counts=(n1, n2), steps=(s1, s2), refs=(r1, r2),
+                              reversed=(rev1, rev2)),
+            AddNewCircPattern=lambda seed, nr, na, sr, sa, pr, pa, centre, axis, rev, angle,
+                                     aligned:
+                self._pattern("circ", seed, count=na, step=sa, axis=axis, reversed=rev),
             AddNewMirror=lambda ref: self._feature("mirror", ref=ref),
             AddNewSplit=lambda ref, side: self._feature("split", ref=ref, SplitSide=side),
             AddNewLoft=self._loft,
@@ -253,6 +262,38 @@ class _FakePart:
         self.InWorkObject = None
         self.Parameters = _FakeParameters()
         self.Relations = _FakeRelations()
+
+    def CreateReferenceFromName(self, name):
+        return ("name", name)
+
+    def _pattern(self, kind, seed, **fields):
+        if kind in self.patterns_refused:
+            raise RuntimeError("La méthode AddNewRectPattern a échoué")
+        return self._feature(f"{kind}pattern", seed=seed, **fields)
+
+    def _patterned(self, pattern):
+        """The seed hole's cut copied to every other instance."""
+        volume, cog = self._drilled(pattern.seed)
+        if pattern.kind == "rectpattern":
+            dirs = []
+            for ref, rev in zip(pattern.refs, pattern.reversed, strict=True):
+                direction = ref[2] if ref[0] == "axis" else cross(ref[1], ref[2])
+                flip = rev != self.pattern_dirs_reversed
+                dirs.append(tuple(-c if flip else c for c in direction))
+            (n1, n2), (s1, s2) = pattern.counts, pattern.steps
+            offsets = [tuple(i * s1 * dirs[0][k] + j * s2 * dirs[1][k] for k in range(3))
+                       for i in range(n1) for j in range(n2) if (i, j) != (0, 0)]
+            return [(-volume, tuple(cog[k] + o[k] for k in range(3))) for o in offsets]
+        _, origin, axis = pattern.axis
+        out = []
+        for n in range(1, pattern.count):
+            a = math.radians(n * pattern.step) * (-1 if pattern.reversed else 1)
+            r = tuple(c - o for c, o in zip(cog, origin))
+            k = unit(axis)
+            rotated = tuple(r[i] * math.cos(a) + cross(k, r)[i] * math.sin(a)
+                            + k[i] * dot(k, r) * (1 - math.cos(a)) for i in range(3))
+            out.append((-volume, tuple(origin[i] + rotated[i] for i in range(3))))
+        return out
 
     def CreateReferenceFromObject(self, obj):
         if isinstance(obj, str):
@@ -344,6 +385,11 @@ class _FakePart:
         kind = getattr(obj, "kind", None)
         if kind == "hole":
             self._onto(obj, self._drilled(obj), -1)
+        elif kind in ("rectpattern", "circpattern"):
+            obj.body = obj.seed.body
+            if not hasattr(obj, "base"):
+                obj.base = list(obj.body.solids)
+            obj.body.solids = obj.base + self._patterned(obj)
         elif kind in ("shaft", "groove"):
             self._onto(obj, self._revolved(obj), -1 if kind == "groove" else 1)
         elif kind == "mirror":
@@ -1083,14 +1129,109 @@ def test_the_report_is_editable_unless_a_part_failed_its_edit(monkeypatch):
                         ([None], None)):
         records = iter(flags)
         monkeypatch.setattr(TreeBuilder, "_check_editability",
-                            lambda self, record: setattr(record, "editable", next(records)))
+                            lambda self, record, records=records:
+                                setattr(record, "editable", next(records)))
         tree = load("m1_offset_block")
         tree["parts"] = [dict(tree["parts"][0], id=f"/P{i}") for i in range(len(flags))]
         part = _FakePart()
         built = _builder(part, monkeypatch)
         # Each tree part in a fresh main body, as each gets a new CATIA part.
         built.documents = SimpleNamespace(
-            _new_part=lambda name, kind: setattr(part, "MainBody", _Body(name)))
+            _new_part=lambda name, kind, part=part: setattr(part, "MainBody", _Body(name)))
         report = built.build(tree)
         assert report["success"], report.get("error")
         assert report["editable"] is want
+
+
+# ── Patterns ──
+
+
+def _pattern_expected(name, final_cog_z):
+    tree = load(name)
+    part = tree["parts"][0]
+    body = 100 * 80 * 10 if name == "m7_hole_grid" else math.pi * 40**2 * 8
+    final = CLOSED_FORM_MM3[name]
+    return tree, {part["id"]: {"volume_mm3": final, "features": {
+        "extrude1": {"Body1": {"volume_mm3": body, "cog_mm": [0.0, 0.0, 5.0 if body == 80000 else 4.0]}},
+        "hole1": {"Body1": {"volume_mm3": final, "cog_mm": [0.0, 0.0, final_cog_z]}}}}}
+
+
+CLOSED_FORM_MM3["m7_hole_grid"] = 80000 - 12 * math.pi * (5**2 * 3 + 3**2 * 7)
+CLOSED_FORM_MM3["m7_hole_circle"] = math.pi * (40**2 * 8 - 6 * 4**2 * 8)
+GRID_COG_Z = (80000 * 5 - 12 * math.pi * (75 * 8.5 + 63 * 3.5)) / CLOSED_FORM_MM3["m7_hole_grid"]
+
+
+def test_a_grid_of_holes_is_one_hole_and_a_rectangular_pattern(monkeypatch):
+    part = _FakePart(through_depth=10.0)
+    tree, expected = _pattern_expected("m7_hole_grid", GRID_COG_Z)
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    (hole,) = [f for f in part.pads if getattr(f, "kind", None) == "hole"]
+    (pattern,) = [f for f in part.pads if getattr(f, "kind", None) == "rectpattern"]
+    assert pattern.seed is hole and pattern.counts == (4, 3) and pattern.steps == (20, 25)
+    assert pattern.reversed == (True, True) and not part.deleted  # R428's way, first try
+    (point,) = hole.sketch.factory.points  # the seed is the corner (-30, -25)
+    assert (hole.sketch.ref[0][0] + point.uv[0], hole.sketch.ref[0][1] + point.uv[1]) == \
+        pytest.approx((-30, -25))
+    entry = report["parts_detail"][0]["features"][2]
+    assert entry["catia"] == [hole.Name, pattern.Name]
+    assert entry["notes"] == ["one Hole and a 4 x 3 rectangular pattern (20 x 25 mm)"]
+
+
+def test_a_crown_of_holes_is_one_hole_and_a_circular_pattern(monkeypatch):
+    part = _FakePart(through_depth=8.0)
+    tree, expected = _pattern_expected("m7_hole_circle", 4.0)
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    (pattern,) = [f for f in part.pads if getattr(f, "kind", None) == "circpattern"]
+    assert pattern.count == 6 and pattern.step == pytest.approx(60)
+    assert _mass(part.MainBody.solids)[0] == pytest.approx(CLOSED_FORM_MM3["m7_hole_circle"])
+
+
+def test_a_pattern_catia_refuses_falls_back_to_one_hole_per_position(monkeypatch):
+    part = _FakePart(through_depth=10.0)
+    part.patterns_refused = {"rect"}
+    tree, expected = _pattern_expected("m7_hole_grid", GRID_COG_Z)
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    holes = [f for f in part.pads if getattr(f, "kind", None) == "hole"]
+    assert len(holes) == 13 and part.deleted == [holes[0]]  # the seed, then 12 holes
+    entry = report["parts_detail"][0]["features"][2]
+    assert len(entry["catia"]) == 12
+    assert entry["notes"][0].startswith("as a Hole and a pattern: La méthode AddNewRectPattern")
+
+
+def test_layouts_are_recognised_from_the_hole_frames():
+    from catia_mcp.tree.geometry import frame_axes
+    from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect, instance_origins
+
+    grid = detect(load("m7_hole_grid")["parts"][0]["features"][2]["frames"])
+    assert isinstance(grid, GridPattern) and grid.counts == (4, 3) and grid.seed == 0
+    frames = load("m7_hole_circle")["parts"][0]["features"][2]["frames"]
+    crown = detect(frames)
+    assert isinstance(crown, PolarPattern) and crown.seed == 0 and crown.count == 6
+    origins = instance_origins(crown, frame_axes(frames[0])[0])
+    assert [tuple(round(c, 6) for c in o) for o in origins] == \
+        [tuple(round(c, 6) for c in frame_axes(f)[0]) for f in frames]
+    row = [[[1, 0, 0, x], [0, 1, 0, 5], [0, 0, 1, 0]] for x in (0, 7, 14)]
+    assert detect(row).counts == (3, 1)
+    scattered = [[[1, 0, 0, x], [0, 1, 0, y], [0, 0, 1, 0]] for x, y in ((0, 0), (5, 1), (9, 3))]
+    assert detect(scattered) is None
+    tilted = row[:2] + [[[1, 0, 0, 14], [0, 0, -1, 5], [0, 1, 0, 0]]]
+    assert detect(tilted) is None  # drilled another way
+
+
+def test_a_pattern_pointing_the_other_way_is_rebuilt_the_other_way_round(monkeypatch):
+    """Live on R428 a pattern runs against its direction lines, which is
+    tried first; a CATIA that runs along them gets the pattern rebuilt."""
+    part = _FakePart(through_depth=10.0)
+    part.pattern_dirs_reversed = False
+    tree, expected = _pattern_expected("m7_hole_grid", GRID_COG_Z)
+    report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
+    assert report["success"], report.get("error")
+    patterns = [f for f in part.pads if getattr(f, "kind", None) == "rectpattern"]
+    assert len(patterns) == 2 and part.deleted == [patterns[0]]
+    assert patterns[1].reversed == (False, False)
+    entry = report["parts_detail"][0]["features"][2]
+    assert entry["catia"] == [patterns[1].seed.Name, patterns[1].Name]
+    assert entry["notes"][0].endswith("(reversed False, False) to match the tree")
