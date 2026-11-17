@@ -271,6 +271,13 @@ MODEL.step` builds each part once, in its own frame, and places every instance
 in a CATIA V5 product, a part used twice being one CATPart placed twice
 ([docs/assemblies.md](docs/assemblies.md)).
 
+### Drawings
+
+`--drawing auto` adds to the build a drawing of each part and of the product:
+the views, sheet and scale a designer would choose, generated dimensions,
+hole callouts, title block, bill of materials and balloons
+([docs/drafting.md](docs/drafting.md)).
+
 ### Remote use: agent on a Mac or another machine
 
 CATIA only runs on Windows, but the agent does not have to. Start the server
