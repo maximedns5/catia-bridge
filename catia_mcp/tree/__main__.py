@@ -124,12 +124,99 @@ def _blocked_report(tree, builder, error, started: float) -> dict[str, Any]:
     }
 
 
+def _assembly_plan(tree, args):
+    """The assembly plan, from the model's STEP file when given; None, with
+    the reasons printed, when the STEP does not match the tree."""
+    from catia_mcp.tree.assembly import plan_assembly
+
+    structure = world = None
+    if args.step:
+        from catia_mcp.tree.step_structure import read
+
+        try:
+            structure = read(args.step)
+        except ImportError:
+            print("Reading the STEP file's assembly needs OCP: pip install -e \".[differential]\"")
+            return None
+        world = _expected(tree, "auto") if args.expect == "auto" else None
+        if world:
+            world = {k: {"volume_mm3": v["volume_mm3"], "cog_mm": v["cog_mm"]}
+                     for k, v in world.items()}
+    plan, problems = plan_assembly(tree, structure, world)
+    if problems:
+        print("The STEP file does not match the tree:\n  " + "\n  ".join(problems))
+        return None
+    return plan
+
+
+def _adopt(conn, worker, plan, builder):
+    """Match the product imported from the STEP file to the plan and point
+    the builder at each part to rebuild; None, with the reasons printed,
+    when the product does not match."""
+    from catia_mcp.tree import adopt
+
+    if not conn.is_3dx:
+        print("--assembly adopt works inside a 3DEXPERIENCE product; on V5 use --assembly product")
+        return None
+    try:
+        leaves = worker.run_guarded(lambda: adopt.leaf_occurrences(conn),
+                                    label="the imported product")
+    except Exception as error:
+        print(f"Cannot read the active product ({error}): import the model's STEP file and "
+              "keep its window active")
+        return None
+    references, rows, problems = adopt.match(plan, leaves)
+    if problems:
+        print("The active product does not match the model:\n  " + "\n  ".join(problems))
+        return None
+    for prototype, reference in references.items():
+        builder.targets[prototype] = worker.run_guarded(lambda r=reference: adopt.part_of(r),
+                                                         label="the imported part")
+    print(f"Adopted the imported product: {len(rows)} instance(s) of {len(references)} part(s).")
+    return rows
+
+
+def _assemble(conn, worker, builder, plan, report) -> None:
+    """Place the built parts in a product (V5); on failure the parts stay
+    built and the report says why."""
+    from catia_mcp.tree.assembler import AssemblerV5
+
+    if conn.is_3dx:
+        report["assembly"] = {
+            "ok": False, "product": plan.root.name,
+            "note": "3DEXPERIENCE: the parts are built in their own frames; a scripted "
+                    "Physical Product needs licences most roles lack (see "
+                    "scripts/probe_assembly.py). Import the model's STEP to get the product."}
+        return
+    try:
+        report["assembly"] = worker.run_guarded(
+            lambda: AssemblerV5(conn.app, log=print).assemble(plan, builder.part_documents),
+            label="the assembly")
+        print(f"Assembled {report['assembly']['catia_product']}: "
+              f"{len(report['assembly']['instances'])} instance(s).")
+    except Exception as error:  # the parts stay built
+        report["assembly"] = {"ok": False, "product": plan.root.name, "error": str(error)}
+        report["success"] = False
+        report["error"] = {"part": None, "feature": "assembly", "message": str(error),
+                           "note": "The parts are built; the product may be partial."}
+
+
 def _build(tree, args) -> int:
     from catia_mcp.com_guard import ComWorker
     from catia_mcp.connection import CATIAConnection
     from catia_mcp.errors import CATIAToolError, SessionError
     from catia_mcp.tree.builder import TreeBuilder
 
+    plan = None
+    if args.assembly in ("product", "adopt"):
+        if args.assembly == "adopt" and not args.step:
+            print("--assembly adopt needs --step MODEL.step, the file imported into CATIA")
+            return 2
+        plan = _assembly_plan(tree, args)
+        if plan is None:
+            return 1
+        print(plan.summary())
+        tree = plan.tree  # one part per prototype, in its own frame
     try:
         expected = _expected(tree, args.expect, args.step_dir)
     except Exception as error:
@@ -164,6 +251,11 @@ def _build(tree, args) -> int:
         return 1
     builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print,
                           ownership=args.ownership, step_dir=args.step_dir, style=args.style)
+    adopted = None
+    if args.assembly == "adopt":
+        adopted = _adopt(conn, worker, plan, builder)
+        if adopted is None:
+            return 1
     started = time.monotonic()
     try:
         report = worker.run_guarded(builder.build, tree, expected, not args.no_edit,
@@ -175,6 +267,11 @@ def _build(tree, args) -> int:
         report = _blocked_report(tree, builder, error, started)
     if worker.dismissed:
         report["dismissed_dialogs"] = worker.dismissed
+    if adopted is not None:
+        report["assembly"] = {"ok": bool(report.get("success")), "mode": "adopt",
+                              "product": plan.root.name, "instances": adopted}
+    elif plan is not None and report.get("success"):
+        _assemble(conn, worker, builder, plan, report)
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
     for part in report["parts_detail"]:
@@ -238,6 +335,14 @@ def main(argv: list[str] | None = None) -> int:
                              "Pad, Pocket, Shaft, Groove, checked against build123d after each "
                              "feature; exact: each solid in a tool body, checked by a closed "
                              "form, then combined. Without build123d the build is exact.")
+    parser.add_argument("--assembly", default="none", choices=["none", "product", "adopt"],
+                        help="product: build each part once, in its own frame when --step "
+                             "gives the model's STEP file, then place every instance in a "
+                             "CATIA product (V5). adopt (3DEXPERIENCE): the model's STEP "
+                             "imported by hand is the active product; each of its parts is "
+                             "rebuilt there with native features, replacing the imported solid")
+    parser.add_argument("--step", help="the model's STEP file (same compile as the tree): "
+                        "its assembly structure, part frames, names and colours")
     parser.add_argument("--no-edit", action="store_true", help="skip the editability check")
     parser.add_argument("--deadline", type=float, default=170.0, help="build budget in seconds")
     parser.add_argument("--report", help="JSON report path (default tree_report.json, "

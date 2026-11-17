@@ -249,10 +249,16 @@ class DocumentTools:
         doc = docs.Add("Part")
         rename_note = ""
         if name:
+            # The part number is what a product shows; Part.Name only renames
+            # the part feature.
+            try:
+                doc.Product.PartNumber = name
+            except Exception as e:
+                rename_note = f" (part number '{name}' refused by this CATIA version: {e})"
             try:
                 doc.Part.Name = name
-            except Exception as e:
-                rename_note = f" (rename to '{name}' not supported by this CATIA version: {e})"
+            except Exception:
+                pass
         part_name = doc.Part.Name
         self.conn.refresh_display()
         return f"Created new Part document: '{part_name}'{rename_note}"
