@@ -129,3 +129,32 @@ def place_part(part: dict[str, Any]) -> dict[str, Any]:
     placed["features"] = [motion.feature(f) if isinstance(f, dict) else f
                           for f in part.get("features") or []]
     return placed
+
+
+def inverse(placement: Any) -> list[list[float]]:
+    """The inverse of a rigid placement [R|t]: [R^T | -R^T t]."""
+    rotation, t = placement_transform(placement)
+    rt = [[rotation[j][i] for j in range(3)] for i in range(3)]
+    return [rt[i] + [-sum(rt[i][k] * t[k] for k in range(3))] for i in range(3)]
+
+
+def unplace_part(part: dict[str, Any], world: Any) -> dict[str, Any]:
+    """The part with its features moved from the world into its own frame,
+    `world` being the part frame -> world placement (a STEP instance's): the
+    inverse of place_part, so a part is modelled where a designer would have
+    modelled it and the assembly places it."""
+    in_world = place_part(part)
+    return place_part({**in_world, "placement": inverse(world)})
+
+
+def catia_components(rows: Any) -> list[float]:
+    """CATIA's Position components of a placement [R|t]: the X, Y and Z axes
+    (the columns of R), then the origin."""
+    (a, b, c, tx), (d, e, f, ty), (g, h, i, tz) = [[float(x) for x in row] for row in rows]
+    return [a, d, g, b, e, h, c, f, i, tx, ty, tz]
+
+
+def from_catia_components(values: Any) -> list[list[float]]:
+    """The placement rows [R|t] of CATIA's 12 Position components."""
+    v = [float(x) for x in values]
+    return [[v[0], v[3], v[6], v[9]], [v[1], v[4], v[7], v[10]], [v[2], v[5], v[8], v[11]]]

@@ -1,0 +1,269 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/Bracket/Plate",
+   "name": "Plate",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       -4
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30,
+        -20
+       ],
+       "end": [
+        30,
+        -20
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        -20
+       ],
+       "end": [
+        30,
+        20
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        20
+       ],
+       "end": [
+        -30,
+        20
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -30,
+        20
+       ],
+       "end": [
+        -30,
+        -20
+       ],
+       "id": "e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 8,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ],
+     "params": {
+      "distance": {
+       "arg": "height",
+       "kind": "literal",
+       "value": 8,
+       "factor": 1.0,
+       "slope": 1.0,
+       "intercept": 0.0,
+       "file": "model.py",
+       "line": 3,
+       "col": 4,
+       "base_shift": 0.5
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Bolt",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "plane": {
+      "origin": [
+       15.0,
+       0.0,
+       4.0
+      ],
+      "x_dir": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "normal": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 3,
+       "id": "c1"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "c1"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 20,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ],
+     "params": {
+      "distance": {
+       "arg": "height",
+       "kind": "literal",
+       "value": 20,
+       "factor": 1.0,
+       "slope": 1.0,
+       "intercept": 0.0,
+       "file": "model.py",
+       "line": 4,
+       "col": 4,
+       "base_shift": 0.5
+      }
+     }
+    }
+   ],
+   "id": "/Bracket/Bolt"
+  },
+  {
+   "name": "Bolt",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "plane": {
+      "origin": [
+       -25.0,
+       0.0,
+       13.999999999999998
+      ],
+      "x_dir": [
+       2.22044604925e-16,
+       0.0,
+       -1.0
+      ],
+      "normal": [
+       1.0,
+       0.0,
+       2.22044604925e-16
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 3,
+       "id": "c1"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "c1"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 20,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ],
+     "params": {
+      "distance": {
+       "arg": "height",
+       "kind": "literal",
+       "value": 20,
+       "factor": 1.0,
+       "slope": 1.0,
+       "intercept": 0.0,
+       "file": "model.py",
+       "line": 4,
+       "col": 4,
+       "base_shift": 0.5
+      }
+     }
+    }
+   ],
+   "id": "/Bracket/Bolt#2"
+  }
+ ]
+}

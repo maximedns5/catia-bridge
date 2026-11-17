@@ -30,6 +30,12 @@ from catia_mcp.errors import UnsupportedCapability, after_mutation
 from catia_mcp.plm import PLMSession
 
 
+# CatConstraintType: 0 is the fix (reference), 1 distance, 2 coincidence
+# (On), 6 angle. They were sent as 0, 1, 2 for fix/coincidence, offset and
+# angle, which made a coincidence a fix and an angle a coincidence.
+CST_FIX, CST_DISTANCE, CST_ON, CST_ANGLE = 0, 1, 2, 6
+
+
 def compose_position(
     matrix: list[float],
     translation: tuple[float, float, float],
@@ -328,9 +334,9 @@ class AssemblyTools:
             )
         product = self.conn.get_active_product()
         products = product.Products
-        new_product = products.AddNewProduct("Part")
-        if name:
-            new_product.Name = name
+        # AddNewProduct makes a product component (no CATPart); a new CATPart
+        # is AddNewComponent("Part", part number), per the Automation help.
+        new_product = products.AddNewComponent("Part", name or "Part")
         self.conn.refresh_display()
         return f"New Part component created in assembly: '{new_product.Name}'"
 
@@ -414,13 +420,21 @@ class AssemblyTools:
 
     # ── V5 constraints ──
 
+    @staticmethod
+    def _component_reference(product: Any, component: Any) -> Any:
+        """A Reference to a whole component (constraints take References,
+        not Products): its path from the root product, then /! and the same
+        path for the component's own shape."""
+        path = f"{product.Name}/{component.Name}/"
+        return product.CreateReferenceFromName(f"{path}!{path}")
+
     def _fix_constraint(self, component_name: str) -> str:
         self._constraints_unsupported("catia_fix_constraint")
         product = self.conn.get_active_product()
         constraints = product.Connections("CATIAConstraints")
 
         component = product.Products.Item(component_name)
-        cst = constraints.AddMonoEltCst(0, component)  # Fix constraint
+        cst = constraints.AddMonoEltCst(CST_FIX, self._component_reference(product, component))
         cst.Name = f"Fix.{component_name}"
 
         self.conn.refresh_display()
@@ -434,7 +448,8 @@ class AssemblyTools:
         comp1 = product.Products.Item(args["component1"])
         comp2 = product.Products.Item(args["component2"])
 
-        constraints.AddBiEltCst(0, comp1, comp2)  # Coincidence
+        constraints.AddBiEltCst(CST_ON, self._component_reference(product, comp1),
+                                self._component_reference(product, comp2))
         self.conn.refresh_display()
         return (
             f"Coincidence constraint created between "
@@ -449,7 +464,8 @@ class AssemblyTools:
         comp1 = product.Products.Item(args["component1"])
         comp2 = product.Products.Item(args["component2"])
 
-        cst = constraints.AddBiEltCst(1, comp1, comp2)  # Offset
+        cst = constraints.AddBiEltCst(CST_DISTANCE, self._component_reference(product, comp1),
+                                      self._component_reference(product, comp2))
         cst.Dimension.Value = args["offset"]
 
         self.conn.refresh_display()
@@ -466,7 +482,8 @@ class AssemblyTools:
         comp1 = product.Products.Item(args["component1"])
         comp2 = product.Products.Item(args["component2"])
 
-        cst = constraints.AddBiEltCst(2, comp1, comp2)  # Angle
+        cst = constraints.AddBiEltCst(CST_ANGLE, self._component_reference(product, comp1),
+                                      self._component_reference(product, comp2))
         cst.Dimension.Value = args["angle"]
 
         self.conn.refresh_display()

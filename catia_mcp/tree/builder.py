@@ -240,6 +240,7 @@ class TreeBuilder:
         self.deadline_s = deadline_s
         self.log = log
         self.dressups = DressUps(self, ownership)
+        self.part_documents: dict[str, Any] = {}
         self.cog_checked = False
 
     # ── Entry point ──
@@ -309,6 +310,9 @@ class TreeBuilder:
             self.documents._new_part(record.name, "auto")
         self.part = self.conn.get_active_part()
         record.catia_name = str(self.part.Name)
+        if not self.conn.is_3dx:  # the assembler places V5 part documents
+            with contextlib.suppress(Exception):
+                self.part_documents[part["id"]] = self.part.Parent
         self.main_body_used = False
         self.bodies: dict[str, Any] = {}
         self.sketches: dict[str, dict[str, Any]] = {}

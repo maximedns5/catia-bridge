@@ -16,6 +16,14 @@ All notable changes to this project are documented here.
   session to 3DEXPERIENCE).
 
 ### Added
+- **Assemblies** (`--assembly product --step MODEL.step`, `docs/assemblies.md`):
+  the model's STEP file gives the assembly the tree loses (each part's own
+  frame, instances, sub-assemblies, colours). Every tree part is matched to
+  its STEP instance, each part is built once in its own frame, and on CATIA
+  V5 a product places every instance (a part used twice is one CATPart
+  placed twice), each position read back. On 3DEXPERIENCE the parts are
+  built in their own frames; `scripts/probe_assembly.py` probes what a
+  session allows for products.
 - **Human-style tree** (`--style human`, the default): a join or a cut goes
   straight into its body as a Pad, Pocket, Shaft or Groove, instead of a tool
   body and a boolean. The build123d reference now records every body's volume
@@ -161,6 +169,10 @@ All notable changes to this project are documented here.
   live V5 or 3DEXPERIENCE session and writes a JSON report.
 
 ### Fixed
+- V5 assembly tools: `catia_add_new_part` makes a CATPart
+  (`AddNewComponent`), not a product; the assembly constraints pass
+  References and the right constraint types (a coincidence was sent as a
+  fix, an angle as a coincidence); a new part's name sets its part number.
 - Found by the first live tree run on 3DEXPERIENCE R428 SP6 (French), 29 of
   40 builds right on the first run:
   - fillets and chamfers kept the sketches' own wire edges, which the body
