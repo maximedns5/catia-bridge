@@ -37,7 +37,9 @@ All notable changes to this project are documented here.
   designer would (horizontal and vertical lines, width and height, radius,
   symmetry about the sketch axes or distances to them), made on the drawn
   geometry so nothing moves. The editability check also edits the first
-  pad's sketch width.
+  pad's sketch width. Slots (tangencies, radii, length, position) and
+  regular polygons (vertices on a construction circle, sides driven by
+  formulas from its radius, so they stay regular when edited) too.
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that

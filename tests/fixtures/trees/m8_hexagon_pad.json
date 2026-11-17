@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "/M8/HexPad",
+      "name": "HexPad",
+      "bodies": [
+        "Body1"
+      ],
+      "features": [
+        {
+          "type": "sketch",
+          "id": "sketch1",
+          "name": "Sketch1",
+          "plane": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          },
+          "entities": [
+            {
+              "type": "line",
+              "start": [
+                10.392304845413,
+                6.0
+              ],
+              "end": [
+                0.0,
+                12.0
+              ],
+              "id": "h1"
+            },
+            {
+              "type": "line",
+              "start": [
+                0.0,
+                12.0
+              ],
+              "end": [
+                -10.392304845413,
+                6.0
+              ],
+              "id": "h2"
+            },
+            {
+              "type": "line",
+              "start": [
+                -10.392304845413,
+                6.0
+              ],
+              "end": [
+                -10.392304845413,
+                -6.0
+              ],
+              "id": "h3"
+            },
+            {
+              "type": "line",
+              "start": [
+                -10.392304845413,
+                -6.0
+              ],
+              "end": [
+                -0.0,
+                -12.0
+              ],
+              "id": "h4"
+            },
+            {
+              "type": "line",
+              "start": [
+                -0.0,
+                -12.0
+              ],
+              "end": [
+                10.392304845413,
+                -6.0
+              ],
+              "id": "h5"
+            },
+            {
+              "type": "line",
+              "start": [
+                10.392304845413,
+                -6.0
+              ],
+              "end": [
+                10.392304845413,
+                6.0
+              ],
+              "id": "h6"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "extrude1",
+          "name": "Extrude1",
+          "sketch": "sketch1",
+          "distance": 10,
+          "operation": "new_body",
+          "creates": [
+            "Body1"
+          ],
+          "source": {
+            "file": "model.py",
+            "line": 3,
+            "api": "RegularPolygon(12, 6) + extrude"
+          }
+        }
+      ]
+    }
+  ]
+}

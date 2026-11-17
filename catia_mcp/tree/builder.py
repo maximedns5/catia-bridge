@@ -1289,15 +1289,25 @@ class TreeBuilder:
                 circle = factory.CreateCircle(arc.center[0], arc.center[1], arc.radius, arc.start,
                                               arc.end)
                 (cu, cv), r = arc.center, arc.radius
-                ends.append((circle, (cu + r * math.cos(arc.start), cv + r * math.sin(arc.start)),
-                             (cu + r * math.cos(arc.end), cv + r * math.sin(arc.end))))
+                start = (cu + r * math.cos(arc.start), cv + r * math.sin(arc.start))
+                end = (cu + r * math.cos(arc.end), cv + r * math.sin(arc.end))
+                ends.append((circle, start, end))
+                if connect:  # its centre point, as for a closed circle
+                    with contextlib.suppress(Exception):
+                        circle.CenterPoint = factory.CreatePoint(cu, cv)
+                objects[key] = circle
+                drawn[key] = {"type": "arc", "id": key, "center": (cu, cv), "radius": r,
+                              "start": start, "end": end}
         if connect:
             _connect_ends(factory, ends)
         made: list[tuple[Any, Any]] = []
+        formulas: list[tuple[Any, str, list[Any]]] = []
         if constrain:
-            made = self._constrain(catia_sketch, sketch, objects, drawn, entry)
+            made, formulas = self._constrain(catia_sketch, sketch, objects, drawn, entry, factory)
         catia_sketch.CloseEdition()
         self.part.UpdateObject(catia_sketch)
+        if formulas:
+            self._sketch_formulas(catia_sketch, formulas, entry)
         if made:
             self._check_constraints(made, entry)
         self.last_dimensions = [(c, spec) for c, spec in made if spec.dimensional]
@@ -1306,11 +1316,12 @@ class TreeBuilder:
     # ── Sketch constraints ──
 
     def _constrain(self, catia_sketch: Any, sketch: dict[str, Any], objects: dict[str, Any],
-                   drawn: dict[str, dict[str, Any]],
-                   entry: dict[str, Any] | None) -> list[tuple[Any, Any]]:
-        """Constrain the recognised shapes, while the sketch is in edition.
-        A constraint CATIA refuses is noted and skipped: constraints never
-        cost the part."""
+                   drawn: dict[str, dict[str, Any]], entry: dict[str, Any] | None,
+                   factory: Any) -> tuple[list[tuple[Any, Any]], list[tuple[Any, str, list[Any]]]]:
+        """Constrain the recognised shapes, while the sketch is in edition,
+        and return the constraints made and the formulas to drive some of
+        them once the sketch is closed. A constraint CATIA refuses is noted
+        and skipped: constraints never cost the part."""
         loops = [[drawn[str(i)] for i in profile["outer"] if str(i) in drawn]
                  for profile in sketch.get("profiles") or []]
         loops += [[drawn[str(i)] for i in inner if str(i) in drawn]
@@ -1326,8 +1337,16 @@ class TreeBuilder:
         except Exception as error:  # a bonus: noted, never fatal
             if entry is not None:
                 entry.setdefault("constraints", {})["refused"] = [f"no constraints: {error}"]
-            return []
+            return [], []
         part = self.part
+        for circle in planned.construction:  # a regular polygon's circumcircle
+            try:
+                drawn_circle = factory.CreateClosedCircle(*circle.center, circle.radius)
+                _set_prop(drawn_circle, "Construction", True)
+                drawn_circle.CenterPoint = factory.CreatePoint(*circle.center)
+                objects[circle.id] = drawn_circle
+            except Exception:  # its constraints are refused below, and noted
+                continue
 
         def reference(ref):
             kind, key = ref
@@ -1337,8 +1356,9 @@ class TreeBuilder:
             return part.CreateReferenceFromObject(obj)
 
         made: list[tuple[Any, Any]] = []
+        by_index: dict[int, Any] = {}
         refused: list[str] = []
-        for spec in planned.constraints:
+        for index, spec in enumerate(planned.constraints):
             try:
                 refs = [reference(r) for r in spec.refs]
                 method = ("AddMonoEltCst", "AddBiEltCst", "AddTriEltCst")[len(refs) - 1]
@@ -1346,8 +1366,12 @@ class TreeBuilder:
                 if spec.dimensional:
                     _set_prop(constraint, "Mode", CONSTRAINT_DRIVING)
                 made.append((constraint, spec))
+                by_index[index] = constraint
             except Exception as error:  # a bonus: noted, never fatal
                 refused.append(f"{spec.name or spec.type}: {error}")
+        formulas = [(by_index[f.target], f.expression, [by_index[i] for i in f.sources])
+                    for f in planned.formulas
+                    if f.target in by_index and all(i in by_index for i in f.sources)]
         if entry is not None:
             record = entry.setdefault("constraints", {"added": 0, "shapes": [], "free": []})
             record["added"] += len(made)
@@ -1355,7 +1379,30 @@ class TreeBuilder:
             record["free"] += planned.free
             if refused:
                 record.setdefault("refused", []).extend(refused)
-        return made
+        return made, formulas
+
+    def _sketch_formulas(self, catia_sketch: Any, formulas: list[tuple[Any, str, list[Any]]],
+                         entry: dict[str, Any] | None) -> None:
+        """Drive sketch dimensions from others (a regular polygon's sides from
+        its radius), so that editing one keeps the shape."""
+        part = self.part
+        made, refused = 0, []
+        for target, expression, sources in formulas:
+            try:
+                names = [part.Parameters.GetNameToUseInRelation(source.Dimension)
+                         for source in sources]
+                self.formula_count = getattr(self, "formula_count", 0) + 1
+                part.Relations.CreateFormula(f"Sketch_formula_{self.formula_count}", "",
+                                             target.Dimension, expression.format(*names))
+                made += 1
+            except Exception as error:  # a bonus: noted, never fatal
+                refused.append(f"{target.Name}: {error}")
+        part.UpdateObject(catia_sketch)
+        if entry is not None:
+            record = entry.setdefault("constraints", {})
+            record["formulas"] = record.get("formulas", 0) + made
+            if refused:
+                record.setdefault("refused", []).extend(refused)
 
     def _check_constraints(self, made: list[tuple[Any, Any]], entry: dict[str, Any] | None) -> None:
         """Every constraint must be satisfied (Status 0) and every dimension
