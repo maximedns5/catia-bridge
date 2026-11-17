@@ -1759,11 +1759,15 @@ def _scale_part(scaling_refused=False):
 
 
 def test_a_uniform_scale_is_a_scaling_and_another_an_affinity(monkeypatch):
-    for name, kind in (("m9_scale_uniform", "scaling"), ("m9_scale_affinity", "affinity")):
+    for name, kind, is_3dx in (("m9_scale_uniform", "scaling", False),
+                               ("m9_scale_uniform", "affinity", True),  # live on R428
+                               ("m9_scale_affinity", "affinity", False)):
         part = _scale_part()
         tree = load(name)
         want = {tree["parts"][0]["id"]: {"volume_mm3": CLOSED_FORM_MM3[name]}}
-        report = _builder(part, monkeypatch).build(tree, want, check_editability=False)
+        built = _builder(part, monkeypatch)
+        built.conn.is_3dx = is_3dx
+        report = built.build(tree, want, check_editability=False)
         assert report["success"], (name, report.get("error"))
         (made,) = [f for f in part.pads if getattr(f, "kind", None) == kind]
         assert report["parts_detail"][0]["features"][2]["catia"] == [made.Name]
@@ -1772,7 +1776,9 @@ def test_a_uniform_scale_is_a_scaling_and_another_an_affinity(monkeypatch):
 def test_a_refused_scaling_falls_back_to_an_affinity(monkeypatch):
     part = _scale_part(scaling_refused=True)
     tree = load("m9_scale_uniform")
-    report = _builder(part, monkeypatch).build(tree, check_editability=False)
+    built = _builder(part, monkeypatch)
+    built.conn.is_3dx = False  # CATIA V5 tries the Scaling first
+    report = built.build(tree, check_editability=False)
     assert report["success"], report.get("error")
     entry = report["parts_detail"][0]["features"][2]
     assert entry["catia"][0].startswith("affinity")

@@ -712,7 +712,10 @@ class TreeBuilder:
         tol = max(1e-3, FEATURE_REL_TOL * max(want_volume, 1e-9) ** (1 / 3))
         part, factory = self.part, self.part.ShapeFactory
         ways: list[tuple[str, Callable[[], Any]]] = []
-        if abs(sx - sy) < 1e-12 and abs(sy - sz) < 1e-12:
+        # Live on R428 AddNewScaling refused a construction point (the help
+        # asks for a vertex or a planar face of the body) and the Affinity
+        # scaled uniformly as well: 3DEXPERIENCE goes straight to it.
+        if abs(sx - sy) < 1e-12 and abs(sy - sz) < 1e-12 and not self.conn.is_3dx:
             ways.append(("scaling", lambda: factory.AddNewScaling(
                 self._construction_point(origin), sx)))
 
