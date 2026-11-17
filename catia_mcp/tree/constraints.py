@@ -100,7 +100,7 @@ def _rectangle(lines: list[dict[str, Any]]) -> list[Constraint] | None:
     height = abs(left["end"][1] - left["start"][1])
     if width < TOL or height < TOL:
         return None
-    ref = lambda e: ("entity", e["id"])  # noqa: E731
+    ref = lambda e: ("entity", e["id"])
     out = [Constraint(HORIZONTAL, (ref(bottom),)), Constraint(HORIZONTAL, (ref(top),)),
            Constraint(VERTICAL, (ref(left),)), Constraint(VERTICAL, (ref(right),)),
            Constraint(LENGTH, (ref(bottom),), "width", width),

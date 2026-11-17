@@ -70,6 +70,7 @@ from catia_mcp.tools.part_design import (
     _set_prop,
     _sketch_v_direction,
 )
+from catia_mcp.tree.constraints import plan as constraint_plan
 from catia_mcp.tree.dressup import DressUpFailed, DressUps
 from catia_mcp.tree.extrude import TaperPlan, extrude_vector, oblique_expectation, taper_plan
 from catia_mcp.tree.geometry import (
@@ -92,7 +93,6 @@ from catia_mcp.tree.geometry import (
 )
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.nurbs import Nurbs, drawing
-from catia_mcp.tree.constraints import plan as constraint_plan
 from catia_mcp.tree.parameters import ParameterPlan
 from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect
 from catia_mcp.tree.placement import place_part
