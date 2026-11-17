@@ -170,9 +170,6 @@ def routes(conn: Any) -> dict[str, Any]:
 
 # Words in the names of the enums an engineering connection may use.
 ENG_ENUM_WORDS = ("cnx", "connection", "constraint", "asm", "eng", "mechanical")
-# What EngConnections.Add is tried with when --engcnx-create is given; each
-# connection made is removed again.
-ENG_ADD_ARGS = ((), ("Rigid",), ("Fixed",), ("Fix",), ("Coincidence",), (0,), (1,))
 
 
 def _signatures(obj: Any) -> dict[str, Any]:
@@ -213,25 +210,58 @@ def engcnx(conn: Any, create: bool) -> dict[str, Any]:
             else _signatures(publications)
     if not create:
         return out
+    occurrences = [root.Occurrences.Item(i) for i in range(1, int(root.Occurrences.Count) + 1)]
+    instances = [o.InstanceOccurrenceOf for o in occurrences]
+    # Live on R428: Add(iType As CatEngConnectionType, iImpacteds As array).
+    # What the impacteds are (instances or occurrences) is tried here, with a
+    # Fix on one, then a Rigid and a Cylindrical between the plate and a bolt.
+    cases = [("fix", ENG_FIX, 1), ("rigid", ENG_RIGID, 2), ("cylindrical", ENG_CYLINDRICAL, 2)]
     tries = []
-    for args in ENG_ADD_ARGS:
-        row: dict[str, Any] = {"args": list(args)}
-        try:
-            made = connections.Add(*args)
-        except Exception as error:
-            row["error"] = str(error)
+    for label, kind, count in cases:
+        for what, items in (("instances", instances), ("occurrences", occurrences)):
+            row: dict[str, Any] = {"type": label, "impacteds": what}
+            made = None
+            for how, call in (
+                    ("Add", lambda k=kind, i=items[:count]: connections.Add(k, i)),
+                    ("Add(tuple)", lambda k=kind, i=items[:count]: connections.Add(k, tuple(i))),
+                    ("AddWithContext", lambda k=kind, i=items[:count]: connections.AddWithContext(
+                        k, i, reference, f"Probe {label}"))):
+                try:
+                    made = call()
+                    row["made_by"] = how
+                    break
+                except Exception as error:
+                    row[how] = str(error)
+            if made is not None:
+                row["made"] = _explore(made)
+                row["removed"] = _safe(lambda m=made: connections.Remove(m) or True)
             tries.append(row)
-            continue
-        row["made"] = _signatures(made)
-        for name in ("Name", "Type", "Status", "Mode"):
-            row[name] = _safe(lambda n=name: str(getattr(made, n)))
-        for child in ("Constraints", "AssemblyConstraints", "Children"):
-            value = _safe(lambda c=child: getattr(made, c))
-            if not isinstance(value, str):
-                row[child] = _signatures(value)
-        row["removed"] = _safe(lambda m=made: connections.Remove(m) or True)
-        tries.append(row)
+            if made is not None:
+                break  # this kind of impacted works: no need for the other
     out["add"] = tries
+    return out
+
+
+ENG_FIX, ENG_RIGID, ENG_CYLINDRICAL = 2, 10, 0  # CatEngConnectionType, read live
+BASIC_PROPERTIES = {"Application", "Parent", "Name", "Count"}
+
+
+def _explore(obj: Any) -> dict[str, Any]:
+    """An object's members with their signatures, and each object-valued
+    property's own members (one level down): the engineering connection's
+    constraints collection is somewhere in there."""
+    out = _signatures(obj)
+    members = out.get("members")
+    if not isinstance(members, dict):
+        return out
+    for name, kind in members.items():
+        if kind != "property" or name in BASIC_PROPERTIES:
+            continue
+        value = _safe(lambda n=name: getattr(obj, n))
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            out.setdefault("values", {})[name] = value
+        else:
+            out.setdefault("children", {})[name] = _signatures(value)
     return out
 
 
