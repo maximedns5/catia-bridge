@@ -353,10 +353,9 @@ def _build(tree, args) -> int:
                 lambda: apply_3dx(conn, plan, *mates, leaves, builder.targets, references,
                                   log=print), label="the assembly constraints"))
     elif plan is not None and report.get("success"):
-        _assemble(conn, worker, builder, plan, report)
+        _assemble(conn, worker, builder, plan, report, mates)
     if args.drawing == "auto" and report.get("success"):
         _drawings(conn, worker, tree, builder, report, plan, adopted is not None, args)
-        _assemble(conn, worker, builder, plan, report, mates)
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
     for part in report["parts_detail"]:
