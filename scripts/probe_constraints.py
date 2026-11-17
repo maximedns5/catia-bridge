@@ -241,6 +241,37 @@ def _enum_values(conn: Any, near: Any, name: str) -> Any:
     return find_enum([near, conn.app], name)
 
 
+def product_window(conn: Any) -> dict[str, Any]:
+    """Make the imported product's window the active one. Live, two runs
+    failed because a part built earlier was the active window: each open
+    window is activated in turn until one shows a product structure."""
+    from catia_mcp.errors import WrongDocumentType
+
+    out: dict[str, Any] = {"windows": []}
+    try:
+        conn.root_occurrence()
+        out["active"] = "already a product"
+        return out
+    except WrongDocumentType:
+        pass
+    windows = conn.app.Windows
+    for i in range(1, int(windows.Count) + 1):
+        window = windows.Item(i)
+        name = _safe(lambda w=window: str(w.Name))
+        try:
+            window.Activate()
+            conn.root_occurrence()
+        except Exception as error:
+            out["windows"].append({"name": name, "product": False, "why": str(error)[:120]})
+            continue
+        out["windows"].append({"name": name, "product": True})
+        out["active"] = name
+        return out
+    out["active"] = None
+    out["note"] = "no open window shows a product: import bracket.step first"
+    return out
+
+
 def create(conn: Any, plan: Any) -> dict[str, Any]:
     """A published plane in the first part and a Fix on the first instance,
     both removed again."""
@@ -386,7 +417,8 @@ def main() -> int:
         report["plan"] = plan.summary()
     except Exception as error:
         report["plan"] = f"error: {error}"
-    steps = [("enums", lambda: enums(conn)), ("occurrences", lambda: occurrences(conn, plan)),
+    steps = [("product_window", lambda: product_window(conn)),
+             ("enums", lambda: enums(conn)), ("occurrences", lambda: occurrences(conn, plan)),
              ("members", lambda: members(conn)), ("routes", lambda: routes(conn))]
     steps.append(("engcnx", lambda: engcnx(conn, args.engcnx_create)))
     if args.create:
