@@ -56,6 +56,7 @@ CLOSED_FORM_MM3 = {
     "m4_sweep_pipe": math.pi * 3**2 * (40 + 15 * math.pi / 2),
     "m4_sweep_offset_profile": 3 * 2 * (40 + (15 - 2) * math.pi / 2 + 20),
     "m4_sweep_cut_groove": 60 * 40 * 20 - math.pi * 2**2 / 2 * (20 + 10 * math.pi / 2),
+    "m8_hexagon_pad": 3 * math.sqrt(3) / 2 * 12**2 * 10,
 }
 
 
@@ -181,6 +182,11 @@ class _Factory:
         return self.points[-1]
 
 
+def _solid(factory):
+    """A fake sketch's drawn entities, without its construction geometry."""
+    return [e for e in factory.entities if not e.get("construction")]
+
+
 class _Circle:
     """A closed circle: live on R428 its CenterPoint fails until one is set."""
 
@@ -196,6 +202,14 @@ class _Circle:
     @CenterPoint.setter
     def CenterPoint(self, point):
         self._centre = point
+
+    @property
+    def Construction(self):
+        return bool(self.entity.get("construction"))
+
+    @Construction.setter
+    def Construction(self, value):
+        self.entity["construction"] = bool(value)
 
 
 class _Constraints:
@@ -215,7 +229,9 @@ class _Constraints:
         if kind == 5:  # length of a line
             value = math.dist(first.entity["start"], first.entity["end"])
         elif kind == 14:
-            value = first.entity["radius"]
+            entity = first.entity
+            value = entity["radius"] if "radius" in entity else \
+                Arc.through(entity["start"], entity["mid"], entity["end"]).radius
         elif kind == 1:  # distance to an axis
             axis = self.axis(refs[1])
             if hasattr(first, "uv"):
@@ -223,8 +239,9 @@ class _Constraints:
             else:
                 at = first.entity["start"]
             value = abs(at[0] if axis == "V" else at[1])
-        constraint = SimpleNamespace(Name=f"Contrainte.{len(self.made) + 1}", type=kind, refs=refs,
-                                     Mode=1, Status=0, Dimension=SimpleNamespace(Value=value))
+        name = f"Contrainte.{len(self.made) + 1}"
+        constraint = SimpleNamespace(Name=name, type=kind, refs=refs, Mode=1, Status=0,
+                                     Dimension=SimpleNamespace(Value=value, owner=name))
         self.made.append(constraint)
         return constraint
 
@@ -489,7 +506,7 @@ class _FakePart:
     def _prism(self, pad):
         origin, h, v = pad.sketch.ref
         normal = cross(h, v)
-        entities = [dict(e, id=str(i)) for i, e in enumerate(pad.sketch.factory.entities)]
+        entities = [dict(e, id=str(i)) for i, e in enumerate(_solid(pad.sketch.factory))]
         area, (cu, cv) = _loop_area_centroid(entities)
         reversed_ = self.pockets_reversed if pad.sign < 0 else self.pads_reversed
         side = -1 if (pad.DirectionOrientation == 1) != reversed_ else 1
@@ -500,7 +517,7 @@ class _FakePart:
 
     def _revolved(self, shaft):
         origin, h, v = shaft.sketch.ref
-        entities = [dict(e, id=str(i)) for i, e in enumerate(shaft.sketch.factory.entities)]
+        entities = [dict(e, id=str(i)) for i, e in enumerate(_solid(shaft.sketch.factory))]
         sketch = {"plane": {"origin": list(origin), "x_dir": list(h), "normal": list(cross(h, v))},
                   "entities": entities, "profiles": [{"outer": [e["id"] for e in entities], "inner": []}]}
         _, axis_origin, axis_direction = shaft.RevoluteAxis
@@ -560,6 +577,10 @@ class _FakeParameters:
         self.removed.append(name)
         self.items.pop(name, None)
 
+    @staticmethod
+    def GetNameToUseInRelation(parameter):
+        return f"`{parameter.owner}`"
+
 
 class _FakeRelations:
     def __init__(self, refuse=False):
@@ -579,7 +600,7 @@ class _FakeRelations:
 def _tree_sketch(sketch):
     """A fake CATIA sketch's drawing as a tree sketch, in its own frame."""
     origin, h, v = sketch.ref
-    entities = [dict(e, id=str(i)) for i, e in enumerate(sketch.factory.entities)]
+    entities = [dict(e, id=str(i)) for i, e in enumerate(_solid(sketch.factory))]
     return {"plane": {"origin": list(origin), "x_dir": list(h), "normal": list(cross(h, v))},
             "entities": entities, "profiles": [{"outer": [e["id"] for e in entities], "inner": []}]}
 
@@ -1371,3 +1392,71 @@ def test_a_constrained_circle_is_given_its_centre_point(monkeypatch):
         "added": 2, "shapes": ["circle"], "free": []}
     made = part.pads[0].sketch.Constraints.made
     assert [k.type for k in made] == [14, 2]  # radius, centre on the origin
+
+
+def test_slots_and_regular_polygons_are_constrained_as_a_designer_would():
+    from catia_mcp.tree import constraints as c
+
+    def slot(cx, cy, half, r, vertical=False):
+        def p(u, v):
+            return (cx + v, cy + u) if vertical else (cx + u, cy + v)
+        return [{"type": "line", "id": "l1", "start": p(-half, -r), "end": p(half, -r)},
+                {"type": "arc", "id": "a1", "center": p(half, 0), "radius": r,
+                 "start": p(half, -r), "end": p(half, r)},
+                {"type": "line", "id": "l2", "start": p(half, r), "end": p(-half, r)},
+                {"type": "arc", "id": "a2", "center": p(-half, 0), "radius": r,
+                 "start": p(-half, r), "end": p(-half, -r)}]
+
+    centred = c.plan([slot(0, 0, 20, 5)])
+    assert centred.shapes == ["slot"]
+    assert [k.type for k in centred.constraints].count(c.TANGENCY) == 4
+    assert [(k.name, k.value) for k in centred.constraints if k.dimensional] == [
+        ("radius", 5), ("radius", 5), ("length", 40)]
+    assert [k.name for k in centred.constraints[-2:]] == ["symmetric about V", "on the H axis"]
+    placed = c.plan([slot(30, 12, 10, 4)])
+    assert [(k.name, k.value) for k in placed.constraints[-3:]] == [
+        ("", None), ("x", 20), ("y", 12)]  # horizontal, then the first centre's place
+    upright = c.plan([slot(0, 0, 8, 3, vertical=True)])
+    assert upright.constraints[-2].name == "symmetric about H"
+    loose = slot(0, 0, 20, 5)
+    loose[1]["center"] = (21, 0)  # the arc no longer meets the line tangentially
+    assert c.plan([loose]).free == ["4 curve(s): arc, line"]
+
+    def polygon(n, r, turn=0.0):
+        pts = [(r * math.cos(turn + 2 * math.pi * i / n), r * math.sin(turn + 2 * math.pi * i / n))
+               for i in range(n)]
+        return [{"type": "line", "id": f"p{i}", "start": pts[i], "end": pts[(i + 1) % n]}
+                for i in range(n)]
+
+    hexagon = c.plan([polygon(6, 12, math.pi / 6)])
+    assert hexagon.shapes == ["regular polygon (6 sides)"] and not hexagon.free
+    (circle,) = hexagon.construction
+    assert circle.radius == pytest.approx(12) and circle.center == pytest.approx((0, 0))
+    assert [k.type for k in hexagon.constraints].count(c.ON) == 7  # 6 vertices + the centre
+    first, *rest = hexagon.formulas
+    assert first.expression == "2*{0}*sin(180deg/6)"
+    assert hexagon.constraints[first.sources[0]].name == "radius"
+    assert all(f.expression == "{0}" and f.sources == (first.target,) for f in rest)
+    assert len(rest) == 4  # sides 2 to 5 equal side 1; the sixth closes the polygon
+    turned = c.plan([polygon(5, 9, 0.1)])
+    assert turned.free == ["regular polygon (5 sides): its turn about its centre"]
+    irregular = polygon(6, 12)
+    irregular[0]["end"] = irregular[1]["start"] = (12.5, 9.0)
+    assert c.plan([irregular]).shapes == []
+
+
+def test_slot_and_hexagon_sketches_are_built_constrained(monkeypatch):
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(load("m1_slot_arcs_negative"),
+                                               check_editability=False)
+    assert report["success"], report.get("error")
+    entry = report["parts_detail"][0]["features"][1]
+    assert entry["constraints"]["shapes"] == ["slot"] and entry["constraints"]["added"] == 9
+    part = _FakePart()
+    report = _builder(part, monkeypatch).build(load("m8_hexagon_pad"), check_editability=False)
+    assert report["success"], report.get("error")
+    entry = report["parts_detail"][0]["features"][1]
+    assert entry["constraints"]["shapes"] == ["regular polygon (6 sides)"]
+    assert entry["constraints"]["formulas"] == 5 and "refused" not in entry["constraints"]
+    formulas = list(part.Relations.formulas.values())
+    assert formulas[0][1].startswith("2*`Contrainte.7`*sin(180deg/6)")

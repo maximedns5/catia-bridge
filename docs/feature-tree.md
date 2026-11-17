@@ -182,13 +182,17 @@ frame:
 | axis-aligned rectangle | horizontal x2, vertical x2, width and height (lengths), and its position: symmetric about the sketch axis it is centred on, on an axis it touches, else its distance to each axis |
 | circle | radius, and its centre on the origin, on an axis, or at a distance from each |
 | a Hole's position point | on the origin, on an axis, or at a distance from each |
+| slot (two lines, two arcs tangent where they meet, along H or V) | 4 tangencies, each arc's radius, the lines' length, and its position: the arc centres symmetric about the axis across the slot when centred along it, else horizontal (or vertical) and the first centre's distance to the axes |
+| regular polygon | vertices on a construction circle, its radius and centre, one side horizontal or vertical when one is; the sides are driven by formulas from the radius (side 1 `= 2*R*sin(180deg/n)`, the others `= side 1`), so editing the radius keeps it regular |
 
 Each constraint is made on the geometry as drawn, so it already holds and
-moves nothing: dimensions take the drawn value (made driving). After the
+moves nothing: dimensions take the drawn value (made driving). Arcs and
+circles are given a centre point, which CATIA does not create by itself. After the
 sketch is closed every constraint must have status 0 and every dimension the
 drawn value, or the feature's `constraints.problems` says which. A
 constraint CATIA refuses is noted (`constraints.refused`) and skipped. Other
-profiles (slots, polygons, arcs, splines) stay free, listed in
+profiles (turned slots, irregular polygons, open arcs, splines) stay free,
+listed in
 `constraints.free`. The editability check also edits the first pad's sketch
 width (or radius) by 1 mm and back (`sketch_editable`, `sketch_edit_note`).
 
@@ -196,10 +200,14 @@ Live on R428 (French): every rectangle and hole position was fully
 constrained with status 0, and the sketch width edit moved and restored the
 volume on every part (sample1's plate 60 → 61 → 60 mm). A closed circle has
 no centre point until one is given (`CenterPoint` failed), so one is created
-and set, as CATIA's own macros do.
+and set, as CATIA's own macros do; with it the flange's circle is fully
+constrained. A slot (tangencies, symmetry of the arc centres) and a hexagon
+(construction circle, 5 side formulas) were constrained with no refusal:
+editing the hexagon's radius 12 → 13 mm scaled its volume by exactly
+(13/12)², so it stayed regular.
 
-Next: constraints for slots, polygons and revolve profiles, and driving
-sketch dimensions by the script's numbers (the tree gives no `params` for sketch dimensions yet: a
+Next: constraints for revolve profiles, and driving sketch dimensions by the
+script's numbers (the tree gives no `params` for sketch dimensions yet: a
 contract request).
 
 ## How the build stays faithful
