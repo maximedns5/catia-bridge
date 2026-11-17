@@ -140,6 +140,28 @@ place: close without saving).
 - `Publications` exists on the `VPMReference` of the product and of each
   part, not on the `Part` object.
 
+Second live probe (the bracket's window named with `--window`): the
+engineering connections' API is in the type library.
+
+- `EngConnections.Add(iType As CatEngConnectionType, iImpacteds As array)`
+  and `AddWithContext(iType, iImpacteds, iReferenceContext, iName)`;
+  `Remove(iEngCnt)`.
+- `CatEngConnectionType`: cylindrical 0, free 1, fix 2, planar 3, point-curve
+  4, point-surface 5, prismatic 6, projection 7, revolute 8, roll-curve 9,
+  rigid 10, slide-curve 11, spherical 12, symmetry 13, universal 14,
+  user-defined 15, gear 16, rack 17, cable 18, screw 19.
+- `CatAssemblyConstraintType` (63 values), among them fix instance 30,
+  coincidence line-line 5, plane-plane 7, contact plane-plane 18,
+  cylinder-cylinder 16, distance plane-plane 24, angle plane-plane 2;
+  `CatAssemblyConstraintOption` (orientation: undefined 0, same 1,
+  opposite 2); `CatAssemblyConstraintMode` (driving 0, measured 1).
+- A part reference's `Publications` (`VPMPublications`) only reads
+  (`GetItem`, `Item`).
+
+The next probe creates a Fix, a Rigid and a Cylindrical connection (on
+instances, else occurrences), describes each and the objects it holds (its
+constraints collection), and removes it.
+
 The probe's `engcnx` step now reads the signatures of `EngConnections`, the
 enums whose names mention connections or constraints, and the publications
 of a part reference; with `--engcnx-create` it tries `Add` with a few
