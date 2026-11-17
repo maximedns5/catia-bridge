@@ -427,6 +427,17 @@ class PartDesignPlus:
 
     # ── Hole threads ──
 
+    def start_smooth(self, hole: Any) -> None:
+        """A new Hole starts smooth. Live on R428 a Hole made after a threaded
+        one came out threaded to its standard, its diameter locked by the
+        standard's table, and setting the tree's diameter failed."""
+        try:
+            smooth = self._enum("CatHoleThreadingMode", "smooth")
+            if int(hole.ThreadingMode) != smooth:
+                hole.ThreadingMode = smooth
+        except Exception:  # no thread settings on this release: nothing to undo
+            pass
+
     def thread(self, hole: Any, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         """Thread a Hole after its first update (V5-6R2020 breaks the rebuild
         otherwise). The hole keeps the tree's tap-drill diameter: a standard
