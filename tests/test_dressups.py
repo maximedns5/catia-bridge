@@ -191,8 +191,8 @@ def test_preflight_refuses_dressups_it_cannot_build():
     tree = load("m3_asymmetric_chamfer")
     chamfer = _first(tree, "chamfer")
     chamfer.pop("distance2")
-    chamfer["angle"] = 30
-    cases.append((tree, "chamfers given by an angle are not supported yet"))
+    chamfer["angle"] = 95
+    cases.append((tree, "a chamfer angle must be a number of degrees in (0, 90)"))
     tree = load("m3_shell_open_top")
     _first(tree, "shell")["faces"] = []
     cases.append((tree, "shells with no removed face (offset solids) are not supported yet"))

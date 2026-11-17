@@ -46,19 +46,27 @@ active editor.
 | `mirror` followed by a `combine` `join` of its copy into its source | One CATIA Mirror of the source body. Any other use of a mirrored body is refused |
 | `split` (`keep` `top` / `bottom`) | Split by the plane, keeping the side the tree keeps |
 | `loft` between two sections in parallel planes (one profile each, no holes), every operation | Multi-sections Solid in its own body. Each section is redrawn with the vertices build123d pairs the sections by, coupled vertex to vertex from matching closing points (GSD points in `Tree_Construction`) |
+| `loft` `ruled` through three or more sections, every section a circle or every section with the same number of edges | One two-section Multi-sections Solid per consecutive pair (OpenCascade's ruled loft is one ruled band per pair), each checked as above, the later ones joined into the first |
+| `remove` | The bodies the model drops are deleted (hidden, with a note, if CATIA keeps them) |
 | `sweep` of one profile along a planar, tangent-continuous path of lines and arcs, the profile perpendicular to the path where it starts, every operation | Rib in its own body, along the path drawn as a sketch in its own plane |
 | `fillet` with a constant radius on line and circle edges | One Edge Fillet (`AddNewSolidEdgeFilletWithConstantRadius`, tangency propagation) on the matched edges, one edge per tangent chain |
 | `chamfer` with one or two distances on line and circle edges | One Chamfer (`AddNewChamfer`, two-length mode, tangency propagation). With two distances, `distance` goes on the plane `face`, which must hold every edge |
 | `shell` with at least one removed face, inside or outside, `Kind.ARC` or `Kind.INTERSECTION` | One Shell (`AddNewShell`, then `AddFaceToRemove`), the thickness inside (`thickness` < 0) or outside |
 
+A sweep with `frenet` is accepted: along a planar path the Frenet frame's
+binormal is constant, so it is the same solid (build123d gives the same
+volume and centre of gravity to 1e-6). A chamfer given by an `angle` is
+build123d's own two-distance chamfer, `distance2 = distance * tan(angle)`,
+and is built as one.
+
 Everything else is refused by `check`, for now: variable-radius fillets,
-fillets and chamfers on edges other than lines and circles, chamfers given by
-an angle, asymmetric chamfers without a plane reference face holding their
+fillets and chamfers on edges other than lines and circles, asymmetric chamfers without a plane reference face holding their
 edges or with three edges meeting at a corner, shells with no removed face
 (build123d's `offset` without openings shrinks or grows the solid rather than
-hollowing it), lofts through more than two sections, to a point, between
-sections that are not parallel or with correspondence rails, Frenet sweeps,
-sweeps along 3D paths or paths with corners, tapers whose offset changes the
+hollowing it), smooth (not ruled) lofts through more than two sections, ruled
+ones mixing circles and polygons or different edge counts, lofts to a point,
+between sections that are not parallel or with correspondence rails, sweeps
+along 3D paths or paths with corners, tapers whose offset changes the
 profile's topology (a loop collapsing or crossing itself or another) or that
 meet an arc at a corner without tangency, `spline` entities in loft sections,
 sweep profiles and sweep paths (only extrudes and revolves take spline

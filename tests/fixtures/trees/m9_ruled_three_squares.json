@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "/M9/RuledTower",
+      "name": "RuledTower",
+      "bodies": [
+        "Body1"
+      ],
+      "features": [
+        {
+          "type": "sketch",
+          "id": "sketch1",
+          "plane": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          },
+          "entities": [
+            {
+              "type": "line",
+              "start": [
+                -5.0,
+                -5.0
+              ],
+              "end": [
+                5.0,
+                -5.0
+              ],
+              "id": "s1e0"
+            },
+            {
+              "type": "line",
+              "start": [
+                5.0,
+                -5.0
+              ],
+              "end": [
+                5.0,
+                5.0
+              ],
+              "id": "s1e1"
+            },
+            {
+              "type": "line",
+              "start": [
+                5.0,
+                5.0
+              ],
+              "end": [
+                -5.0,
+                5.0
+              ],
+              "id": "s1e2"
+            },
+            {
+              "type": "line",
+              "start": [
+                -5.0,
+                5.0
+              ],
+              "end": [
+                -5.0,
+                -5.0
+              ],
+              "id": "s1e3"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "s1e0",
+                "s1e1",
+                "s1e2",
+                "s1e3"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "sketch",
+          "id": "sketch2",
+          "plane": {
+            "origin": [
+              0,
+              0,
+              10
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          },
+          "entities": [
+            {
+              "type": "line",
+              "start": [
+                -8.0,
+                -8.0
+              ],
+              "end": [
+                8.0,
+                -8.0
+              ],
+              "id": "s2e0"
+            },
+            {
+              "type": "line",
+              "start": [
+                8.0,
+                -8.0
+              ],
+              "end": [
+                8.0,
+                8.0
+              ],
+              "id": "s2e1"
+            },
+            {
+              "type": "line",
+              "start": [
+                8.0,
+                8.0
+              ],
+              "end": [
+                -8.0,
+                8.0
+              ],
+              "id": "s2e2"
+            },
+            {
+              "type": "line",
+              "start": [
+                -8.0,
+                8.0
+              ],
+              "end": [
+                -8.0,
+                -8.0
+              ],
+              "id": "s2e3"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "s2e0",
+                "s2e1",
+                "s2e2",
+                "s2e3"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "sketch",
+          "id": "sketch3",
+          "plane": {
+            "origin": [
+              0,
+              0,
+              20
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          },
+          "entities": [
+            {
+              "type": "line",
+              "start": [
+                -4.0,
+                -4.0
+              ],
+              "end": [
+                4.0,
+                -4.0
+              ],
+              "id": "s3e0"
+            },
+            {
+              "type": "line",
+              "start": [
+                4.0,
+                -4.0
+              ],
+              "end": [
+                4.0,
+                4.0
+              ],
+              "id": "s3e1"
+            },
+            {
+              "type": "line",
+              "start": [
+                4.0,
+                4.0
+              ],
+              "end": [
+                -4.0,
+                4.0
+              ],
+              "id": "s3e2"
+            },
+            {
+              "type": "line",
+              "start": [
+                -4.0,
+                4.0
+              ],
+              "end": [
+                -4.0,
+                -4.0
+              ],
+              "id": "s3e3"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "s3e0",
+                "s3e1",
+                "s3e2",
+                "s3e3"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "loft",
+          "id": "loft1",
+          "name": "Loft1",
+          "sections": [
+            "sketch1",
+            "sketch2",
+            "sketch3"
+          ],
+          "ruled": true,
+          "operation": "new_body",
+          "creates": [
+            "Body1"
+          ],
+          "source": {
+            "file": "model.py",
+            "line": 6,
+            "api": "loft(ruled=True)"
+          }
+        }
+      ]
+    }
+  ]
+}

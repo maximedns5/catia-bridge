@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+from itertools import pairwise
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -568,9 +569,39 @@ class TreeBuilder:
 
     def _feature_loft(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         sections = [self.sketches[name] for name in feature["sections"]]
-        plan = plan_loft(*sections)
-        self._into_body(feature, entry,
-                        lambda body: self._verified_loft(body, sections, plan, entry))
+        pairs = list(pairwise(sections))
+
+        def make(body):
+            # A ruled loft through N sections is one ruled band per pair
+            # (OpenCascade's ruled ThruSections): N - 1 two-section lofts,
+            # each checked, the later ones joined into the first.
+            first, *rest = pairs
+            self._verified_loft(body, list(first), plan_loft(*first), entry)
+            for pair in rest:
+                band = self._new_body(use_main=False)
+                self._verified_loft(band, list(pair), plan_loft(*pair), entry)
+                self._combine(body, band, "join", entry)
+
+        self._into_body(feature, entry, make)
+
+    def _feature_remove(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        """Bodies the model drops: deleted, or hidden when CATIA keeps them."""
+        for name in feature["bodies"]:
+            body = self.bodies.pop(name)
+            selection = self.conn.hso
+            try:
+                selection.Clear()
+                selection.Add(body)
+                selection.Delete()
+                selection.Clear()
+                entry["catia"].append(f"{body.Name} deleted")
+            except Exception as error:  # a body other features use: hidden
+                with contextlib.suppress(Exception):
+                    selection.Clear()
+                    selection.Add(body)
+                    selection.VisProperties.SetShow(1)
+                    selection.Clear()
+                entry.setdefault("notes", []).append(f"{body.Name} hidden: {error}")
 
     def _feature_sweep(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         sketch = self.sketches[feature["sketch"]]

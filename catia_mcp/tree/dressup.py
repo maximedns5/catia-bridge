@@ -64,7 +64,7 @@ from catia_mcp.tree.anchors import (
     representatives,
     tangent_chains,
 )
-from catia_mcp.tree.geometry import Vec, distance, dot
+from catia_mcp.tree.geometry import Vec, chamfer_second, distance, dot
 
 OWNERSHIP_MODES = ("auto", "strict", "off")
 OWNERSHIP_ENV = "CATIA_MCP_TOPOLOGY_OWNERSHIP"
@@ -209,7 +209,7 @@ class DressUps:
     def chamfer(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         body = self._body(feature)
         first = float(feature["distance"])
-        second = float(feature.get("distance2") or first)
+        second = chamfer_second(feature) or first
         chains, refs = self._edges(feature, body, entry)
         part = self.builder.part
         before = self.builder._volume(body)

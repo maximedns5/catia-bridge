@@ -10,11 +10,19 @@ Each reason is reported once, with its count and the model lines it comes from.
 from __future__ import annotations
 
 from collections import OrderedDict
+from itertools import pairwise
 from typing import Any
 
 from catia_mcp.tree.anchors import edge_anchor_problem, face_anchor_problem, plane_of
 from catia_mcp.tree.extrude import extrude_vector, taper_plan
-from catia_mcp.tree.geometry import Frame, dot, profile_area_centroid, revolve_expectation, unit
+from catia_mcp.tree.geometry import (
+    Frame,
+    chamfer_second,
+    dot,
+    profile_area_centroid,
+    revolve_expectation,
+    unit,
+)
 from catia_mcp.tree.loft import plan_loft
 from catia_mcp.tree.nurbs import Nurbs
 from catia_mcp.tree.requirements import refuse_unavailable
@@ -25,6 +33,7 @@ from catia_mcp.tree.sweep import sweep_expectation
 # joined back into their source, splits, fillets, chamfers, shells, lofts and
 # sweeps.
 SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
+             "remove",
              "sweep", "fillet", "chamfer", "shell")
 ENTITY_TYPES = ("line", "circle", "arc", "spline")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
@@ -123,6 +132,8 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
                 _check_chamfer(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "shell":
                 _check_shell(feature, bodies, refuse, f"{pid} {where}")
+            elif kind == "remove":
+                _check_remove(feature, bodies, refuse, f"{pid} {where}")
     if capabilities is not None:
         refuse_unavailable(tree, capabilities, plm_type, refuse, _where)
     return reasons
@@ -207,9 +218,12 @@ def _check_loft(feature, sketches, bodies, refuse, where) -> None:
     sections = feature.get("sections") or []
     if any(not isinstance(section, str) for section in sections):
         refuse("lofts to a point are not supported yet", where)
-    elif len(sections) != 2:
-        refuse("lofts through more than two sections are not supported yet"
-               if len(sections) > 2 else "a loft needs two sections", where)
+    elif len(sections) > 2 and not feature.get("ruled"):
+        # OpenCascade interpolates one smooth surface through every section;
+        # CATIA's Multi-sections Solid uses its own: not the same solid.
+        refuse("smooth lofts through more than two sections are not supported yet", where)
+    elif len(sections) < 2:
+        refuse("a loft needs two sections", where)
     elif any(name not in sketches for name in sections):
         refuse("loft refers to an unknown sketch", where)
     elif any(_has_spline(sketches[name]) for name in sections):
@@ -218,12 +232,36 @@ def _check_loft(feature, sketches, bodies, refuse, where) -> None:
         refuse("loft sections with spline entities are not supported yet", where)
     else:
         try:
-            plan_loft(sketches[sections[0]], sketches[sections[1]])
+            plans = [plan_loft(sketches[a], sketches[b]) for a, b in pairwise(sections)]
+            if len(plans) > 1:
+                _check_ruled_chain(sections, sketches)
         except (KeyError, ValueError) as error:
             refuse(f"loft sections are not supported ({error})", where)
     if feature.get("correspondence_rails"):
         refuse("lofts with correspondence rails are not supported yet", where)
     _check_operation(feature, bodies, refuse, where, "loft")
+
+
+def _check_ruled_chain(sections, sketches) -> None:
+    """A ruled loft through N sections is one ruled band per pair, as
+    OpenCascade builds it, when pairing each pair alone pairs them as it
+    pairs them all at once: every section a circle, or every section with
+    the same number of edges and a corner (its vertex-to-vertex rule)."""
+    kinds = [[e["type"] for e in sketches[name]["entities"]] for name in sections]
+    if all(k == ["circle"] for k in kinds):
+        return
+    if len({len(k) for k in kinds}) == 1 and all("line" in k for k in kinds):
+        return
+    raise ValueError("a ruled loft through more than two sections needs every section to be "
+                     "a circle, or every section to have the same number of edges")
+
+
+def _check_remove(feature, bodies, refuse, where) -> None:
+    removed = feature.get("bodies") or []
+    if not removed or any(name not in bodies for name in removed):
+        refuse("remove must name known bodies", where)
+    for name in removed:
+        bodies.discard(name)
 
 
 def _check_sweep(feature, sketches, bodies, refuse, where) -> None:
@@ -244,8 +282,9 @@ def _check_sweep(feature, sketches, bodies, refuse, where) -> None:
             sweep_expectation(sketch, feature.get("path") or [])
         except (KeyError, TypeError, ValueError) as error:
             refuse(f"sweep is not supported ({error})", where)
-    if feature.get("frenet"):
-        refuse("Frenet sweeps are not supported yet", where)
+    # A Frenet sweep along a planar path is the same solid as the default
+    # sweep (the binormal is constant; measured to 1e-6 with build123d), and
+    # sweep_expectation accepts planar paths only.
     if feature.get("cylindrical_guide"):
         refuse("sweeps with a cylindrical guide are not supported yet", where)
     _check_operation(feature, bodies, refuse, where, "sweep")
@@ -389,10 +428,13 @@ def _check_fillet(feature, bodies, refuse, where) -> None:
 
 def _check_chamfer(feature, bodies, refuse, where) -> None:
     _check_dressed_body(feature, bodies, refuse, where, "chamfer")
-    first, second = feature.get("distance"), feature.get("distance2")
-    if feature.get("angle") is not None and second is None:
-        refuse("chamfers given by an angle are not supported yet", where)
+    first = feature.get("distance")
+    angle = feature.get("angle")
+    if angle is not None and feature.get("distance2") is None and (
+            isinstance(angle, bool) or not isinstance(angle, (int, float)) or not 0 < angle < 90):
+        refuse("a chamfer angle must be a number of degrees in (0, 90)", where)
         return
+    second = chamfer_second(feature) if _positive(first) else feature.get("distance2")
     if not _positive(first) or (second is not None and not _positive(second)):
         refuse("chamfer distances must be positive numbers", where)
         return
