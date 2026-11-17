@@ -81,12 +81,26 @@ sections, sweep paths).
 | Frame, title block, symbol | lines and circles by `Factory2D` in the background view, then texts | same API; not run live yet |
 | BOM | `Tables.Add` in the background view | same API |
 | Balloons | a text with `FrameType` = circle and a leader | same API; not run live yet |
-| PDF | `ExportData(path, "pdf")`, checked on disk | tried and the refusal recorded (R428 documents no file export) |
+| PDF | `ExportData(path, "pdf")`, checked on disk | tried and the refusal recorded (live on R428: `ExportData` refused, E_FAIL) |
 
 A standalone 3D Shape (the default `--plm-type 3DShape`) cannot be drawn:
 3DEXPERIENCE generative views project product instances, and CATIA creates
 no view for a 3D Shape outside a product (live R428). The report says so
-(`skipped`). Build with `--plm-type 3DPart`, or with `--assembly adopt`.
+(`skipped`). Import the model's STEP and build with `--assembly adopt`: the
+imported product is what gets drawn. `--plm-type 3DPart` also gives a
+product where the licence allows it; live on R428 with a student licence it
+opened "Gestion des licences: Opération non autorisée" before the first
+feature, and the build stopped.
+
+### First live probe (3DEXPERIENCE R428, French, student role)
+
+- `PLMNewService.PLMCreate "Drawing"` makes the drawing (sheet `Calque.1`,
+  views `Vue.1`, `Vue.2`); `Documents.Add("Drawing")` is refused.
+- The sheet takes A3 landscape, first angle (`PaperSize` 5, read back
+  420 × 297 mm through `GetPaperWidth` / `GetPaperHeight`).
+- A front view of a standalone 3D Shape: `DefineFrontView` returns nothing,
+  and views have no `GenerativeBehavior`. A product is needed (above).
+- PDF export: `ExportData` on the drawing is missing, on the document E_FAIL.
 
 A failed view is removed from the sheet and recorded. The views derived
 from it are skipped. Everything else goes on. A dialog that blocks a
@@ -123,8 +137,8 @@ lines, and the PDF export. With `--tree`, it also runs the drafting step of
 the tree build on the active source.
 
 Fallback when no route works on 3DEXPERIENCE: put the shape in a 3D Part or
-a product (`--plm-type 3DPart`, or `--assembly adopt` after importing the
-model's STEP), or create the drawing by hand (Drafting app, `Insert > Front
+a product (`--assembly adopt` after importing the model's STEP, or
+`--plm-type 3DPart` where the licence allows it), or create the drawing by hand (Drafting app, `Insert > Front
 View` on the product) and use the interactive drafting tools
 (`catia_drawing_*`).
 
