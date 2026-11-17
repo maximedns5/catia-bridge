@@ -271,6 +271,9 @@ MODEL.step` builds each part once, in its own frame, and places every instance
 in a CATIA V5 product, a part used twice being one CATPart placed twice
 ([docs/assemblies.md](docs/assemblies.md)).
 
+Surface features (Generative Shape Design) and the named reference planes
+sketches sit on are in [docs/surfaces.md](docs/surfaces.md).
+
 ### Remote use: agent on a Mac or another machine
 
 CATIA only runs on Windows, but the agent does not have to. Start the server

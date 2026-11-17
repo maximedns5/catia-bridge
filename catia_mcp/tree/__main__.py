@@ -100,6 +100,8 @@ def _reference(tree, step_dir=None) -> int:
         cog = ", ".join(f"{c:.4f}" for c in props["cog_mm"])
         print(f"{part_id}: volume {props['volume_mm3']:.4f} mm3, area {props['area_mm2']:.4f} mm2, "
               f"cog ({cog})")
+        for name, surface in (props.get("surfaces") or {}).items():  # docs/surfaces.md
+            print(f"  surface {name}: area {surface['area_mm2']:.4f} mm2")
     return 0
 
 

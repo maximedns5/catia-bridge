@@ -126,7 +126,7 @@ class _PlanePart(_FakePart):
         self.planes.append(plane)
         return plane
 
-    def CreateReferenceFromObject(self, obj):  # noqa: N802
+    def CreateReferenceFromObject(self, obj):
         if hasattr(obj, "frame"):
             return obj.frame()
         return super().CreateReferenceFromObject(obj)

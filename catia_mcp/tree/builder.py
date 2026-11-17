@@ -103,6 +103,7 @@ from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect
 from catia_mcp.tree.placement import place_part, placement_transform
 from catia_mcp.tree.preflight import SUPPORTED, check
 from catia_mcp.tree.step_source import StepSource
+from catia_mcp.tree.surface_builder import SurfaceFeatures
 from catia_mcp.tree.sweep import path_sketch, sweep_expectation
 
 # Origin planes and the sketch frame CATIA gives them (H, V; normal = H x V).
@@ -220,6 +221,8 @@ class PartRecord:
     import_note: str = ""
     # The named planes, axes and points made for the part (datums.py).
     construction: list[dict[str, Any]] = field(default_factory=list)
+    # The surfaces made for the part, with their areas (surface_builder.py).
+    surfaces: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -237,7 +240,7 @@ class HumanMismatch(BuildFailed):
         self.items = items
 
 
-class TreeBuilder:
+class TreeBuilder(SurfaceFeatures):
     def __init__(self, conn: CATIAConnection, plm_type: str = "3DShape",
                  deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None,
                  ownership: str | None = None, step_dir: str | None = None,
@@ -315,6 +318,7 @@ class TreeBuilder:
         # build123d's bodies after each feature, for the human style's checks.
         snapshots = (expected or {}).get("features") if self.style == "human" else None
         self.snapshots: dict[str, dict[str, Any]] = snapshots or {}
+        self.expected_part = expected or {}  # surfaces and solids from surfaces
         self.expected_bodies: dict[str, dict[str, Any]] = {}
         record.style = "human" if self.snapshots else "exact"
         self.plan = ParameterPlan()

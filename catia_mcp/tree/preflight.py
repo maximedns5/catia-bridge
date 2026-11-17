@@ -27,6 +27,7 @@ from catia_mcp.tree.loft import plan_loft
 from catia_mcp.tree.nurbs import Nurbs
 from catia_mcp.tree.requirements import refuse_unavailable
 from catia_mcp.tree.step_source import StepSource
+from catia_mcp.tree.surfaces import SURFACE_TYPES, SurfaceCheck, check_wire_sketch
 from catia_mcp.tree.sweep import sweep_expectation
 
 # Milestones 1 to 4: sketches, extrudes, revolves, combines, holes, mirrors
@@ -34,7 +35,7 @@ from catia_mcp.tree.sweep import sweep_expectation
 # sweeps.
 SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
              "remove", "copy", "scale",
-             "sweep", "fillet", "chamfer", "shell")
+             "sweep", "fillet", "chamfer", "shell") + SURFACE_TYPES
 ENTITY_TYPES = ("line", "circle", "arc", "spline")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
 COMBINE_OPERATIONS = ("join", "cut", "intersect")
@@ -89,6 +90,7 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
         ids: set[str] = set()
         sketches: dict[str, dict[str, Any]] = {}
         bodies: set[str] = set()
+        surfaces = SurfaceCheck()  # surface features (surfaces.py)
         features = part.get("features") or []
         for index, feature in enumerate(features):
             kind, fid, where = feature.get("type"), feature.get("id"), _where(feature)
@@ -106,9 +108,18 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
                 # broken only because this one is unsupported.
                 bodies.update(feature.get("creates") or [])
                 continue
-            if kind == "sketch":
+            used = [feature.get("sketch")] if kind in ("extrude", "revolve", "sweep") \
+                else feature.get("sections") or [] if kind == "loft" else []
+            if any((sketches.get(name) or {}).get("wire") for name in used if isinstance(name, str)):
+                refuse("a wire sketch (no closed profile) cannot make a solid", f"{pid} {where}")
+            if kind == "sketch" and feature.get("wire"):
+                check_wire_sketch(feature, refuse, f"{pid} {where}")
+                sketches[fid] = feature
+            elif kind == "sketch":
                 _check_sketch(feature, refuse, f"{pid} {where}")
                 sketches[fid] = feature
+            elif kind in SURFACE_TYPES:
+                surfaces.check(feature, sketches, bodies, refuse, f"{pid} {where}")
             elif kind == "extrude":
                 _check_extrude(feature, sketches, bodies, refuse, f"{pid} {where}")
             elif kind == "revolve":
