@@ -225,8 +225,8 @@ class _FakePart:
         # reversed; "up to last" goes `through_depth` deep.
         self.holes_reversed, self.through_depth = holes_reversed, through_depth
         self.patterns_refused = set()
-        # Live on R428 the origin planes pointed a rectangular pattern backwards.
-        self.pattern_dirs_reversed = False
+        # Live on R428 a rectangular pattern runs against its direction lines.
+        self.pattern_dirs_reversed = True
         self.turns_reversed, self.split_reversed = turns_reversed, split_reversed
         self.lofts_reversed, self.deleted = lofts_reversed, []
         self.MainBody = _Body("Corps principal")
@@ -1169,6 +1169,7 @@ def test_a_grid_of_holes_is_one_hole_and_a_rectangular_pattern(monkeypatch):
     (hole,) = [f for f in part.pads if getattr(f, "kind", None) == "hole"]
     (pattern,) = [f for f in part.pads if getattr(f, "kind", None) == "rectpattern"]
     assert pattern.seed is hole and pattern.counts == (4, 3) and pattern.steps == (20, 25)
+    assert pattern.reversed == (True, True) and not part.deleted  # R428's way, first try
     (point,) = hole.sketch.factory.points  # the seed is the corner (-30, -25)
     assert (hole.sketch.ref[0][0] + point.uv[0], hole.sketch.ref[0][1] + point.uv[1]) == \
         pytest.approx((-30, -25))
@@ -1220,17 +1221,17 @@ def test_layouts_are_recognised_from_the_hole_frames():
     assert detect(tilted) is None  # drilled another way
 
 
-def test_a_pattern_pointing_backwards_is_rebuilt_the_other_way_round(monkeypatch):
-    """Live on R428: the rectangular pattern from the origin planes ran both
-    ways reversed, its copies off the plate."""
+def test_a_pattern_pointing_the_other_way_is_rebuilt_the_other_way_round(monkeypatch):
+    """Live on R428 a pattern runs against its direction lines, which is
+    tried first; a CATIA that runs along them gets the pattern rebuilt."""
     part = _FakePart(through_depth=10.0)
-    part.pattern_dirs_reversed = True
+    part.pattern_dirs_reversed = False
     tree, expected = _pattern_expected("m7_hole_grid", GRID_COG_Z)
     report = _builder(part, monkeypatch).build(tree, expected, check_editability=False)
     assert report["success"], report.get("error")
     patterns = [f for f in part.pads if getattr(f, "kind", None) == "rectpattern"]
     assert len(patterns) == 2 and part.deleted == [patterns[0]]
-    assert patterns[1].reversed == (True, True)
+    assert patterns[1].reversed == (False, False)
     entry = report["parts_detail"][0]["features"][2]
     assert entry["catia"] == [patterns[1].seed.Name, patterns[1].Name]
-    assert entry["notes"][0].endswith("(reversed True, True) to match the tree")
+    assert entry["notes"][0].endswith("(reversed False, False) to match the tree")

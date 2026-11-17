@@ -30,7 +30,8 @@ All notable changes to this project are documented here.
 - **Hole patterns:** holes laid out on a grid or a crown (build123d's
   `GridLocations`, `PolarLocations`) become one Hole and a Rectangular or
   Circular Pattern, recognised from the hole frames; one Hole per position
-  when CATIA refuses the pattern or it does not match.
+  when CATIA refuses the pattern or it does not match. Validated live on
+  R428: a 4 x 3 grid of counterbored holes and a crown of 6 holes.
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that

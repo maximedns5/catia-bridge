@@ -781,7 +781,9 @@ class TreeBuilder:
             ref1, ref2 = (self._line_reference((0.0, 0.0, 0.0), d) for d in pattern.directions)
             rev1 = rev2 = False
             ways = []
-            for flip1, flip2 in ((False, False), (True, True), (True, False), (False, True)):
+            # Live on R428 a pattern along a construction line runs against
+            # the line, so both reversed comes first.
+            for flip1, flip2 in ((True, True), (False, False), (True, False), (False, True)):
                 way = (rev1 != flip1 if n1 > 1 else rev1, rev2 != flip2 if n2 > 1 else rev2)
                 if way not in ways:
                     ways.append(way)

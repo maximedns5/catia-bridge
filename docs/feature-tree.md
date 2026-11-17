@@ -163,9 +163,11 @@ Live on R428 (French, 3D Shape): a circular pattern of a sketch-placed Hole
 matched build123d on its first try (`m7_hole_circle`). A rectangular one
 with PlaneYZ / PlaneZX as directions (the V5 recipe) matched none of the
 four ways round: one way left a single hole, another a single column of 3,
-so the plane did not give the X direction. The directions are now
-construction lines, and when no way round matches the report lists what
-each one removed. If CATIA refuses the pattern (V5 refuses a
+so the plane did not give the X direction. With construction lines from
+the seed's frame along +X and +Y, the grid matched with both directions
+reversed (`m7_hole_grid`): on R428 a pattern runs against its direction
+lines, so that way is tried first. When no way round matches, the report
+lists what each one removed. If CATIA refuses the pattern (V5 refuses a
 circular pattern in a part holding a geometrical set) or the result does not
 match, the seed and the pattern are deleted and each position gets its own
 Hole; the report notes why.
