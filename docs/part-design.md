@@ -226,6 +226,10 @@ Third run:
   and setting 6.8 mm failed. Every new Hole is now set smooth before its
   diameter. `CatHoleThreadStandard` read live: thin pitch 0, thick pitch 1.
 
+Fifth run: all nine m10 fixtures built in one probe, each exact in volume;
+both tapped holes are threaded Hole features ("Metric Thick Pitch", M6 and
+M8, at the tree's tap drills).
+
 ## Not done yet
 
 - Stiffener: no build123d operation, so no tree carries one.
