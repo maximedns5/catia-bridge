@@ -172,7 +172,34 @@ circular pattern in a part holding a geometrical set) or the result does not
 match, the seed and the pattern are deleted and each position gets its own
 Hole; the report notes why.
 
-Next: constraints in the sketches (the tree gives no `params` for sketch dimensions yet: a
+**Sketch constraints** (`catia_mcp/tree/constraints.py`). In the human
+style the sketches of pads, pockets and holes are drawn as connected
+contours and constrained as a designer would, in the CATIA sketch's own
+frame:
+
+| Shape | Constraints (all fully constrained) |
+|---|---|
+| axis-aligned rectangle | horizontal x2, vertical x2, width and height (lengths), and its position: symmetric about the sketch axis it is centred on, on an axis it touches, else its distance to each axis |
+| circle | radius, and its centre on the origin, on an axis, or at a distance from each |
+| a Hole's position point | on the origin, on an axis, or at a distance from each |
+
+Each constraint is made on the geometry as drawn, so it already holds and
+moves nothing: dimensions take the drawn value (made driving). After the
+sketch is closed every constraint must have status 0 and every dimension the
+drawn value, or the feature's `constraints.problems` says which. A
+constraint CATIA refuses is noted (`constraints.refused`) and skipped. Other
+profiles (slots, polygons, arcs, splines) stay free, listed in
+`constraints.free`. The editability check also edits the first pad's sketch
+width (or radius) by 1 mm and back (`sketch_editable`, `sketch_edit_note`).
+
+Live on R428 (French): every rectangle and hole position was fully
+constrained with status 0, and the sketch width edit moved and restored the
+volume on every part (sample1's plate 60 → 61 → 60 mm). A closed circle has
+no centre point until one is given (`CenterPoint` failed), so one is created
+and set, as CATIA's own macros do.
+
+Next: constraints for slots, polygons and revolve profiles, and driving
+sketch dimensions by the script's numbers (the tree gives no `params` for sketch dimensions yet: a
 contract request).
 
 ## How the build stays faithful

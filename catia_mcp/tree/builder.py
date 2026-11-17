@@ -70,6 +70,7 @@ from catia_mcp.tools.part_design import (
     _set_prop,
     _sketch_v_direction,
 )
+from catia_mcp.tree.constraints import plan as constraint_plan
 from catia_mcp.tree.dressup import DressUpFailed, DressUps
 from catia_mcp.tree.extrude import TaperPlan, extrude_vector, oblique_expectation, taper_plan
 from catia_mcp.tree.geometry import (
@@ -117,6 +118,7 @@ EPS = 1e-9
 HOLE_TYPES = {"simple": 0, "counterbore": 2, "countersink": 3}
 HOLE_FLAT_BOTTOM = 0
 LIMIT_DIMENSION, LIMIT_UP_TO_LAST = 0, 2
+CONSTRAINT_DRIVING = 0  # Constraint.Mode (CatConstraintMode): driving dimension
 COUNTERSUNK_DEPTH_ANGLE = 0
 HOLE_ANCHOR_EXTREME = 0
 
@@ -201,6 +203,9 @@ class PartRecord:
     # The user parameters made from the script's numbers, and why none were.
     parameters: list[dict[str, Any]] = field(default_factory=list)
     parameters_note: str = ""
+    # The first pad's sketch edited by its dimension (None: not tried).
+    sketch_editable: bool | None = None
+    sketch_edit_note: str = ""
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -294,6 +299,8 @@ class TreeBuilder:
         self.plan = ParameterPlan()
         self.edit_parameter = None
         self.first_pad_feature = None
+        self.first_sketch_dimension = None
+        self.last_dimensions = []
         self.log(f"part {part['id']}: creating")
         if self.conn.is_3dx:
             self.documents._new_part(record.name, self.plm_type)
@@ -409,6 +416,9 @@ class TreeBuilder:
                 # Its body survives to the end, so editing it moves the part.
                 self.first_pad = (pad, body)
                 self.first_pad_feature = feature.get("id")
+                widths = [c for c, spec in getattr(self, "last_dimensions", [])
+                          if spec.name in ("width", "radius")]
+                self.first_sketch_dimension = widths[0] if widths else None
             return
         (target,) = feature["bodies"]
         tool = self._new_body(use_main=False)
@@ -686,7 +696,7 @@ class TreeBuilder:
                     operation: str, entry: dict[str, Any]) -> Any:
         """A Pad (join) or a Pocket (cut) drawn in the body it changes."""
         frame = Frame.from_tree(sketch["plane"])
-        catia_sketch, along, _ = self._draw(body, sketch, frame, entry)
+        catia_sketch, along, _ = self._draw(body, sketch, frame, entry, constrain=self.style == "human")
         self.record.spline_allowance_mm3 += \
             approximation_area(sketch) * abs(dist) * (2 if symmetric else 1)
         part = self.part
@@ -746,7 +756,8 @@ class TreeBuilder:
                                "normal": list(z_dir)},
                      "entities": [{"type": "point", "at": [0.0, 0.0], "id": "p"}],
                      "profiles": []}
-            catia_sketch, _, _ = self._draw(body, point, Frame.from_tree(point["plane"]))
+            catia_sketch, _, _ = self._draw(body, point, Frame.from_tree(point["plane"]), entry,
+                                            constrain=self.style == "human")
             _force_solid_inwork(part, catia_sketch)
             part.InWorkObject = body
             hole = part.ShapeFactory.AddNewHoleFromSketch(catia_sketch, spec.depth or 1.0)
@@ -842,7 +853,7 @@ class TreeBuilder:
         frame = Frame.from_tree(sketch["plane"])
         area, centroid = profile_area_centroid(sketch)
         want_volume, want_cog = prism_expectation(frame, area, centroid, dist, symmetric)
-        catia_sketch, along, _ = self._draw(body, sketch, frame, entry)
+        catia_sketch, along, _ = self._draw(body, sketch, frame, entry, constrain=self.style == "human")
         approximation = approximation_area(sketch)
         allowance = approximation * abs(dist) * (2 if symmetric else 1)
         self.record.spline_allowance_mm3 += allowance
@@ -1211,7 +1222,8 @@ class TreeBuilder:
         return tuple(data[0:3]), unit(tuple(data[3:6])), unit(tuple(data[6:9]))
 
     def _draw(self, body: Any, sketch: dict[str, Any], frame: Frame,
-              entry: dict[str, Any] | None = None, connect: bool = False):
+              entry: dict[str, Any] | None = None, connect: bool = False,
+              constrain: bool = False):
         """Draw the tree sketch in a new CATIA sketch of `body`. Returns the
         sketch, +1 / -1 for whether its normal agrees with the tree's, and the
         CATIA sketch frame (origin, H, V). Approximated splines are noted in
@@ -1219,7 +1231,10 @@ class TreeBuilder:
         sketch point as their ends, as a connected contour: a Multi-sections
         Solid needs that (live on R428 a rectangle of four lines that only
         touch made every loft fail to update, a whole circle worked), while a
-        Pad finds the contour itself."""
+        Pad finds the contour itself. With `constrain`, the contours are drawn
+        connected and the shapes catia_mcp.tree.constraints recognises are
+        constrained as a designer would (catia_mcp/tree/constraints.py)."""
+        connect = connect or constrain
         ref, known = self._support(frame)
         catia_sketch = body.Sketches.Add(ref)
         origin, h, v = self._sketch_frame(catia_sketch, known)
@@ -1238,17 +1253,33 @@ class TreeBuilder:
             if factory is None:
                 raise BuildFailed("CATIA could not open the sketch for edition")
         ends: list[tuple[Any, tuple[float, float], tuple[float, float]]] = []
+        # Each entity's CATIA object and its drawing in the sketch's frame.
+        objects: dict[str, Any] = {}
+        drawn: dict[str, dict[str, Any]] = {}
         for entity in sketch["entities"]:
             kind = entity["type"]
+            key = str(entity.get("id"))
             if kind == "line":
                 (u0, v0), (u1, v1) = local(entity["start"]), local(entity["end"])
                 line = factory.CreateLine(u0, v0, u1, v1)
                 ends.append((line, (u0, v0), (u1, v1)))
+                objects[key] = line
+                drawn[key] = {"type": "line", "id": key, "start": (u0, v0), "end": (u1, v1)}
             elif kind == "circle":
                 cu, cv = local(entity["center"])
-                factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
+                circle = factory.CreateClosedCircle(cu, cv, float(entity["radius"]))
+                if connect:
+                    # A closed circle has no centre point until one is given
+                    # (live on R428 CenterPoint failed): as CATIA's macros do.
+                    with contextlib.suppress(Exception):
+                        circle.CenterPoint = factory.CreatePoint(cu, cv)
+                objects[key] = circle
+                drawn[key] = {"type": "circle", "id": key, "center": (cu, cv),
+                              "radius": float(entity["radius"])}
             elif kind == "point":  # a Hole's position (not a tree entity)
-                factory.CreatePoint(*local(entity["at"]))
+                at = local(entity["at"])
+                objects[key] = factory.CreatePoint(*at)
+                drawn[key] = {"type": "point", "id": key, "at": at}
             elif kind == "spline":
                 note = _draw_spline(factory, entity, local)
                 if note and entry is not None:
@@ -1262,9 +1293,87 @@ class TreeBuilder:
                              (cu + r * math.cos(arc.end), cv + r * math.sin(arc.end))))
         if connect:
             _connect_ends(factory, ends)
+        made: list[tuple[Any, Any]] = []
+        if constrain:
+            made = self._constrain(catia_sketch, sketch, objects, drawn, entry)
         catia_sketch.CloseEdition()
         self.part.UpdateObject(catia_sketch)
+        if made:
+            self._check_constraints(made, entry)
+        self.last_dimensions = [(c, spec) for c, spec in made if spec.dimensional]
         return catia_sketch, along, (origin, h, v)
+
+    # ── Sketch constraints ──
+
+    def _constrain(self, catia_sketch: Any, sketch: dict[str, Any], objects: dict[str, Any],
+                   drawn: dict[str, dict[str, Any]],
+                   entry: dict[str, Any] | None) -> list[tuple[Any, Any]]:
+        """Constrain the recognised shapes, while the sketch is in edition.
+        A constraint CATIA refuses is noted and skipped: constraints never
+        cost the part."""
+        loops = [[drawn[str(i)] for i in profile["outer"] if str(i) in drawn]
+                 for profile in sketch.get("profiles") or []]
+        loops += [[drawn[str(i)] for i in inner if str(i) in drawn]
+                  for profile in sketch.get("profiles") or []
+                  for inner in profile.get("inner") or []]
+        loops += [[e] for e in drawn.values() if e["type"] == "point"]
+        planned = constraint_plan([loop for loop in loops if loop])
+        try:
+            axis = catia_sketch.AbsoluteAxis
+            axes = {"H": axis.HorizontalReference, "V": axis.VerticalReference,
+                    "O": axis.Origin}
+            constraints = catia_sketch.Constraints
+        except Exception as error:  # a bonus: noted, never fatal
+            if entry is not None:
+                entry.setdefault("constraints", {})["refused"] = [f"no constraints: {error}"]
+            return []
+        part = self.part
+
+        def reference(ref):
+            kind, key = ref
+            obj = (axes[key] if kind == "axis" else objects[key] if kind in ("entity", "point")
+                   else objects[key].StartPoint if kind == "start"
+                   else objects[key].EndPoint if kind == "end" else objects[key].CenterPoint)
+            return part.CreateReferenceFromObject(obj)
+
+        made: list[tuple[Any, Any]] = []
+        refused: list[str] = []
+        for spec in planned.constraints:
+            try:
+                refs = [reference(r) for r in spec.refs]
+                method = ("AddMonoEltCst", "AddBiEltCst", "AddTriEltCst")[len(refs) - 1]
+                constraint = getattr(constraints, method)(spec.type, *refs)
+                if spec.dimensional:
+                    _set_prop(constraint, "Mode", CONSTRAINT_DRIVING)
+                made.append((constraint, spec))
+            except Exception as error:  # a bonus: noted, never fatal
+                refused.append(f"{spec.name or spec.type}: {error}")
+        if entry is not None:
+            record = entry.setdefault("constraints", {"added": 0, "shapes": [], "free": []})
+            record["added"] += len(made)
+            record["shapes"] += planned.shapes
+            record["free"] += planned.free
+            if refused:
+                record.setdefault("refused", []).extend(refused)
+        return made
+
+    def _check_constraints(self, made: list[tuple[Any, Any]], entry: dict[str, Any] | None) -> None:
+        """Every constraint must be satisfied (Status 0) and every dimension
+        hold the drawn value; anything else is noted for the live checks."""
+        problems = []
+        for constraint, spec in made:
+            status = _read_prop(constraint, "Status")
+            if status not in (None, 0):
+                problems.append(f"{constraint.Name} ({spec.name or spec.type}) status {status}")
+            if spec.dimensional and spec.value is not None:
+                try:
+                    got = float(constraint.Dimension.Value)
+                except Exception:
+                    continue
+                if abs(abs(got) - spec.value) > 1e-4:
+                    problems.append(f"{constraint.Name} ({spec.name}) {got:g} for {spec.value:g}")
+        if problems and entry is not None:
+            entry.setdefault("constraints", {}).setdefault("problems", []).extend(problems)
 
     # ── Measures and checks ──
 
@@ -1335,7 +1444,9 @@ class TreeBuilder:
 
     def _check_editability(self, record: PartRecord) -> None:
         """Change the first pad's length (through its user parameter when it
-        has one), check the volume moves, restore it."""
+        has one), check the volume moves, restore it; then the same with its
+        sketch's first dimension (a width or a radius)."""
+        self._check_sketch_edit(record)
         if self.first_pad is None:
             record.editable, record.editability_note = None, "no pad to edit"
             return
@@ -1364,6 +1475,33 @@ class TreeBuilder:
         record.editable = True if changed and back else (None if back else False)
         record.editability_note = (
             f"{pad.Name} length {original:g} -> {original + 1:g} -> {original:g} mm: volume "
+            f"{before:.1f} -> {moved:.1f} -> {restored:.1f} mm3")
+
+    def _check_sketch_edit(self, record: PartRecord) -> None:
+        """A designer edits a profile by its sketch dimension: +1 mm on the
+        first pad's sketch width (or radius), update, measure, restore."""
+        constraint = getattr(self, "first_sketch_dimension", None)
+        if constraint is None or self.first_pad is None:
+            return
+        body = self.first_pad[1]
+        try:
+            dimension = constraint.Dimension
+            original = float(dimension.Value)
+            before = self._volume(body)
+            dimension.Value = original + 1.0
+            self.part.Update()
+            moved = self._volume(body)
+            dimension.Value = original
+            self.part.Update()
+            restored = self._volume(body)
+        except Exception as error:
+            record.sketch_editable, record.sketch_edit_note = False, f"edit failed: {error}"
+            return
+        changed = abs(moved - before) > max(1e-3, FEATURE_REL_TOL * before)
+        back = abs(restored - before) <= max(1e-3, PART_REL_TOL * before)
+        record.sketch_editable = changed and back
+        record.sketch_edit_note = (
+            f"{constraint.Name} {original:g} -> {original + 1:g} -> {original:g} mm: volume "
             f"{before:.1f} -> {moved:.1f} -> {restored:.1f} mm3")
 
     def _check_parameter_edit(self, record: PartRecord, script: Any, body: Any) -> None:

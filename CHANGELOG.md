@@ -32,6 +32,12 @@ All notable changes to this project are documented here.
   Circular Pattern, recognised from the hole frames; one Hole per position
   when CATIA refuses the pattern or it does not match. Validated live on
   R428: a 4 x 3 grid of counterbored holes and a crown of 6 holes.
+- **Sketch constraints:** in the human style, rectangles, circles and hole
+  positions in pad, pocket and hole sketches are fully constrained as a
+  designer would (horizontal and vertical lines, width and height, radius,
+  symmetry about the sketch axes or distances to them), made on the drawn
+  geometry so nothing moves. The editability check also edits the first
+  pad's sketch width.
 - **COM session guard** (`catia_mcp/com_guard.py`, `catia_mcp/watchdog.py`):
   CATIA calls run on one guarded worker. A modal dialog ends a call with
   `BLOCKED_BY_DIALOG` and the dialog's text instead of hanging; a call that
