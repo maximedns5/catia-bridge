@@ -168,6 +168,79 @@ def routes(conn: Any) -> dict[str, Any]:
     return out
 
 
+# Words in the names of the enums an engineering connection may use.
+ENG_ENUM_WORDS = ("cnx", "connection", "constraint", "asm", "eng", "mechanical")
+# What EngConnections.Add is tried with when --engcnx-create is given; each
+# connection made is removed again.
+ENG_ADD_ARGS = ((), ("Rigid",), ("Fixed",), ("Fix",), ("Coincidence",), (0,), (1,))
+
+
+def _signatures(obj: Any) -> dict[str, Any]:
+    from catia_mcp.introspect import describe_members, type_name
+
+    out: dict[str, Any] = {"type": type_name(obj)}
+    try:
+        out["members"] = {m["name"]: m.get("params", m["kind"]) for m in describe_members(obj)}
+    except Exception as error:
+        out["members"] = f"error: {error}"
+    return out
+
+
+def engcnx(conn: Any, create: bool) -> dict[str, Any]:
+    """Engineering connections, the 3DEXPERIENCE assembly constraints: the
+    collection the root reference's GetItem("CATEngConnections") gives (live
+    on R428, with Add and AddWithContext), the signatures of its methods,
+    the enums that name connection or constraint types, and the
+    publications of a part reference. With `create`, Add is tried with each
+    candidate argument; whatever it makes is described, then removed."""
+    from catia_mcp.automation import safe_get
+    from catia_mcp.introspect import list_enums
+
+    root = conn.root_occurrence()
+    reference = safe_get(root, "ReferenceRootOccurrenceOf")
+    connections = reference.GetItem("CATEngConnections")
+    out: dict[str, Any] = {"collection": _signatures(connections)}
+    try:
+        names = list_enums([connections, reference, conn.app])
+        out["enums"] = {name: _safe(lambda n=name: _enum_values(conn, connections, n))
+                        for name in names if any(w in name.lower() for w in ENG_ENUM_WORDS)}
+    except Exception as error:
+        out["enums"] = f"error: {error}"
+    first = _safe(lambda: root.Occurrences.Item(1).InstanceOccurrenceOf.ReferenceInstanceOf)
+    if not isinstance(first, str):
+        publications = _safe(lambda: first.Publications)
+        out["part_publications"] = publications if isinstance(publications, str) \
+            else _signatures(publications)
+    if not create:
+        return out
+    tries = []
+    for args in ENG_ADD_ARGS:
+        row: dict[str, Any] = {"args": list(args)}
+        try:
+            made = connections.Add(*args)
+        except Exception as error:
+            row["error"] = str(error)
+            tries.append(row)
+            continue
+        row["made"] = _signatures(made)
+        for name in ("Name", "Type", "Status", "Mode"):
+            row[name] = _safe(lambda n=name: str(getattr(made, n)))
+        for child in ("Constraints", "AssemblyConstraints", "Children"):
+            value = _safe(lambda c=child: getattr(made, c))
+            if not isinstance(value, str):
+                row[child] = _signatures(value)
+        row["removed"] = _safe(lambda m=made: connections.Remove(m) or True)
+        tries.append(row)
+    out["add"] = tries
+    return out
+
+
+def _enum_values(conn: Any, near: Any, name: str) -> Any:
+    from catia_mcp.introspect import find_enum
+
+    return find_enum([near, conn.app], name)
+
+
 def create(conn: Any, plan: Any) -> dict[str, Any]:
     """A published plane in the first part and a Fix on the first instance,
     both removed again."""
@@ -288,6 +361,9 @@ def main() -> int:
     parser.add_argument("--platform", default="3dx", help="3dx (default), v5 or auto")
     parser.add_argument("--create", action="store_true",
                         help="create a published plane and a Fix, then remove them")
+    parser.add_argument("--engcnx-create", action="store_true",
+                        help="try EngConnections.Add with each candidate argument (each "
+                             "connection made is removed again)")
     parser.add_argument("--apply", choices=["fix", "infer", "contact"],
                         help="put the build's constraints in the product (left in place)")
     args = parser.parse_args()
@@ -312,6 +388,7 @@ def main() -> int:
         report["plan"] = f"error: {error}"
     steps = [("enums", lambda: enums(conn)), ("occurrences", lambda: occurrences(conn, plan)),
              ("members", lambda: members(conn)), ("routes", lambda: routes(conn))]
+    steps.append(("engcnx", lambda: engcnx(conn, args.engcnx_create)))
     if args.create:
         steps.append(("create", lambda: create(conn, plan)))
     if args.apply and plan is not None:
