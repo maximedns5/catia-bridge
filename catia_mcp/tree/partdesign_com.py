@@ -43,6 +43,7 @@ from catia_mcp.tree.partdesign import (
     draft_plan,
     plane_frame,
     point_loft,
+    polygon_vertices,
     right_cone,
     thread_spec,
     until_spec,
@@ -55,6 +56,10 @@ FALLBACK_ENUMS = {
                      "catUpToPlaneLimit": 3, "catUpToSurfaceLimit": 4,
                      "catUpThruNextLimit": 5},
     "CatHoleThreadSide": {"catRightThreadSide": 0, "catLeftThreadSide": 1},
+    # Read live on 3DEXPERIENCE R428.
+    "CatHoleThreadingMode": {"catThreadedHoleThreading": 0, "catSmoothHoleThreading": 1},
+    # The CAA help's order (unverified: not in the R428 type library read).
+    "CatHoleThreadStandard": {"catHoleMetricThinPitch": 0, "catHoleMetricThickPitch": 1},
 }
 # The CATIA limit modes tried for each tree limit, in order.
 LIMIT_WAYS = {
@@ -109,7 +114,7 @@ class PartDesignPlus:
         for label, direction, angle, sign in ways:
             made = None
             try:
-                made, domain, how = self._new_draft(refs, neutral, direction, angle)
+                made, domain, how = self._new_draft(refs, neutral, direction, angle, body)
                 b.part.UpdateObject(made)
                 error = self._draft_error(feature, target, before, estimate, plan)
                 if error is None:
@@ -130,7 +135,8 @@ class PartDesignPlus:
         raise PartDesignFailed("no Draft changed the body as the tree's does (" +
                                "; ".join(tried) + ")")
 
-    def _new_draft(self, refs: list[Any], neutral: Any, pull: Vec, angle: float):
+    def _new_draft(self, refs: list[Any], neutral: Any, pull: Vec, angle: float,
+                   body: Any):
         """AddNewDraft(face, neutral, neutral mode, parting, pulling direction
         x, y, z, mode, angle, multiselection mode), the other faces added to
         its first domain, the pulling direction and angle set on the domain
@@ -139,20 +145,29 @@ class PartDesignPlus:
         part = self.builder.part
         factory = part.ShapeFactory
         refused: list[str] = []
-        for parting_label, parting in (("no parting element", lambda: part.CreateReferenceFromName("")),
-                                       ("parting = neutral", lambda: neutral)):
+        empty = part.CreateReferenceFromName
+        # The draft goes after the body's last feature, as every dress-up
+        # (live on R428 AddNewDraft failed without it). The faces are given
+        # at creation, or added to the domain after an empty first face (the
+        # route Thickness takes).
+        routes = (("no parting element", lambda: empty(""), False),
+                  ("parting = neutral", lambda: neutral, False),
+                  ("faces added after", lambda: empty(""), True))
+        for parting_label, parting, later in routes:
+            part.InWorkObject = body
             try:
-                made = factory.AddNewDraft(refs[0], neutral, DRAFT_NO_PROPAGATION, parting(),
+                first = empty("") if later else refs[0]
+                made = factory.AddNewDraft(first, neutral, DRAFT_NO_PROPAGATION, parting(),
                                            pull[0], pull[1], pull[2], DRAFT_STANDARD, angle,
                                            DRAFT_MULTISELECTION)
-            except Exception as error:  # the other parting element
+            except Exception as error:  # the next route
                 refused.append(f"{parting_label}: {error}")
                 continue
             domain = None
             with contextlib.suppress(Exception):
                 domain = made.DraftDomains.Item(1)
             holder = domain if domain is not None else made
-            for ref in refs[1:]:
+            for ref in (refs if later else refs[1:]):
                 holder.AddFaceToDraft(ref)
             with contextlib.suppress(Exception):
                 holder.SetPullingDirection(pull[0], pull[1], pull[2])
@@ -323,6 +338,21 @@ class PartDesignPlus:
                 with contextlib.suppress(Exception):
                     b._delete(loft)
         cone = right_cone(sketch, plan.point)
+        corners = polygon_vertices(sketch)
+        if cone is None and corners is not None:
+            with contextlib.suppress(Exception):
+                b._delete(catia_sketch)  # the faces are drawn from the corners
+            try:
+                made = self._faceted_cone(body, corners, plan.point, want, tol)
+            except Exception as error:
+                raise PartDesignFailed("neither a loft to the point nor a closed surface gave "
+                                       "the pyramid (" + "; ".join(
+                                           tried + [f"closed surface: {error}"]) + ")") from error
+            entry["catia"].append(made)
+            entry.setdefault("notes", []).append(
+                f"{made}: a pyramid CATIA did not loft to its point, built as a Close Surface "
+                "of its filled faces (" + "; ".join(tried) + ")")
+            return
         if cone is None:
             raise PartDesignFailed(f"no Multi-sections Solid to the point gave {want.volume:.4f} "
                                    f"mm3 at {_fmt(want.cog)} (" + "; ".join(tried) + ")")
@@ -337,6 +367,53 @@ class PartDesignPlus:
         entry.setdefault("notes", []).append(
             "a right circular cone CATIA did not loft to its point: built as a Shaft of its "
             "triangle (" + "; ".join(tried) + ")")
+
+    def _faceted_cone(self, body: Any, corners: list[Vec], apex: Vec, want: Any,
+                      tol: float) -> str:
+        """A pyramid as a designer builds one in GSD: the corners and the apex
+        as points, the edges as lines, each face a Fill of its edges, the
+        faces joined, and the Join closed into the body (Close Surface)."""
+        b = self.builder
+        part = b.part
+        hsf = part.HybridShapeFactory
+        construction = b._construction_set()
+        ref = part.CreateReferenceFromObject
+
+        def keep(shape: Any) -> Any:
+            construction.AppendHybridShape(shape)
+            part.UpdateObject(shape)
+            return shape
+
+        points = [keep(hsf.AddNewPointCoord(*p)) for p in corners]
+        top = keep(hsf.AddNewPointCoord(*apex))
+        n = len(points)
+        base_edges = [keep(hsf.AddNewLinePtPt(ref(points[i]), ref(points[(i + 1) % n])))
+                      for i in range(n)]
+        rays = [keep(hsf.AddNewLinePtPt(ref(p), ref(top))) for p in points]
+
+        def fill(edges: list[Any]) -> Any:
+            face = hsf.AddNewFill()
+            for edge in edges:
+                face.AddBound(ref(edge))
+            return keep(face)
+
+        faces = [fill(base_edges)] + [fill([base_edges[i], rays[(i + 1) % n], rays[i]])
+                                      for i in range(n)]
+        join = hsf.AddNewJoin(ref(faces[0]), ref(faces[1]))
+        for face in faces[2:]:
+            join.AddElement(ref(face))
+        keep(join)
+        part.InWorkObject = body
+        closed = part.ShapeFactory.AddNewCloseSurface(ref(join))
+        part.UpdateObject(closed)
+        volume, cog = b._volume(body), b._cog(body)
+        if abs(volume - want.volume) > max(1e-3, FEATURE_REL_TOL * want.volume) \
+                or distance(cog, want.cog) > tol:
+            with contextlib.suppress(Exception):
+                b._delete(closed)
+            raise PartDesignFailed(f"the Close Surface gave {volume:.4f} mm3 at {_fmt(cog)}, "
+                                   f"not {want.volume:.4f} mm3 at {_fmt(want.cog)}")
+        return str(closed.Name)
 
     # ── Hole threads ──
 
@@ -367,7 +444,7 @@ class PartDesignPlus:
         tried: list[str] = []
         for standard, description in standards:
             try:
-                hole.HoleThreadStandard = standard
+                self._set_standard(hole, standard, description is not None, tried)
                 if description is not None:
                     hole.HoleThreadDescription.Value = description
                 else:
@@ -393,9 +470,36 @@ class PartDesignPlus:
                 tried.append(f"{standard}: {error}")
         self._smooth(hole, record, entry, tried)
 
+    def _set_standard(self, hole: Any, standard: str, designated: bool,
+                      tried: list[str]) -> None:
+        """The thread's standard. Live on 3DEXPERIENCE R428 the property
+        `HoleThreadStandard` cannot be set: a standard is then loaded as V5
+        macros do (CreateStandardThreadDesignTable), and "No Standard" is the
+        Hole's default, so its diameter and pitch are set without it."""
+        try:
+            hole.HoleThreadStandard = standard
+            return
+        except Exception as error:
+            if not designated:
+                tried.append(f"{standard} property: {error} (kept the default standard)")
+                return
+            first = error
+        try:
+            kind = self._enum("CatHoleThreadStandard",
+                              "thick" if standard == COARSE_STANDARD else "thin")
+            hole.CreateStandardThreadDesignTable(kind)
+        except Exception as error:
+            raise PartDesignFailed(f"{first}; CreateStandardThreadDesignTable: {error}") \
+                from error
+
     def _smooth(self, hole: Any, record: dict[str, Any], entry: dict[str, Any],
                 tried: list[str]) -> None:
-        """The Hole stays, smooth: its volume is the tree's either way."""
+        """The Hole stays, smooth: its volume is the tree's either way. A
+        threading mode left on with no valid thread breaks the part's update
+        (live on R428), so the Hole is set back to smooth and updated."""
+        with contextlib.suppress(Exception):
+            hole.ThreadingMode = self._enum("CatHoleThreadingMode", "smooth")
+            self.builder.part.UpdateObject(hole)
         record["tried"] = tried
         entry.setdefault("notes", []).append(
             f"{hole.Name}: left smooth, CATIA did not thread it as {record['designation']} "

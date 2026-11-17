@@ -258,6 +258,42 @@ class _Diameter:
             self.value = value
 
 
+class _Segment(tuple):
+    """A line through two points: the base fake's axis, with its ends."""
+
+    def __new__(cls, axis, start, end):
+        segment = super().__new__(cls, axis)
+        segment.ends = (start, end)
+        return segment
+
+
+class _Surface(SimpleNamespace):
+    def __init__(self, kind, elements=None):
+        super().__init__(kind=kind, bounds=[], elements=list(elements or []))
+
+    def AddBound(self, edge):  # noqa: N802
+        self.bounds.append(edge)
+
+    def AddElement(self, element):  # noqa: N802
+        self.elements.append(element)
+
+
+def _closed_pyramid(join):
+    """The solid inside a Join of filled faces: its base (the first face)
+    and the one corner not on it, the apex."""
+    base, *sides = join.elements
+    corners = [edge.ends[0] for edge in base.bounds]
+    ends = {end for face in sides for edge in face.bounds for end in edge.ends}
+    (apex,) = ends - set(corners)
+    centre = tuple(sum(c[i] for c in corners) / len(corners) for i in range(3))
+    area_vector = (0.0, 0.0, 0.0)
+    for a, b in zip(corners, corners[1:] + corners[:1]):
+        area_vector = add(area_vector, scale(cross(add(a, scale(centre, -1)),
+                                                   add(b, scale(centre, -1))), 0.5))
+    volume = abs(dot(area_vector, add(apex, scale(centre, -1)))) / 3
+    return volume, add(centre, scale(add(apex, scale(centre, -1)), 0.25))
+
+
 class _PlusPart(_TopoPart):
     def __init__(self, draft_reversed=False, until_solids=None, until_dir=None,
                  refused_limits=(), standard_locks_diameter=False, tip_in_depth=False,
@@ -272,6 +308,13 @@ class _PlusPart(_TopoPart):
         self.refused_limits = refused_limits
         self.standard_locks_diameter, self.tip_in_depth = standard_locks_diameter, tip_in_depth
         self.point_loft_refused = point_loft_refused
+        # Pyramids as a Close Surface of filled faces.
+        hsf = self.HybridShapeFactory
+        axis_line = hsf.AddNewLinePtPt
+        hsf.AddNewLinePtPt = lambda p1, p2: _Segment(axis_line(p1, p2), p1[1], p2[1])
+        hsf.AddNewFill = lambda: _Surface("fill")
+        hsf.AddNewJoin = lambda a, b: _Surface("join", [a, b])
+        self.ShapeFactory.AddNewCloseSurface = lambda join: self._feature("close", join=join)
 
     # Drafts.
 
@@ -371,6 +414,12 @@ class _PlusPart(_TopoPart):
                 body.shape_list.append(obj)
             for cell in obj.cells:
                 self.cells_by_id[cell.id] = cell
+            return
+        if kind == "close":
+            if not hasattr(obj, "base"):
+                obj.base = list(obj.body.solids)
+            obj.body.solids = obj.base + [_closed_pyramid(obj.join)]
+            obj.cells = []
             return
         if kind == "loft" and any(isinstance(ref, tuple) and ref[0] == "point"
                                   for ref, _, _ in obj.HybridShape.sections):
@@ -612,6 +661,49 @@ def test_a_thread_catia_refuses_leaves_a_smooth_hole_and_says_so(monkeypatch):
     assert entry["catia"] == [hole.Name] and not entry["thread"]["threaded"]
     assert len(entry["thread"]["tried"]) == 2
     assert entry["notes"][-1].startswith(f"{hole.Name}: left smooth")
+    # Set back to smooth: a threaded mode with no thread broke the part's
+    # update live on R428.
+    assert hole.ThreadingMode == 1
+
+
+def _standard_read_only(part, hole):
+    """The same Hole, but its HoleThreadStandard cannot be set (live on
+    R428); a standard is loaded by CreateStandardThreadDesignTable instead."""
+
+    class ReadOnly(type(hole)):
+        def __setattr__(self, name, value):
+            if name == "HoleThreadStandard" and "HoleThreadStandard" in self.__dict__:
+                raise AttributeError("Property 'AddNewHoleFromSketch.HoleThreadStandard' "
+                                     "can not be set.")
+            super().__setattr__(name, value)
+
+        def CreateStandardThreadDesignTable(self, kind):  # noqa: N802
+            self.__dict__["loaded"] = kind
+            self.__dict__["HoleThreadStandard"] = partdesign_com.COARSE_STANDARD
+
+    copy = ReadOnly.__new__(ReadOnly)
+    copy.__dict__.update(hole.__dict__)
+    copy.Diameter.hole = copy
+    part.pads[part.pads.index(hole)] = copy
+    return copy
+
+
+def test_a_standard_that_cannot_be_set_is_loaded_from_its_table(monkeypatch):
+    tree = truncate(load("m10_tapped_holes"), None, "hole1")
+    part = _PlusPart()
+    original = part._hole
+
+    def read_only(sketch, depth):
+        return _standard_read_only(part, original(sketch, depth))
+
+    part.ShapeFactory.AddNewHoleFromSketch = read_only
+    report = _plus_builder(part, monkeypatch).build(tree, _expected(tree), check_editability=False)
+    assert report["success"], report.get("error")
+    (hole,) = _holes(part)
+    assert (hole.ThreadingMode, hole.HoleThreadDescription.Value) == (0, "M6")
+    assert hole.loaded == 1  # catHoleMetricThickPitch
+    thread = _entry(report, "hole1")["thread"]
+    assert thread["threaded"] and thread["standard"] == "Metric Thick Pitch"
 
 
 def test_a_v_bottom_depth_catia_measures_to_the_tip_is_given_the_tip(monkeypatch):
@@ -665,10 +757,30 @@ def test_a_cone_catia_will_not_loft_to_its_point_is_a_shaft(monkeypatch):
         M10_MM3["m10_loft_cone_join"], abs=1e-3)
 
 
-def test_a_pyramid_catia_will_not_loft_stops_the_build(monkeypatch):
+def test_a_pyramid_catia_will_not_loft_is_a_close_surface_of_its_faces(monkeypatch):
+    # Live on R428 the Multi-sections Solid to a point was refused both ways.
     part = _PlusPart(point_loft_refused=True)
-    report = _plus_builder(part, monkeypatch).build(load("m10_loft_pyramid_tip"),
-                                                    check_editability=False)
+    report = _plus_builder(part, monkeypatch).build(
+        load("m10_loft_pyramid_tip"), {"/M10/LoftPyramidTip": {"volume_mm3": 2000.0}},
+        check_editability=False)
+    assert report["success"], report.get("error")
+    (closed,) = _of(part, "close")
+    base, *sides = closed.join.elements
+    assert len(base.bounds) == 4 and len(sides) == 4
+    assert all(len(face.bounds) == 3 for face in sides)
+    entry = _entry(report, "loft1")
+    assert entry["catia"][-1] == closed.Name and "Close Surface" in entry["notes"][-1]
+    assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(2000.0, abs=1e-6)
+
+
+def test_a_curved_section_catia_will_not_loft_stops_the_build(monkeypatch):
+    tree = load("m10_loft_pyramid_tip")
+    sketch = tree["parts"][0]["features"][0]
+    sketch["entities"] = [{"type": "circle", "center": [0, 0], "radius": 10, "id": "c"}]
+    sketch["profiles"] = [{"outer": ["c"], "inner": []}]
+    tree["parts"][0]["features"][1]["sections"][-1] = {"point": [3, 2, 15]}  # off its axis
+    part = _PlusPart(point_loft_refused=True)
+    report = _plus_builder(part, monkeypatch).build(tree, check_editability=False)
     assert not report["success"]
     assert "no Multi-sections Solid to the point" in report["error"]["message"]
 

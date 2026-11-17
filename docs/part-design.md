@@ -184,6 +184,22 @@ tree command, each in a new part, and writes one JSON report with every
 build's notes (which way each feature was built). One fixture at a time:
 `python -m catia_mcp.tree build tests\fixtures\trees\m10_draft_two_sides.json --report draft.json`.
 
+### First live run (3DEXPERIENCE R428, French, student role)
+
+| Fixture | Result | Change made |
+|---|---|---|
+| `m10_pad_up_to_next`, `m10_pocket_up_to_last`, `m10_pad_up_to_plane`, `m10_pad_up_to_face` | Exact, first mode tried each time | None |
+| `m10_loft_cone_join` | Exact, as a Shaft: the loft to a point was refused | None |
+| `m10_loft_pyramid_tip` | Refused: the point section failed to update one way, could not be added the other | A pyramid (a section of lines) is now a Close Surface of its filled faces, checked by volume and centre |
+| `m10_draft_two_sides`, `m10_draft_four_sides` | `AddNewDraft` failed (E_FAIL) with both parting elements | The body is now made the in-work object first, as for every dress-up, and a third route adds every face after an empty first one |
+| `m10_tapped_holes` | `HoleThreadStandard` cannot be set; the Hole left threaded with no thread broke the final update | The standard is loaded with `CreateStandardThreadDesignTable` when the property is read-only; "No Standard" keeps the default; a refused thread sets the Hole back to smooth |
+
+The enums read live: `CatLimitMode` (0 to 6, as in the V5 help),
+`CatHoleThreadingMode` (threaded 0, smooth 1), `CatHoleBottomType` (flat 0,
+V 1, trimmed 2), `CatDraftMode`, `CatDraftNeutralPropagationMode` and
+`CatDraftMultiselectionMode` (0 first). `CatHoleThreadStandard` and
+`CatDraftPartingMode` were not found.
+
 ## Not done yet
 
 - Stiffener: no build123d operation, so no tree carries one.

@@ -423,6 +423,33 @@ def right_cone(sketch: dict[str, Any], apex: Vec) -> tuple[Vec, Vec, float, floa
         float(entities[0]["radius"]), abs(height)
 
 
+def polygon_vertices(sketch: dict[str, Any]) -> list[Vec] | None:
+    """The section's corners in world coordinates, in order, when it is one
+    closed loop of lines (a pyramid's base), else None."""
+    entities = sketch.get("entities") or []
+    if len(entities) < 3 or any(e.get("type") != "line" for e in entities):
+        return None
+    ends = [(tuple(map(float, e["start"])), tuple(map(float, e["end"]))) for e in entities]
+    loop = [ends[0][0], ends[0][1]]
+    left = ends[1:]
+    while left:
+        tail = loop[-1]
+        for i, (a, b) in enumerate(left):
+            if math.dist(a, tail) <= ON_TOL:
+                loop.append(b)
+                break
+            if math.dist(b, tail) <= ON_TOL:
+                loop.append(a)
+                break
+        else:
+            return None
+        left.pop(i)
+    if math.dist(loop[0], loop[-1]) > ON_TOL:
+        return None
+    frame = Frame.from_tree(sketch["plane"])
+    return [frame.world(u, v) for u, v in loop[:-1]]
+
+
 def cone_profile(centre: Vec, axis: Vec, radius: float, height: float
                  ) -> tuple[dict[str, Any], Vec, Vec]:
     """The right triangle a Shaft turns into a cone, in a plane holding the
