@@ -21,6 +21,10 @@ All notable changes to this project are documented here.
   chamfers given by an angle (build123d's two-distance conversion), Frenet
   sweeps along planar paths (the same solid), and `remove` (dropped bodies
   deleted). New fixture: a ruled loft through three squares.
+- **Body copies** (`copy`): the body pasted as a result into a new body,
+  then rotated and translated by Part Design transformations, each checked
+  by where its centre of gravity goes; a paste without the link and the
+  undocumented variants are tried in turn, each refusal noted.
 - **Assemblies** (`--assembly product --step MODEL.step`, `docs/assemblies.md`):
   the model's STEP file gives the assembly the tree loses (each part's own
   frame, instances, sub-assemblies, colours). Every tree part is matched to

@@ -53,10 +53,10 @@ from __future__ import annotations
 
 import contextlib
 import math
-from itertools import pairwise
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Any
 
 from catia_mcp.automation import call_fill_array, evaluate
@@ -86,6 +86,7 @@ from catia_mcp.tree.geometry import (
     frame_axes,
     hole_profile_sketch,
     hole_segments,
+    norm,
     prism_expectation,
     profile_area_centroid,
     revolve_expectation,
@@ -96,7 +97,7 @@ from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.nurbs import Nurbs, drawing
 from catia_mcp.tree.parameters import ParameterPlan
 from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect
-from catia_mcp.tree.placement import place_part
+from catia_mcp.tree.placement import place_part, placement_transform
 from catia_mcp.tree.preflight import SUPPORTED, check
 from catia_mcp.tree.step_source import StepSource
 from catia_mcp.tree.sweep import path_sketch, sweep_expectation
@@ -120,6 +121,10 @@ HOLE_TYPES = {"simple": 0, "counterbore": 2, "countersink": 3}
 HOLE_FLAT_BOTTOM = 0
 LIMIT_DIMENSION, LIMIT_UP_TO_LAST = 0, 2
 CONSTRAINT_DRIVING = 0  # Constraint.Mode (CatConstraintMode): driving dimension
+# Body copies: a pasted result linked to its source, else without the link
+# (live on R428 for STEP bodies); HybridShapeTranslate.VectorType values.
+PASTE_MODES = ("CATPrtResult", "CATPrtResultWithOutLink")
+TRANSLATE_DIRECTION, TRANSLATE_COORDINATES = 0, 2
 COUNTERSUNK_DEPTH_ANGLE = 0
 HOLE_ANCHOR_EXTREME = 0
 
@@ -583,6 +588,112 @@ class TreeBuilder:
                 self._combine(body, band, "join", entry)
 
         self._into_body(feature, entry, make)
+
+    def _feature_copy(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        """A rigid copy of a body: pasted as a result (linked to the source
+        when CATIA allows it), then turned and moved by Part Design
+        transformations in its own body, each checked by where the copy's
+        centre of gravity goes (R c + t) and its volume (unchanged)."""
+        (source_name,), (created,) = feature["bodies"], feature["creates"]
+        source = self.bodies[source_name]
+        rotation, t = placement_transform(feature["matrix"])
+        volume, cog = self._volume(source), self._cog(source)
+        turned = tuple(sum(rotation[i][k] * cog[k] for k in range(3)) for i in range(3))
+        want = tuple(turned[i] + t[i] for i in range(3))
+        tol = max(1e-3, FEATURE_REL_TOL * max(volume, 1e-9) ** (1 / 3))
+        tried: list[str] = []
+        for mode in PASTE_MODES:
+            body = None
+            try:
+                body = self._paste_body(source, mode)
+                if abs(self._volume(body) - volume) > max(1e-3, FEATURE_REL_TOL * volume):
+                    raise BuildFailed(f"the pasted copy measures {self._volume(body):.4f} mm3, "
+                                      f"the source {volume:.4f} mm3")
+                self.part.InWorkObject = body
+                made = [] if _is_identity(rotation) else \
+                    [self._rotate_body(body, rotation, turned, tol, tried)]
+                if norm(t) > 1e-9:
+                    made.append(self._translate_body(body, t, want, tol, tried))
+                got = self._cog(body)
+                if distance(got, want) > tol or \
+                        abs(self._volume(body) - volume) > max(1e-3, FEATURE_REL_TOL * volume):
+                    raise BuildFailed(f"the copy sits at {_fmt(got)}, expected {_fmt(want)}")
+                self.bodies[created] = body
+                entry["catia"] += [str(body.Name)] + [str(m.Name) for m in made]
+                entry.setdefault("notes", []).append(f"{body.Name}: pasted {mode}")
+                return
+            except Exception as error:  # the next way, then fail with every reason
+                tried.append(f"{mode}: {error}")
+                if body is not None:
+                    with contextlib.suppress(Exception):
+                        self._delete(body)
+        raise BuildFailed("CATIA did not copy the body (" + "; ".join(tried) + ")")
+
+    def _paste_body(self, source: Any, mode: str) -> Any:
+        before = int(self.part.Bodies.Count)
+        selection = self.conn.hso
+        selection.Clear()
+        selection.Add(source)
+        selection.Copy()
+        selection.Clear()
+        selection.Add(self.part)
+        selection.PasteSpecial(mode)
+        selection.Clear()
+        self.part.Update()
+        if int(self.part.Bodies.Count) != before + 1:
+            raise BuildFailed(f"PasteSpecial {mode} added {int(self.part.Bodies.Count) - before} "
+                              "bodies instead of one")
+        return self.part.Bodies.Item(before + 1)
+
+    def _rotate_body(self, body: Any, rotation, want: Vec, tol: float, tried: list[str]) -> Any:
+        """A Rotate (Part Design) of the body in work about the line through
+        the world origin along the rotation's axis; the angle's sign, which
+        the documentation leaves open, is set by where the centre goes."""
+        axis, angle = _axis_angle(rotation)
+        line = self._line_reference((0.0, 0.0, 0.0), axis)
+        rotate = self.part.ShapeFactory.AddNewRotate2(line, angle)
+        self.part.UpdateObject(rotate)
+        if distance(self._cog(body), want) > tol:
+            shape = rotate.HybridShape
+            for member in ("AngleValue", "Angle"):
+                try:
+                    _set_value(shape, member, -angle) if member == "Angle" else \
+                        setattr(shape, member, -angle)
+                    break
+                except Exception as error:  # the other member name
+                    tried.append(f"rotation angle by {member}: {error}")
+            self.part.UpdateObject(rotate)
+            if distance(self._cog(body), want) > tol:
+                raise BuildFailed(f"'{rotate.Name}' did not turn the copy to {_fmt(want)}")
+        return rotate
+
+    def _translate_body(self, body: Any, t: Vec, want: Vec, tol: float,
+                        tried: list[str]) -> Any:
+        """A Translate (Part Design) of the body in work by t: by a direction
+        and a distance, else by coordinates, whichever CATIA takes."""
+        length = norm(t)
+        translate = self.part.ShapeFactory.AddNewTranslate2(length)
+        shape = translate.HybridShape
+        ways = (
+            ("direction", lambda: (setattr(shape, "VectorType", TRANSLATE_DIRECTION),
+                                   setattr(shape, "Direction", self.part.HybridShapeFactory
+                                           .AddNewDirectionByCoord(*t)),
+                                   _set_value(shape, "Distance", length))),
+            ("coordinates", lambda: (setattr(shape, "VectorType", TRANSLATE_COORDINATES),
+                                     *(_set_value(shape, f"Coord{axis}", value)
+                                       for axis, value in zip("XYZ", t, strict=True)))),
+        )
+        for way, apply in ways:
+            try:
+                apply()
+                self.part.UpdateObject(translate)
+            except Exception as error:  # the next way
+                tried.append(f"translation by {way}: {error}")
+                continue
+            if distance(self._cog(body), want) <= tol:
+                return translate
+            tried.append(f"translation by {way} left the copy at {_fmt(self._cog(body))}")
+        raise BuildFailed(f"'{translate.Name}' did not move the copy to {_fmt(want)}")
 
     def _feature_remove(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         """Bodies the model drops: deleted, or hidden when CATIA keeps them."""
@@ -1756,6 +1867,25 @@ def _pattern_note(pattern: GridPattern | PolarPattern) -> str:
         return f"one Hole and a {n1} x {n2} rectangular pattern ({s1:g} x {s2:g} mm)"
     return (f"one Hole and a circular pattern of {pattern.count} at {pattern.step_deg:g} deg "
             f"about {_fmt(pattern.centre)}")
+
+
+def _is_identity(rotation) -> bool:
+    return all(abs(rotation[i][j] - (1.0 if i == j else 0.0)) < 1e-12
+               for i in range(3) for j in range(3))
+
+
+def _axis_angle(rotation) -> tuple[Vec, float]:
+    """The unit axis and the angle (degrees, counter-clockwise about the
+    axis) of a rotation matrix."""
+    (a, b, c), (d, e, f), (g, h, i) = rotation
+    cosine = max(-1.0, min(1.0, (a + e + i - 1) / 2))
+    angle = math.acos(cosine)
+    axis = (h - f, c - g, d - b)
+    if norm(axis) < 1e-9:  # 180 degrees: the axis is the column with the largest diagonal
+        k = max(range(3), key=lambda n: rotation[n][n])
+        column = [rotation[r][k] + (1.0 if r == k else 0.0) for r in range(3)]
+        axis = tuple(column)
+    return unit(axis), math.degrees(angle)
 
 
 def _flip_direction(prism: Any) -> bool:

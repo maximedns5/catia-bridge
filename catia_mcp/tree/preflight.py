@@ -33,7 +33,7 @@ from catia_mcp.tree.sweep import sweep_expectation
 # joined back into their source, splits, fillets, chamfers, shells, lofts and
 # sweeps.
 SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
-             "remove",
+             "remove", "copy",
              "sweep", "fillet", "chamfer", "shell")
 ENTITY_TYPES = ("line", "circle", "arc", "spline")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
@@ -134,6 +134,8 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
                 _check_shell(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "remove":
                 _check_remove(feature, bodies, refuse, f"{pid} {where}")
+            elif kind == "copy":
+                _check_copy(feature, bodies, refuse, f"{pid} {where}")
     if capabilities is not None:
         refuse_unavailable(tree, capabilities, plm_type, refuse, _where)
     return reasons
@@ -254,6 +256,21 @@ def _check_ruled_chain(sections, sketches) -> None:
         return
     raise ValueError("a ruled loft through more than two sections needs every section to be "
                      "a circle, or every section to have the same number of edges")
+
+
+def _check_copy(feature, bodies, refuse, where) -> None:
+    """A rigid copy of one body, as a new body: `matrix` [R|t] moves it."""
+    from catia_mcp.tree.placement import placement_transform
+
+    sources, created = feature.get("bodies") or [], feature.get("creates") or []
+    if len(sources) != 1 or sources[0] not in bodies or len(created) != 1:
+        refuse("copy must copy exactly one known body into one new body", where)
+    else:
+        try:
+            placement_transform(feature.get("matrix"))
+        except ValueError as error:
+            refuse(f"copies that do not move the body rigidly are not supported ({error})", where)
+    bodies.update(created)
 
 
 def _check_remove(feature, bodies, refuse, where) -> None:

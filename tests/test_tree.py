@@ -116,12 +116,12 @@ def test_preflight_refuses_with_each_reason_once_and_where():
 def test_preflight_does_not_cascade_from_an_unsupported_feature():
     tree = {"version": 1, "parts": [{"id": "/P", "features": [
         {"type": "draft", "id": "draft1", "creates": ["Body1"]},
-        {"type": "copy", "id": "copy1", "bodies": ["Body1"], "creates": ["Body2"]},
+        {"type": "keep_solids", "id": "copy1", "bodies": ["Body1"], "creates": ["Body2"]},
         {"type": "combine", "id": "combine1", "operation": "join",
          "targets": ["Body1"], "tools": ["Body2"]},
     ]}]}
     assert list(analyze(tree)) == ["'draft' features are not supported yet",
-                                   "'copy' features are not supported yet"]
+                                   "'keep_solids' features are not supported yet"]
 
 
 def test_fixture_trees_pass_preflight():
@@ -1594,3 +1594,114 @@ def test_removed_bodies_leave_the_part(monkeypatch):
     assert report["success"], report.get("error")
     assert report["parts_detail"][0]["features"][-1]["catia"][0].endswith("deleted")
     assert report["parts_detail"][0]["volume_mm3"] == pytest.approx(80000.0)
+
+
+# ── Body copies ──
+
+
+class _CopyBodies(list):
+    @property
+    def Count(self):
+        return len(self)
+
+    def Item(self, i):
+        return self[i - 1]
+
+    def Add(self):
+        self.append(_Body(f"Body.{len(self) + 1}"))
+        return self[-1]
+
+
+def _copy_part(paste_refused=(), turns_backwards=False):
+    """A fake part whose selection pastes a body as a result (a new body
+    holding the source's solids) and whose Rotate / Translate move the body
+    in work, as Part Design transformations do."""
+    part = _FakePart()
+    bodies = _CopyBodies([part.MainBody])
+    part.Bodies = bodies
+    clipboard, picked = [], []
+
+    def paste(mode):
+        if mode in paste_refused:
+            raise RuntimeError(f"La méthode PasteSpecial a échoué ({mode})")
+        new = bodies.Add()
+        new.solids = list(clipboard[0].solids)
+        new.pasted = mode
+
+    selection = SimpleNamespace(
+        Clear=picked.clear, Add=picked.append,
+        Copy=lambda: (clipboard.clear(), clipboard.extend(picked[:1])), PasteSpecial=paste,
+        Delete=lambda: [part.delete(f) for f in picked])
+
+    def rotate(axis, angle):
+        shape = SimpleNamespace(AngleValue=angle)
+        return part._feature("rotate", axis=axis, HybridShape=shape)
+
+    def translate(distance):
+        shape = SimpleNamespace(VectorType=0, Direction=None,
+                                Distance=SimpleNamespace(Value=distance))
+        return part._feature("translate", HybridShape=shape)
+
+    part.ShapeFactory.AddNewRotate2 = rotate
+    part.ShapeFactory.AddNewTranslate2 = translate
+    part.HybridShapeFactory.AddNewDirectionByCoord = lambda x, y, z: (x, y, z)
+    real_update = part.UpdateObject
+
+    def update(obj):
+        kind = getattr(obj, "kind", None)
+        if kind not in ("rotate", "translate"):
+            return real_update(obj)
+        if not hasattr(obj, "base"):
+            obj.base = list(obj.body.solids)
+        if kind == "rotate":
+            _, origin, axis = obj.axis
+            a = math.radians(obj.HybridShape.AngleValue) * (-1 if turns_backwards else 1)
+            k = unit(axis)
+
+            def moved(c):
+                r = tuple(ci - oi for ci, oi in zip(c, origin))
+                return tuple(origin[i] + r[i] * math.cos(a) + cross(k, r)[i] * math.sin(a)
+                             + k[i] * dot(k, r) * (1 - math.cos(a)) for i in range(3))
+        else:
+            d = unit(obj.HybridShape.Direction)
+            length = obj.HybridShape.Distance.Value
+
+            def moved(c):
+                return tuple(c[i] + d[i] * length for i in range(3))
+        obj.body.solids = [(v, moved(c)) for v, c in obj.base]
+
+    part.UpdateObject = update
+    return part, selection
+
+
+def test_a_body_copy_is_pasted_then_turned_and_moved(monkeypatch):
+    for backwards in (False, True):
+        part, selection = _copy_part(turns_backwards=backwards)
+        built = _builder(part, monkeypatch)
+        built.conn.hso = selection
+        tree = load("m9_body_copy")
+        want = {"/M9/BodyCopy": {"volume_mm3": 19200 + 3 * math.pi * 16 * 10}}
+        report = built.build(tree, want, check_editability=False)
+        assert report["success"], report.get("error")
+        copy1, copy2 = report["parts_detail"][0]["features"][4:6]
+        assert copy1["notes"] == [f"{copy1['catia'][0]}: pasted CATPrtResult"]
+        assert copy1["catia"][1].startswith("rotate") and copy2["catia"][1].startswith(
+            "translate")
+        rotate = next(f for f in part.pads if getattr(f, "kind", None) == "rotate")
+        assert rotate.HybridShape.AngleValue == pytest.approx(-90 if backwards else 90)
+
+
+def test_a_copy_without_a_link_when_catia_refuses_the_linked_paste(monkeypatch):
+    part, selection = _copy_part(paste_refused={"CATPrtResult"})
+    built = _builder(part, monkeypatch)
+    built.conn.hso = selection
+    report = built.build(load("m9_body_copy"), check_editability=False)
+    assert report["success"], report.get("error")
+    assert report["parts_detail"][0]["features"][4]["notes"][0].endswith(
+        "pasted CATPrtResultWithOutLink")
+
+
+def test_copies_that_scale_or_mirror_are_refused():
+    tree = load("m9_body_copy")
+    tree["parts"][0]["features"][4]["matrix"] = [[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]
+    assert any("do not move the body rigidly" in r for r in analyze(tree))
