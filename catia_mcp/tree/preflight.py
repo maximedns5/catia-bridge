@@ -33,7 +33,7 @@ from catia_mcp.tree.sweep import sweep_expectation
 # joined back into their source, splits, fillets, chamfers, shells, lofts and
 # sweeps.
 SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
-             "remove", "copy",
+             "remove", "copy", "scale",
              "sweep", "fillet", "chamfer", "shell")
 ENTITY_TYPES = ("line", "circle", "arc", "spline")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
@@ -136,6 +136,8 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
                 _check_remove(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "copy":
                 _check_copy(feature, bodies, refuse, f"{pid} {where}")
+            elif kind == "scale":
+                _check_scale(feature, bodies, refuse, f"{pid} {where}")
     if capabilities is not None:
         refuse_unavailable(tree, capabilities, plm_type, refuse, _where)
     return reasons
@@ -271,6 +273,22 @@ def _check_copy(feature, bodies, refuse, where) -> None:
         except ValueError as error:
             refuse(f"copies that do not move the body rigidly are not supported ({error})", where)
     bodies.update(created)
+
+
+def _check_scale(feature, bodies, refuse, where) -> None:
+    """A body scaled in place, along the axes of an orthonormal frame."""
+    from catia_mcp.tree.geometry import scale_frame
+
+    targets, factors = feature.get("bodies") or [], feature.get("factors")
+    if len(targets) != 1 or targets[0] not in bodies:
+        refuse("scale must scale exactly one known body", where)
+    elif not isinstance(factors, list) or len(factors) != 3 or not all(map(_positive, factors)):
+        refuse("scale factors must be three positive numbers", where)
+    else:
+        try:
+            scale_frame(feature)
+        except ValueError as error:
+            refuse(str(error), where)
 
 
 def _check_remove(feature, bodies, refuse, where) -> None:
