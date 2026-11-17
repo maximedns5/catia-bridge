@@ -770,13 +770,16 @@ class TreeBuilder:
         """A rectangular or circular pattern of `seed`, the seed first. Which
         way an origin plane or an axis points a pattern is not documented (live
         on R428 a rectangular pattern from PlaneYZ / PlaneZX ran both ways
-        reversed), so each way round is tried until the body matches
-        build123d's; the last one is kept for the caller to judge."""
+        reversed, and no way round of the origin planes gave the grid), so the
+        directions are construction lines from the seed's frame, and each way
+        round is tried until the body matches build123d's. The last one is
+        kept for the caller to judge; the report lists what each removed."""
         part = self.part
         factory = part.ShapeFactory
         if isinstance(pattern, GridPattern):
             (n1, n2), (s1, s2) = pattern.counts, pattern.steps
-            (ref1, rev1), (ref2, rev2) = (self._direction_reference(d) for d in pattern.directions)
+            ref1, ref2 = (self._line_reference((0.0, 0.0, 0.0), d) for d in pattern.directions)
+            rev1 = rev2 = False
             ways = []
             for flip1, flip2 in ((False, False), (True, True), (True, False), (False, True)):
                 way = (rev1 != flip1 if n1 > 1 else rev1, rev2 != flip2 if n2 > 1 else rev2)
@@ -795,29 +798,26 @@ class TreeBuilder:
                 centre = part.CreateReferenceFromName("")  # from the axis (live on R428)
                 return factory.AddNewCircPattern(seed, 1, pattern.count, 0.0, pattern.step_deg,
                                                  1, 1, centre, axis, way[0], 0.0, True)
+        tried = []
         for n, way in enumerate(ways):
             part.InWorkObject = body
             result = build(way)
             made.append(result)
             part.UpdateObject(result)
-            if self._snapshot_error(target, before) is None or n == len(ways) - 1:
+            error = self._snapshot_error(target, before)
+            tried.append(f"reversed {', '.join(str(w) for w in way)}: "
+                         f"{self._volume(body) - before[0]:+.4f} mm3")
+            if error is None or n == len(ways) - 1:
                 entry["catia"].append(str(result.Name))
-                if n:
+                if n and error is None:
                     entry.setdefault("notes", []).append(
                         f"{result.Name}: built the other way round "
                         f"(reversed {', '.join(str(w) for w in way)}) to match the tree")
+                elif error is not None:
+                    entry.setdefault("notes", []).append(
+                        f"{result.Name}: no way round matched ({'; '.join(tried)})")
                 return
             self._delete(made.pop())
-
-    def _direction_reference(self, direction: Vec) -> tuple[Any, bool]:
-        """A pattern direction: the origin plane normal to it when it is an
-        axis (live on V5: PlaneYZ gives X), else a construction line."""
-        for name, (h, v) in ORIGIN_PLANES.items():
-            along = _parallel(direction, cross(h, v))
-            if along:
-                plane = getattr(self.part.OriginElements, name)
-                return self.part.CreateReferenceFromObject(plane), along < 0
-        return self._line_reference((0.0, 0.0, 0.0), direction), False
 
     def _line_reference(self, origin: Vec, direction: Vec) -> Any:
         points = [self._construction_point(point)

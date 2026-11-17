@@ -146,8 +146,8 @@ layout is recognised from the frames' origins, in the first frame's plane:
 - a **grid**: every combination of nx equally spaced X values and ny equally
   spaced Y values (a single row when one count is 1) becomes one Hole at the
   corner with the lowest X and Y and a **Rectangular Pattern** (counts and
-  spacings). A direction along an origin axis is given by the origin plane
-  normal to it (PlaneYZ for X, live on V5), any other by a construction line;
+  spacings), its two directions given by construction lines along the
+  layout's X and Y;
 - a **crown**: three or more positions equally far from a centre at equal
   angular steps (a full circle or an arc) becomes one Hole at the start of the
   run and a **Circular Pattern** about the line through the centre, along
@@ -160,9 +160,12 @@ deleted and rebuilt the other way round (both directions, then each one; the
 axis reversed for a crown) before giving up.
 
 Live on R428 (French, 3D Shape): a circular pattern of a sketch-placed Hole
-matched build123d on its first try (`m7_hole_circle`). The rectangular one
-from PlaneYZ / PlaneZX ran both directions reversed, its copies off the
-plate, and the build fell back to 12 Holes; it is now rebuilt reversed. If CATIA refuses the pattern (V5 refuses a
+matched build123d on its first try (`m7_hole_circle`). A rectangular one
+with PlaneYZ / PlaneZX as directions (the V5 recipe) matched none of the
+four ways round: one way left a single hole, another a single column of 3,
+so the plane did not give the X direction. The directions are now
+construction lines, and when no way round matches the report lists what
+each one removed. If CATIA refuses the pattern (V5 refuses a
 circular pattern in a part holding a geometrical set) or the result does not
 match, the seed and the pattern are deleted and each position gets its own
 Hole; the report notes why.
