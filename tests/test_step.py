@@ -417,7 +417,7 @@ def test_preflight_accepts_features_with_step_files_only_where_they_can_be_impor
 
 def test_preflight_refuses_deltas_for_features_that_create_or_miss_bodies(tmp_path):
     tree = _with(load("m1_offset_block"),
-                 {"type": "copy", "id": "copy1", "bodies": ["Body1"], "creates": ["Body3"]},
+                 {"type": "keep_solids", "id": "copy1", "bodies": ["Body1"], "creates": ["Body3"]},
                  {"type": "shell", "id": "shell1", "bodies": ["Nope"]})
     _touch(str(tmp_path), "/M1/OffsetBlock", "copy1.add.step")
     _touch(str(tmp_path), "/M1/OffsetBlock", "shell1.add.step")

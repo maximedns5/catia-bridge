@@ -18,6 +18,7 @@ from build123d import (
     Face,
     Keep,
     Kind,
+    Location,
     Plane,
     Solid,
     Transition,
@@ -167,6 +168,15 @@ def _dressup(feature: dict[str, Any], body: Any) -> Any:
         raise ReferenceError(f"{kind} {feature.get('id')}: {error}") from error
 
 
+def _location(matrix: Any) -> Location:
+    """A build123d Location for a 3x4 rigid matrix [R|t]."""
+    from OCP.gp import gp_Trsf
+
+    trsf = gp_Trsf()
+    trsf.SetValues(*[float(c) for row in matrix for c in row])
+    return Location(trsf)
+
+
 def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = None) -> Any:
     """The part's solid. `external(part, feature, bodies)` builds the features
     this reference has no rule for, by updating `bodies` (the STEP fallback).
@@ -237,6 +247,9 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
                 for radius, top, bottom in hole_segments(feature):
                     plane = Plane(origin=add(origin, scale(z_dir, bottom)), x_dir=x_dir, z_dir=z_dir)
                     bodies[target] = bodies[target] - Solid.make_cylinder(radius, top - bottom, plane)
+        elif kind == "copy":
+            (source,), (created,) = feature["bodies"], feature["creates"]
+            bodies[created] = bodies[source].moved(_location(feature["matrix"]))
         elif kind == "remove":
             for name in feature["bodies"]:
                 bodies.pop(name, None)

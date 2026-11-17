@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "/M9/BodyCopy",
+      "name": "BodyCopy",
+      "bodies": [
+        "Body1"
+      ],
+      "features": [
+        {
+          "type": "sketch",
+          "id": "sketch1",
+          "plane": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          },
+          "entities": [
+            {
+              "type": "line",
+              "start": [
+                -30,
+                -20
+              ],
+              "end": [
+                30,
+                -20
+              ],
+              "id": "e0"
+            },
+            {
+              "type": "line",
+              "start": [
+                30,
+                -20
+              ],
+              "end": [
+                30,
+                20
+              ],
+              "id": "e1"
+            },
+            {
+              "type": "line",
+              "start": [
+                30,
+                20
+              ],
+              "end": [
+                -30,
+                20
+              ],
+              "id": "e2"
+            },
+            {
+              "type": "line",
+              "start": [
+                -30,
+                20
+              ],
+              "end": [
+                -30,
+                -20
+              ],
+              "id": "e3"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "e0",
+                "e1",
+                "e2",
+                "e3"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "extrude1",
+          "sketch": "sketch1",
+          "distance": 8,
+          "operation": "new_body",
+          "creates": [
+            "Body1"
+          ]
+        },
+        {
+          "type": "sketch",
+          "id": "sketch2",
+          "plane": {
+            "origin": [
+              0,
+              0,
+              8
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          },
+          "entities": [
+            {
+              "type": "circle",
+              "center": [
+                15,
+                0
+              ],
+              "radius": 4,
+              "id": "c"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "c"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "extrude2",
+          "sketch": "sketch2",
+          "distance": 10,
+          "operation": "new_body",
+          "creates": [
+            "Body2"
+          ]
+        },
+        {
+          "type": "copy",
+          "id": "copy1",
+          "bodies": [
+            "Body2"
+          ],
+          "creates": [
+            "Body3"
+          ],
+          "matrix": [
+            [
+              0,
+              -1,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        {
+          "type": "copy",
+          "id": "copy2",
+          "bodies": [
+            "Body2"
+          ],
+          "creates": [
+            "Body4"
+          ],
+          "matrix": [
+            [
+              1,
+              0,
+              0,
+              -30
+            ],
+            [
+              0,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        {
+          "type": "combine",
+          "id": "combine1",
+          "operation": "join",
+          "targets": [
+            "Body1"
+          ],
+          "tools": [
+            "Body2",
+            "Body3",
+            "Body4"
+          ]
+        }
+      ]
+    }
+  ]
+}

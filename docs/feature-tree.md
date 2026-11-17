@@ -48,10 +48,17 @@ active editor.
 | `loft` between two sections in parallel planes (one profile each, no holes), every operation | Multi-sections Solid in its own body. Each section is redrawn with the vertices build123d pairs the sections by, coupled vertex to vertex from matching closing points (GSD points in `Tree_Construction`) |
 | `loft` `ruled` through three or more sections, every section a circle or every section with the same number of edges | One two-section Multi-sections Solid per consecutive pair (OpenCascade's ruled loft is one ruled band per pair), each checked as above, the later ones joined into the first |
 | `remove` | The bodies the model drops are deleted (hidden, with a note, if CATIA keeps them) |
+| `copy` (a rigid `matrix` [R\|t]) | The source body pasted as a result into a new body (`PasteSpecial "CATPrtResult"`, linked to the source; without the link if CATIA refuses), then a Rotate about the line through the world origin along the rotation's axis and a Translate by t (Part Design transformations of the body in work), each checked by where the copy's centre of gravity goes (R c + t), with an unchanged volume. The rotation's sign and the translation's members are not documented: the other sign, then a translation by coordinates, are tried, and the report notes each refusal |
 | `sweep` of one profile along a planar, tangent-continuous path of lines and arcs, the profile perpendicular to the path where it starts, every operation | Rib in its own body, along the path drawn as a sketch in its own plane |
 | `fillet` with a constant radius on line and circle edges | One Edge Fillet (`AddNewSolidEdgeFilletWithConstantRadius`, tangency propagation) on the matched edges, one edge per tangent chain |
 | `chamfer` with one or two distances on line and circle edges | One Chamfer (`AddNewChamfer`, two-length mode, tangency propagation). With two distances, `distance` goes on the plane `face`, which must hold every edge |
 | `shell` with at least one removed face, inside or outside, `Kind.ARC` or `Kind.INTERSECTION` | One Shell (`AddNewShell`, then `AddFaceToRemove`), the thickness inside (`thickness` < 0) or outside |
+
+Live on R428 (French), each on its first try and exact in volume: a body
+copied once turned 90° (pasted as a result with its link, then a Rotate)
+and once moved 30 mm (a Translate by direction and distance), a ruled loft
+through three squares (two lofts joined), a chamfer given by an angle, a
+Frenet sweep and a removed body.
 
 A sweep with `frenet` is accepted: along a planar path the Frenet frame's
 binormal is constant, so it is the same solid (build123d gives the same
