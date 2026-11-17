@@ -241,13 +241,22 @@ def _enum_values(conn: Any, near: Any, name: str) -> Any:
     return find_enum([near, conn.app], name)
 
 
-def product_window(conn: Any) -> dict[str, Any]:
+def product_window(conn: Any, wanted: str | None = None) -> dict[str, Any]:
     """Whether the active window shows a product, and the open windows'
-    names. Read only: live, activating each window in turn hung CATIA for
-    120 s ('PopupFatherWindow'), so the window to use is clicked by hand."""
+    names. Live, activating every window in turn hung CATIA for 120 s
+    ('PopupFatherWindow', the first window being the home page), so only the
+    one window named by --window is activated, if any."""
     from catia_mcp.errors import WrongDocumentType
 
     out: dict[str, Any] = {}
+    if wanted:
+        windows = conn.app.Windows
+        names = [str(windows.Item(i).Name) for i in range(1, int(windows.Count) + 1)]
+        if wanted not in names:
+            out["window"] = f"no open window is named {wanted!r}"
+        else:
+            windows.Item(names.index(wanted) + 1).Activate()
+            out["window"] = f"activated {wanted!r}"
     try:
         conn.root_occurrence()
         out["active"] = "a product"
@@ -382,6 +391,9 @@ def main() -> int:
     parser.add_argument("--platform", default="3dx", help="3dx (default), v5 or auto")
     parser.add_argument("--create", action="store_true",
                         help="create a published plane and a Fix, then remove them")
+    parser.add_argument("--window", default=None,
+                        help="the name of the imported product's window to activate first, "
+                             "as CATIA's Window menu shows it (e.g. 'Bracket A:4')")
     parser.add_argument("--engcnx-create", action="store_true",
                         help="try EngConnections.Add with each candidate argument (each "
                              "connection made is removed again)")
@@ -407,7 +419,7 @@ def main() -> int:
         report["plan"] = plan.summary()
     except Exception as error:
         report["plan"] = f"error: {error}"
-    steps = [("product_window", lambda: product_window(conn)),
+    steps = [("product_window", lambda: product_window(conn, args.window)),
              ("enums", lambda: enums(conn)), ("occurrences", lambda: occurrences(conn, plan)),
              ("members", lambda: members(conn)), ("routes", lambda: routes(conn))]
     steps.append(("engcnx", lambda: engcnx(conn, args.engcnx_create)))
