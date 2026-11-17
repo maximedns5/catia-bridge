@@ -185,6 +185,17 @@ All notable changes to this project are documented here.
   `effects.modified=false` when nothing was touched.
 - `scripts/live_smoke_test.py`: builds and measures a throw-away part on a
   live V5 or 3DEXPERIENCE session and writes a JSON report.
+- Assembly constraints: `--constraints fix|infer` with `--assembly`. The
+  inference (`catia_mcp/tree/mates.py`) finds coincidences of axes,
+  contacts and offsets between the parts' faces, grounds the largest part
+  and gives each other one a minimal set that holds it (a pin may spin),
+  else a fix. V5: published axis lines and planes in each part, then
+  `CATIAConstraints`, every position read back, a constraint that moves a
+  part replaced by a fix. 3DEXPERIENCE: tried behind the flag;
+  `scripts/probe_constraints.py` records what the API allows. `python -m
+  catia_mcp.tree mates` shows them offline. Three synthetic fixtures
+  (pin through a plate, box on a base, bolted plates);
+  docs/assembly-constraints.md.
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart
