@@ -269,7 +269,25 @@ run from a machine where CATIA V5 is installed.
 `python -m catia_mcp.tree build MODEL.tree.json --assembly product --step
 MODEL.step` builds each part once, in its own frame, and places every instance
 in a CATIA V5 product, a part used twice being one CATPart placed twice
-([docs/assemblies.md](docs/assemblies.md)).
+([docs/assemblies.md](docs/assemblies.md)). `--constraints infer` grounds one
+part and positions the others by coincidence, contact and offset constraints
+inferred from their faces ([docs/assembly-constraints.md](docs/assembly-constraints.md)).
+
+### Drawings
+
+`--drawing auto` adds to the build a drawing of each part and of the product:
+the views, sheet and scale a designer would choose, generated dimensions,
+hole callouts, title block, bill of materials and balloons
+([docs/drafting.md](docs/drafting.md)).
+What the tree replay covers of Part Design, feature by feature, is in
+[docs/part-design.md](docs/part-design.md).
+### Materials and properties
+
+After each part, the tree build can apply its colour, its material (checking
+the mass CATIA measures against volume x density), the product properties
+the bill of materials reads, and its parameters in a parameter set with a
+design table for its variants
+([docs/materials-properties.md](docs/materials-properties.md)).
 
 Surface features (Generative Shape Design) and the named reference planes
 sketches sit on are in [docs/surfaces.md](docs/surfaces.md).

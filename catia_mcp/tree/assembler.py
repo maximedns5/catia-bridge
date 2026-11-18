@@ -44,6 +44,9 @@ class AssemblerV5:
         self.app = app
         self.read_position = read_position or _default_reader(app)
         self.log = log
+        # Kept for the assembly constraints (catia_mcp/tree/assembly_constraints.py).
+        self.root: Any = None
+        self.components: dict[str, Any] = {}
 
     def assemble(self, plan: AssemblyPlan, documents: dict[str, Any]) -> dict[str, Any]:
         """`documents`: the part document built for each prototype (tree part
@@ -54,7 +57,7 @@ class AssemblerV5:
         if missing:
             raise AssemblyFailed(f"no part document was built for {', '.join(missing)}")
         product_doc = self.app.Documents.Add("Product")
-        root = product_doc.Product
+        root = self.root = product_doc.Product
         self._name(root, "PartNumber", plan.root.name, report)
         report["catia_product"] = str(root.PartNumber)
         parents = {plan.root.id: root}
@@ -79,6 +82,7 @@ class AssemblerV5:
                 component = products.AddExternalComponent(document)
                 first[placed.prototype] = component
             counts[placed.name] = counts.get(placed.name, 0) + 1
+            self.components[placed.id] = component
             self._name(component, "Name", f"{placed.name}.{counts[placed.name]}", report)
             ok = self._place(component, placed.local)
             if placed.color is not None:
