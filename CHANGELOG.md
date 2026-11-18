@@ -196,6 +196,39 @@ All notable changes to this project are documented here.
   catia_mcp.tree mates` shows them offline. Three synthetic fixtures
   (pin through a plate, box on a base, bolted plates);
   docs/assembly-constraints.md.
+- Drawings in the tree build (`--drawing auto`, docs/drafting.md): for each
+  built part, the main view, projections, section, detail and isometric
+  views, sheet and ISO scale a designer would choose, laid out without
+  overlap; generated dimensions, hole callouts, frame and title block with
+  the projection symbol, optional PDF; for an assembly, front and isometric
+  views, a bill of materials and balloons. Planned offline
+  (`python -m catia_mcp.tree.drawing_plan`), recorded step by step in the
+  report's `drawing` section. `scripts/probe_drawing.py` records every route
+  to a drawing on a live session.
+- **Part Design additions** (`docs/part-design.md`, not validated live yet):
+  `draft` (one Draft on the anchored faces about the neutral plane, its angle
+  a parameter), `extrude` with `until` (a Pad or Pocket up to next, last, a
+  plane or a face, straight into its body), tapped holes (`thread`: ISO
+  designation, depth, pitch, side; the hole keeps its tap drill) and V-bottomed
+  holes (`bottom`), and lofts to a point (a Multi-sections Solid to a
+  construction point, a Shaft for a right cone CATIA will not loft). Each has
+  preflight rules, a build123d reference and a fixture (`m10_*`);
+  `scripts/probe_part_design.py` reads their enums and builds every fixture on
+  a live CATIA. A Part Design coverage table lists every CATIA Part Design
+  feature with its status.
+- **Materials and properties** (`--properties`, docs/materials-properties.md):
+  after each part, its colour (on its bodies, read back; per feature too),
+  its material (V5 catalog or a new material, the tree's density; else
+  `Material` / `Density` / `Mass` parameters) with the measured mass checked
+  against volume x density, the product properties for the BOM (V5 product
+  fields and user properties; 3DEXPERIENCE PLM attributes, the rest as
+  parameters), typed parameters with comments in a parameter set named for
+  the part, a design table for the tree's configurations (each one built
+  and measured, then restored), and checks from bounds when Knowledge
+  Advisor is licensed. New optional tree fields `color`, `material`,
+  `properties`, `parameters`, `configurations`, `checks`. Every step is
+  recorded per route and never fails the part. `scripts/probe_properties.py`
+  probes each route live.
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart

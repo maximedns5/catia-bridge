@@ -14,6 +14,8 @@ results of earlier capability probes) and refuses a tree that needs something
 found unavailable. CATIA runs on a guarded worker thread: a dialog that blocks
 the build ends it with a report naming the part, the feature and the dialog's
 text. --part and --until build a prefix of one part, for development.
+--drawing auto then makes the drawing of each part and of the product
+(docs/drafting.md).
 --step-dir DIR lets STEP files stand in for features with no native rule
 (CATIA V5 only; see docs/step.md).
 
@@ -76,9 +78,10 @@ def _check(tree, step=None) -> int:
     print(f"Accepted: {len(tree['parts'])} part(s), "
           f"{sum(len(p['features']) for p in tree['parts'])} feature(s).")
     if step is not None:
-        from catia_mcp.tree.preflight import SUPPORTED
+        from catia_mcp.tree.preflight import SUPPORTED, native
 
-        dead = sum(f.get("type") not in SUPPORTED for p in tree["parts"] for f in p["features"])
+        dead = sum(f.get("type") not in SUPPORTED or not native(f)
+                   for p in tree["parts"] for f in p["features"])
         if dead:
             print(f"{dead} of them from STEP files in {step.directory}, as bodies without "
                   "history (the build needs CATIA V5).")
@@ -240,6 +243,39 @@ def _assemble(conn, worker, builder, plan, report, mates=None) -> None:
                              report["assembly"], log=print), label="the assembly constraints"))
 
 
+def _drawings(conn, worker, tree, builder, report, plan, adopted: bool, args) -> None:
+    """The drawing of every built part and of the product (docs/drafting.md):
+    the report's `drawing` section. A failed drawing leaves the build a success."""
+    from catia_mcp.tree.drawing_builder import make_drawings
+    from catia_mcp.tree.drawing_plan import DrawingOptions
+
+    options = DrawingOptions(projection=args.drawing_projection)
+    report["drawing"] = make_drawings(conn, worker, tree, builder, report, plan, options,
+                                      pdf_dir=args.drawing_pdf, adopted=adopted, log=print)
+def _properties(tree, args, capabilities):
+    """The properties step (docs/materials-properties.md), or None when off.
+    Parts without a colour take their STEP instance's when --step is given."""
+    from catia_mcp.tree.properties import PartProperties
+
+    if args.properties == "off":
+        return None
+    if args.step:
+        try:
+            from catia_mcp.tree.properties import colours_from_step
+            from catia_mcp.tree.step_structure import read
+
+            coloured = colours_from_step(tree, read(args.step))
+            if coloured:
+                print(f"Colours from the STEP file: {', '.join(coloured)}")
+        except Exception as error:  # a colour is a bonus
+            print(f"No colours read from the STEP file: {error}")
+    status = ((capabilities or {}).get("capabilities") or {}).get("knowledge.rules") or {}
+    advisor = {"on": True, "off": False}.get(
+        args.checks, status.get("status") in ("verified", "authorized"))
+    return PartProperties(args.properties, catalog=args.material_catalog,
+                          sheet_dir=args.sheet_dir, knowledge_advisor=advisor)
+
+
 def _build(tree, args) -> int:
     from catia_mcp.com_guard import ComWorker
     from catia_mcp.connection import CATIAConnection
@@ -291,6 +327,7 @@ def _build(tree, args) -> int:
         return 1
     builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print,
                           ownership=args.ownership, step_dir=args.step_dir, style=args.style)
+    builder.properties = _properties(tree, args, capabilities)
     adopted = None
     if args.assembly == "adopt":
         adopted = _adopt(conn, worker, plan, builder)
@@ -319,6 +356,8 @@ def _build(tree, args) -> int:
                                   log=print), label="the assembly constraints"), mates[0])
     elif plan is not None and report.get("success"):
         _assemble(conn, worker, builder, plan, report, mates)
+    if args.drawing == "auto" and report.get("success"):
+        _drawings(conn, worker, tree, builder, report, plan, adopted is not None, args)
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
     for part in report["parts_detail"]:
@@ -326,6 +365,11 @@ def _build(tree, args) -> int:
         versus = f" (build123d {want:.4f})" if want is not None else ""
         print(f"{part['id']}: {part['catia_name']}, volume {part['volume_mm3']}{versus}, "
               f"editable {part['editable']}")
+        if part.get("properties"):
+            from catia_mcp.tree.properties import summary
+
+            ok = "ok" if part["properties"].get("ok") else "NOT ok"
+            print(f"  properties {ok}: {summary(part['properties'])}")
     _report_dead(report)
     if report["success"]:
         print(f"Built in {report['elapsed_s']} s. Report: {args.report}")
@@ -420,6 +464,25 @@ def main(argv: list[str] | None = None) -> int:
                              "(docs/assembly-constraints.md)")
     parser.add_argument("--ground", help="--constraints infer: the instance id to ground "
                         "(default: the largest)")
+    parser.add_argument("--drawing", default="none", choices=["none", "auto"],
+                        help="auto: after the build, a drawing of each part (and of the "
+                             "product) with the views, scale and sheet a designer would choose; "
+                             "the report's 'drawing' section (docs/drafting.md)")
+    parser.add_argument("--drawing-projection", default="first", choices=["first", "third"],
+                        help="first angle (ISO E, default) or third angle (ISO A)")
+    parser.add_argument("--drawing-pdf", help="folder to export each drawing to as PDF")
+    parser.add_argument("--properties", default="auto", choices=["auto", "on", "off"],
+                        help="colour, material and mass, product properties and "
+                             "Knowledgeware after each part (docs/materials-properties.md): "
+                             "auto (default) for parts whose tree carries those fields, on for "
+                             "every part (part number and tree id at least), off")
+    parser.add_argument("--material-catalog", help="CATIA V5 material catalog "
+                        "(.CATMaterial); default: materials/*.CATMaterial under CATStartupPath")
+    parser.add_argument("--sheet-dir", help="folder for the design table sheets the bridge "
+                        "writes (default: the temporary folder)")
+    parser.add_argument("--checks", default="auto", choices=["auto", "on", "off"],
+                        help="create the tree's checks (Knowledge Advisor): auto when the "
+                             "capability probe found its licence, on, off")
     parser.add_argument("--no-edit", action="store_true", help="skip the editability check")
     parser.add_argument("--deadline", type=float, default=170.0, help="build budget in seconds")
     parser.add_argument("--report", help="JSON report path (default tree_report.json, "
