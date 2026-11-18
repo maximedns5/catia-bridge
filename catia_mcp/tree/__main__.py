@@ -13,6 +13,8 @@ results of earlier capability probes) and refuses a tree that needs something
 found unavailable. CATIA runs on a guarded worker thread: a dialog that blocks
 the build ends it with a report naming the part, the feature and the dialog's
 text. --part and --until build a prefix of one part, for development.
+--drawing auto then makes the drawing of each part and of the product
+(docs/drafting.md).
 --step-dir DIR lets STEP files stand in for features with no native rule
 (CATIA V5 only; see docs/step.md).
 
@@ -202,6 +204,15 @@ def _assemble(conn, worker, builder, plan, report) -> None:
                            "note": "The parts are built; the product may be partial."}
 
 
+def _drawings(conn, worker, tree, builder, report, plan, adopted: bool, args) -> None:
+    """The drawing of every built part and of the product (docs/drafting.md):
+    the report's `drawing` section. A failed drawing leaves the build a success."""
+    from catia_mcp.tree.drawing_builder import make_drawings
+    from catia_mcp.tree.drawing_plan import DrawingOptions
+
+    options = DrawingOptions(projection=args.drawing_projection)
+    report["drawing"] = make_drawings(conn, worker, tree, builder, report, plan, options,
+                                      pdf_dir=args.drawing_pdf, adopted=adopted, log=print)
 def _properties(tree, args, capabilities):
     """The properties step (docs/materials-properties.md), or None when off.
     Parts without a colour take their STEP instance's when --step is given."""
@@ -298,6 +309,8 @@ def _build(tree, args) -> int:
                               "product": plan.root.name, "instances": adopted}
     elif plan is not None and report.get("success"):
         _assemble(conn, worker, builder, plan, report)
+    if args.drawing == "auto" and report.get("success"):
+        _drawings(conn, worker, tree, builder, report, plan, adopted is not None, args)
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
     for part in report["parts_detail"]:
@@ -374,6 +387,13 @@ def main(argv: list[str] | None = None) -> int:
                              "rebuilt there with native features, replacing the imported solid")
     parser.add_argument("--step", help="the model's STEP file (same compile as the tree): "
                         "its assembly structure, part frames, names and colours")
+    parser.add_argument("--drawing", default="none", choices=["none", "auto"],
+                        help="auto: after the build, a drawing of each part (and of the "
+                             "product) with the views, scale and sheet a designer would choose; "
+                             "the report's 'drawing' section (docs/drafting.md)")
+    parser.add_argument("--drawing-projection", default="first", choices=["first", "third"],
+                        help="first angle (ISO E, default) or third angle (ISO A)")
+    parser.add_argument("--drawing-pdf", help="folder to export each drawing to as PDF")
     parser.add_argument("--properties", default="auto", choices=["auto", "on", "off"],
                         help="colour, material and mass, product properties and "
                              "Knowledgeware after each part (docs/materials-properties.md): "

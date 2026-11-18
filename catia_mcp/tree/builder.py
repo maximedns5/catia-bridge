@@ -260,6 +260,8 @@ class TreeBuilder:
         self.dressups = DressUps(self, ownership)
         self.plus = PartDesignPlus(self)  # catia_mcp/tree/partdesign_com.py
         self.part_documents: dict[str, Any] = {}
+        # Part id -> the 3DEXPERIENCE editor it was built in, for the drawing.
+        self.part_editors: dict[str, Any] = {}
         # Part id -> an existing Part to build in (an imported product's,
         # catia_mcp/tree/adopt.py) instead of a new part document.
         self.targets: dict[str, Any] = {}
@@ -352,6 +354,9 @@ class TreeBuilder:
         if not self.conn.is_3dx:  # the assembler places V5 part documents
             with contextlib.suppress(Exception):
                 self.part_documents[part["id"]] = self.part.Parent
+        else:  # catia_mcp/tree/drawing_builder.py projects it from its editor
+            with contextlib.suppress(Exception):
+                self.part_editors[part["id"]] = self.conn.active_editor
         self.main_body_used = self.adopting  # the main body holds the import
         self.bodies: dict[str, Any] = {}
         self.sketches: dict[str, dict[str, Any]] = {}

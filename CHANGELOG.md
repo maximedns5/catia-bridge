@@ -185,6 +185,15 @@ All notable changes to this project are documented here.
   `effects.modified=false` when nothing was touched.
 - `scripts/live_smoke_test.py`: builds and measures a throw-away part on a
   live V5 or 3DEXPERIENCE session and writes a JSON report.
+- Drawings in the tree build (`--drawing auto`, docs/drafting.md): for each
+  built part, the main view, projections, section, detail and isometric
+  views, sheet and ISO scale a designer would choose, laid out without
+  overlap; generated dimensions, hole callouts, frame and title block with
+  the projection symbol, optional PDF; for an assembly, front and isometric
+  views, a bill of materials and balloons. Planned offline
+  (`python -m catia_mcp.tree.drawing_plan`), recorded step by step in the
+  report's `drawing` section. `scripts/probe_drawing.py` records every route
+  to a drawing on a live session.
 - **Part Design additions** (`docs/part-design.md`, not validated live yet):
   `draft` (one Draft on the anchored faces about the neutral plane, its angle
   a parameter), `extrude` with `until` (a Pad or Pocket up to next, last, a

@@ -25,6 +25,7 @@ something found unavailable; `capabilities` runs that probe on its own
   - **Report:** written to `tree_report.json`, with `success`, `native_history`, `editable`, `parts_detail` and `error`.
   - **Prefixes:** `--part ID --until FEATURE_ID` builds a prefix of one part, for development.
   - **Topology filter:** `--ownership auto|strict|off` (or `CATIA_MCP_TOPOLOGY_OWNERSHIP`) sets the ownership filter fillets, chamfers and shells use (see below). `auto` is the default.
+  - **Drawings:** `--drawing auto` then draws each part and the product: see [drafting.md](drafting.md).
 
 Keep the new part's window active during a build. The build stops if the
 active window changes, because 3DEXPERIENCE measures and searches only in the
