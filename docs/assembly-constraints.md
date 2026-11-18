@@ -176,6 +176,16 @@ connection names its impacteds (`GetImpacted`) and tries geometry found
 from the product with `Selection.Search`, through each item's `Reference`
 (a reference in the assembly's context).
 
+Fifth live probe (`--engcst2`): connections made from instances report
+`GetNbImpacteds()` = 0, so the instances were not taken as impacteds.
+`Selection.Search("CATPrtSearch.Plane,all")` from the product finds each
+part's origin planes ("Plan xy"...) with their leaf, but a parallelism on
+their selection references or values is refused too, and a selected
+occurrence has no `Reference`. `--engcst3` makes connections from each kind
+of element (occurrences, representation occurrences, instances,
+references; `Add` and `AddWithContext`) and reads which one registers its
+impacteds before trying the constraint again.
+
 The next probe creates a Fix, a Rigid and a Cylindrical connection (on
 instances, else occurrences), describes each and the objects it holds (its
 constraints collection), and removes it.

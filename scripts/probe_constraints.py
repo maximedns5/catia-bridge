@@ -509,6 +509,79 @@ def engcst2(conn: Any) -> dict[str, Any]:
     return out
 
 
+def engcst3(conn: Any) -> dict[str, Any]:
+    """Which impacteds a connection really takes. Live on R428, connections
+    made from instances reported GetNbImpacteds() = 0, and constraints on
+    planes found by Selection.Search were refused. Here a Rigid connection
+    between the plate and the first bolt is made from each kind of element
+    (occurrences, their representation occurrences, instances, references,
+    with Add and AddWithContext); its impacted count and names are read,
+    and where it holds two, the planes' selection references and values are
+    tried in a parallelism. Every connection made is removed by name."""
+    from catia_mcp.automation import safe_get
+
+    root = conn.root_occurrence()
+    reference = safe_get(root, "ReferenceRootOccurrenceOf")
+    connections = reference.GetItem("CATEngConnections")
+    occurrences = [root.Occurrences.Item(i) for i in range(1, 3)]
+    instances = [o.InstanceOccurrenceOf for o in occurrences]
+    kinds = {
+        "occurrences": lambda: occurrences,
+        "rep occurrences": lambda: [o.RepOccurrences.Item(1) for o in occurrences],
+        "instances": lambda: instances,
+        "references": lambda: [i.ReferenceInstanceOf for i in instances],
+    }
+    selection = conn.app.ActiveEditor.Selection
+    planes: list[Any] = []
+    try:
+        selection.Clear()
+        selection.Search("CATPrtSearch.Plane,all")
+        seen: list[str] = []
+        for k in range(1, int(selection.Count) + 1):
+            item = selection.Item(k)
+            leaf = str(item.LeafProduct.Name)
+            if leaf not in seen:
+                seen.append(leaf)
+                planes.append((leaf, item.Reference, item.Value))
+            if len(planes) == 2:
+                break
+    except Exception as error:
+        planes = []
+        search_error = str(error)
+    else:
+        search_error = None
+    selection.Clear()
+    rows = []
+    for label, build in kinds.items():
+        for how in ("Add", "AddWithContext"):
+            row: dict[str, Any] = {"impacteds": label, "by": how}
+            try:
+                items = build()
+                cnx = connections.Add(10, items) if how == "Add" else \
+                    connections.AddWithContext(10, items, reference, f"Probe {label}")
+            except Exception as error:
+                row["error"] = str(error)
+                rows.append(row)
+                continue
+            name = str(cnx.Name)
+            row["name"] = name
+            row["impacted"] = _safe(lambda c=cnx: int(c.GetNbImpacteds()))
+            if isinstance(row["impacted"], int):
+                row["names"] = [_impacted(cnx, k) for k in range(1, row["impacted"] + 1)]
+            if len(planes) == 2:
+                for what, geometries in (("references", [planes[0][1], planes[1][1]]),
+                                         ("values", [planes[0][2], planes[1][2]])):
+                    try:
+                        cst = cnx.AssemblyConstraints.Add(41, geometries)
+                        row[f"parallel {what}"] = _explore(cst)
+                    except Exception as error:
+                        row[f"parallel {what}"] = str(error)
+            row["removed"] = _safe(lambda n=name: connections.Remove(n) or True)
+            rows.append(row)
+    return {"planes": [p[0] for p in planes], "search_error": search_error, "tries": rows,
+            "count_after": _safe(lambda: int(connections.Count))}
+
+
 def create(conn: Any, plan: Any) -> dict[str, Any]:
     """A published plane in the first part and a Fix on the first instance,
     both removed again."""
@@ -632,6 +705,9 @@ def main() -> int:
     parser.add_argument("--window", default=None,
                         help="the name of the imported product's window to activate first, "
                              "as CATIA's Window menu shows it (e.g. 'Bracket A:4')")
+    parser.add_argument("--engcst3", action="store_true",
+                        help="make Rigid connections from each kind of element, read their "
+                             "impacteds, try a parallelism (all removed again by name)")
     parser.add_argument("--engcst2", action="store_true",
                         help="read how connections name their impacteds and try constraints "
                              "on planes found by Selection.Search (removed again by name)")
@@ -671,6 +747,8 @@ def main() -> int:
         steps.append(("engcst", lambda: engcst(conn)))
     if args.engcst2:
         steps.append(("engcst2", lambda: engcst2(conn)))
+    if args.engcst3:
+        steps.append(("engcst3", lambda: engcst3(conn)))
     if args.create:
         steps.append(("create", lambda: create(conn, plan)))
     if args.apply and plan is not None:
