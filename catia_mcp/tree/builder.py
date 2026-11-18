@@ -72,6 +72,7 @@ from catia_mcp.tools.part_design import (
     _sketch_v_direction,
 )
 from catia_mcp.tree.constraints import plan as constraint_plan
+from catia_mcp.tree.datums import Datums
 from catia_mcp.tree.dressup import DressUpFailed, DressUps
 from catia_mcp.tree.extrude import TaperPlan, extrude_vector, oblique_expectation, taper_plan
 from catia_mcp.tree.geometry import (
@@ -104,6 +105,7 @@ from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect
 from catia_mcp.tree.placement import place_part, placement_transform
 from catia_mcp.tree.preflight import SUPPORTED, check
 from catia_mcp.tree.step_source import StepSource
+from catia_mcp.tree.surface_builder import SurfaceFeatures
 from catia_mcp.tree.sweep import path_sketch, sweep_expectation
 
 # Origin planes and the sketch frame CATIA gives them (H, V; normal = H x V).
@@ -224,6 +226,10 @@ class PartRecord:
     # Rebuilt inside an imported product's part: the imported solid's volume.
     imported_volume_mm3: float | None = None
     import_note: str = ""
+    # The named planes, axes and points made for the part (datums.py).
+    construction: list[dict[str, Any]] = field(default_factory=list)
+    # The surfaces made for the part, with their areas (surface_builder.py).
+    surfaces: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _parallel(a: Vec, b: Vec) -> float:
@@ -241,7 +247,7 @@ class HumanMismatch(BuildFailed):
         self.items = items
 
 
-class TreeBuilder:
+class TreeBuilder(SurfaceFeatures):
     def __init__(self, conn: CATIAConnection, plm_type: str = "3DShape",
                  deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None,
                  ownership: str | None = None, step_dir: str | None = None,
@@ -327,6 +333,7 @@ class TreeBuilder:
         # build123d's bodies after each feature, for the human style's checks.
         snapshots = (expected or {}).get("features") if self.style == "human" else None
         self.snapshots: dict[str, dict[str, Any]] = snapshots or {}
+        self.expected_part = expected or {}  # surfaces and solids from surfaces
         self.expected_bodies: dict[str, dict[str, Any]] = {}
         record.style = "human" if self.snapshots else "exact"
         self.plan = ParameterPlan()
@@ -351,6 +358,8 @@ class TreeBuilder:
                 self.documents._new_part(record.name, "auto")
             self.part = self.conn.get_active_part()
         record.catia_name = str(self.part.Name)
+        self._datums = Datums(self)
+        record.construction = self._datums.rows
         if not self.conn.is_3dx:  # the assembler places V5 part documents
             with contextlib.suppress(Exception):
                 self.part_documents[part["id"]] = self.part.Parent
@@ -392,6 +401,7 @@ class TreeBuilder:
         record.volume_mm3 = round(sum(self._volume(body) for body in final), 4)
         if self.style == "human" and self.plan:
             self._parametrize(record, final)
+        self.datums.finish(record)
 
     def _check_part_volume(self, record: PartRecord) -> None:
         want, got = record.expected_volume_mm3, record.volume_mm3
@@ -1146,12 +1156,7 @@ class TreeBuilder:
             self._delete(made.pop())
 
     def _line_reference(self, origin: Vec, direction: Vec) -> Any:
-        points = [self._construction_point(point)
-                  for point in (origin, add(origin, scale(unit(direction), 100.0)))]
-        line = self.part.HybridShapeFactory.AddNewLinePtPt(*points)
-        self._construction_set().AppendHybridShape(line)
-        self.part.UpdateObject(line)
-        return self.part.CreateReferenceFromObject(line)
+        return self.datums.line(origin, direction)
 
     def _new_body(self, use_main: bool) -> Any:
         if use_main and not self.main_body_used:
@@ -1214,17 +1219,14 @@ class TreeBuilder:
         want_volume, want_cog = oblique_expectation(frame, area, centroid, vector, symmetric)
         catia_sketch, _, _ = self._draw(body, sketch, frame)
         start = frame.world(*centroid)
-        line = self.part.HybridShapeFactory.AddNewLinePtPt(
-            self._construction_point(start), self._construction_point(add(start, vector)))
-        self._construction_set().AppendHybridShape(line)
+        line = self.datums.line(start, vector, "Direction")
         part = self.part
-        part.UpdateObject(line)
         _force_solid_inwork(part, catia_sketch)
         part.InWorkObject = body
         length, height = math.sqrt(dot(vector, vector)), abs(dot(vector, frame.normal))
         pad = part.ShapeFactory.AddNewPad(catia_sketch, length)
         entry["catia"].append(str(pad.Name))
-        pad.SetDirection(part.CreateReferenceFromObject(line))
+        pad.SetDirection(line)
         if symmetric and not _set_prop(pad, "IsSymmetric", True):
             raise BuildFailed(f"CATIA refused the symmetric extent of '{pad.Name}'")
         part.UpdateObject(pad)
@@ -1412,12 +1414,15 @@ class TreeBuilder:
         self.part.Update()
 
     def _construction_point(self, point: Vec) -> Any:
-        """A reference to a 3D point in the construction set."""
-        part = self.part
-        created = part.HybridShapeFactory.AddNewPointCoord(*point)
-        self._construction_set().AppendHybridShape(created)
-        part.UpdateObject(created)
-        return part.CreateReferenceFromObject(created)
+        """A reference to a 3D point in the construction set (one per place)."""
+        return self.datums.point(point)
+
+    @property
+    def datums(self) -> Datums:
+        """The part's construction elements (catia_mcp/tree/datums.py)."""
+        if getattr(self, "_datums", None) is None or self._datums.part is not self.part:
+            self._datums = Datums(self)
+        return self._datums
 
     def _axis_reference(self, catia_sketch: Any, catia_frame, axis_origin: Vec,
                         axis_direction: Vec) -> Any:
@@ -1431,12 +1436,7 @@ class TreeBuilder:
             return part.CreateReferenceFromObject(_sketch_v_direction(catia_sketch))
         if through_origin and _parallel(axis_direction, h):
             return part.CreateReferenceFromObject(_sketch_h_direction(catia_sketch))
-        points = [self._construction_point(point)
-                  for point in (axis_origin, add(axis_origin, scale(axis_direction, 100.0)))]
-        line = part.HybridShapeFactory.AddNewLinePtPt(*points)
-        self._construction_set().AppendHybridShape(line)
-        part.UpdateObject(line)
-        return part.CreateReferenceFromObject(line)
+        return self.datums.line(axis_origin, axis_direction)
 
     def _mirror_into(self, body: Any, plane: dict[str, Any], entry: dict[str, Any]) -> None:
         frame = _plane_frame(plane)
@@ -1505,29 +1505,12 @@ class TreeBuilder:
         geoset.Name = CONSTRUCTION_SET
         return geoset
 
-    def _support(self, frame: Frame) -> tuple[Any, tuple[Vec, Vec, Vec] | None]:
+    def _support(self, frame: Frame, sketch: dict[str, Any] | None = None
+                 ) -> tuple[Any, tuple[Vec, Vec, Vec] | None]:
         """A plane reference for the sketch, with the sketch frame CATIA is
-        known to give it (None when it must be read back)."""
-        part = self.part
-        origin = part.OriginElements
-        for attr, (h, v) in ORIGIN_PLANES.items():
-            normal = cross(h, v)
-            if not _parallel(frame.normal, normal):
-                continue
-            plane = getattr(origin, attr)
-            offset = dot(frame.origin, normal)
-            if abs(offset) < EPS:
-                return part.CreateReferenceFromObject(plane), ((0.0, 0.0, 0.0), h, v)
-            offset_plane = part.HybridShapeFactory.AddNewPlaneOffset(
-                part.CreateReferenceFromObject(plane), offset, False)
-            self._construction_set().AppendHybridShape(offset_plane)
-            part.UpdateObject(offset_plane)
-            return part.CreateReferenceFromObject(offset_plane), None
-        a, b, c = frame.normal
-        plane = part.HybridShapeFactory.AddNewPlaneEquation(a, b, c, dot(frame.normal, frame.origin))
-        self._construction_set().AppendHybridShape(plane)
-        part.UpdateObject(plane)
-        return part.CreateReferenceFromObject(plane), None
+        known to give it (None when it must be read back): an origin plane,
+        or a named plane made once per distinct plane (datums.py)."""
+        return self.datums.plane(frame, sketch)
 
     def _sketch_frame(self, sketch: Any, known) -> tuple[Vec, Vec, Vec]:
         if known is not None:
@@ -1549,9 +1532,17 @@ class TreeBuilder:
         connected and the shapes catia_mcp.tree.constraints recognises are
         constrained as a designer would (catia_mcp/tree/constraints.py)."""
         connect = connect or constrain
-        ref, known = self._support(frame)
-        catia_sketch = body.Sketches.Add(ref)
-        origin, h, v = self._sketch_frame(catia_sketch, known)
+        for _ in range(3):
+            # An angle plane is confirmed by the frame of the first sketch on
+            # it; if CATIA turned it the other way it is changed, and the
+            # sketch made again (datums.py).
+            ref, known = self._support(frame, sketch)
+            catia_sketch = body.Sketches.Add(ref)
+            origin, h, v = self._sketch_frame(catia_sketch, known)
+            if known is not None or self.datums.check(frame, (origin, h, v)):
+                break
+            self._delete(catia_sketch)
+            self.datums.retry(frame)
         along = _parallel(cross(h, v), frame.normal)
         if not along:
             raise BuildFailed("the CATIA sketch is not on the tree's sketch plane")

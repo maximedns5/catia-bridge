@@ -25,11 +25,13 @@ from catia_mcp.tree.geometry import (
     scale,
     unit,
 )
+from catia_mcp.tree.surfaces import SURFACE_TYPES
 from catia_mcp.tree.sweep import sweep_expectation
 
 BASIC = "partdesign.basic"
 ADVANCED = "partdesign.advanced"
 WIREFRAME = "gsd.wireframe"
+SURFACE = "gsd.surface"
 MEASURE = "measure"
 # The container every tree part is built in, per platform and content type.
 CONTAINERS = {("v5", None): "part.create", ("3dx", "3DShape"): "plm.create.3dshape",
@@ -103,6 +105,12 @@ def feature_needs(feature: dict[str, Any], sketches: dict[str, dict[str, Any]]) 
         plane = feature.get("neutral_plane") or {}
         if _off_origin(plane["origin"], plane["normal"]):
             needs.add(WIREFRAME)  # the neutral element is a construction plane
+    elif kind in SURFACE_TYPES:
+        # GSD surfaces (catia_mcp/tree/surface_builder.py): their axes, split
+        # planes and loft closing points are construction elements.
+        needs.add(SURFACE)
+        if kind in ("surface", "split_surface"):
+            needs.add(WIREFRAME)
     elif kind == "sweep":
         sketch = sketches.get(feature.get("sketch"))
         needs |= {ADVANCED} | _sketch_needs(sketch)

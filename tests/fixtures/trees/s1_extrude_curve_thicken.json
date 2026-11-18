@@ -1,0 +1,106 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S1/Wall",
+   "name": "Wall",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Curve",
+     "wire": true,
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -20,
+        0
+       ],
+       "end": [
+        0,
+        0
+       ],
+       "id": "c1"
+      },
+      {
+       "type": "arc",
+       "start": [
+        0,
+        0
+       ],
+       "mid": [
+        10,
+        10
+       ],
+       "end": [
+        20,
+        0
+       ],
+       "id": "c2"
+      }
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Extrude1",
+     "op": "extrude",
+     "inputs": [
+      "sketch1"
+     ],
+     "distance": 30,
+     "creates": [
+      "Wall"
+     ],
+     "params": {
+      "distance": {
+       "arg": "amount",
+       "kind": "literal",
+       "value": 30,
+       "factor": 1.0,
+       "slope": 1.0,
+       "intercept": 0.0,
+       "file": "model.py",
+       "line": 4,
+       "col": 4
+      }
+     }
+    },
+    {
+     "type": "thicken",
+     "id": "thicken1",
+     "name": "Thicken1",
+     "inputs": [
+      "Wall"
+     ],
+     "thickness": 2,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

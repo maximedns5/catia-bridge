@@ -104,6 +104,8 @@ def _reference(tree, step_dir=None) -> int:
         cog = ", ".join(f"{c:.4f}" for c in props["cog_mm"])
         print(f"{part_id}: volume {props['volume_mm3']:.4f} mm3, area {props['area_mm2']:.4f} mm2, "
               f"cog ({cog})")
+        for name, surface in (props.get("surfaces") or {}).items():  # docs/surfaces.md
+            print(f"  surface {name}: area {surface['area_mm2']:.4f} mm2")
     return 0
 
 
@@ -243,15 +245,6 @@ def _assemble(conn, worker, builder, plan, report, mates=None) -> None:
                              report["assembly"], log=print), label="the assembly constraints"))
 
 
-def _drawings(conn, worker, tree, builder, report, plan, adopted: bool, args) -> None:
-    """The drawing of every built part and of the product (docs/drafting.md):
-    the report's `drawing` section. A failed drawing leaves the build a success."""
-    from catia_mcp.tree.drawing_builder import make_drawings
-    from catia_mcp.tree.drawing_plan import DrawingOptions
-
-    options = DrawingOptions(projection=args.drawing_projection)
-    report["drawing"] = make_drawings(conn, worker, tree, builder, report, plan, options,
-                                      pdf_dir=args.drawing_pdf, adopted=adopted, log=print)
 def _properties(tree, args, capabilities):
     """The properties step (docs/materials-properties.md), or None when off.
     Parts without a colour take their STEP instance's when --step is given."""
@@ -274,6 +267,15 @@ def _properties(tree, args, capabilities):
         args.checks, status.get("status") in ("verified", "authorized"))
     return PartProperties(args.properties, catalog=args.material_catalog,
                           sheet_dir=args.sheet_dir, knowledge_advisor=advisor)
+def _drawings(conn, worker, tree, builder, report, plan, adopted: bool, args) -> None:
+    """The drawing of every built part and of the product (docs/drafting.md):
+    the report's `drawing` section. A failed drawing leaves the build a success."""
+    from catia_mcp.tree.drawing_builder import make_drawings
+    from catia_mcp.tree.drawing_plan import DrawingOptions
+
+    options = DrawingOptions(projection=args.drawing_projection)
+    report["drawing"] = make_drawings(conn, worker, tree, builder, report, plan, options,
+                                      pdf_dir=args.drawing_pdf, adopted=adopted, log=print)
 
 
 def _build(tree, args) -> int:
@@ -458,19 +460,6 @@ def main(argv: list[str] | None = None) -> int:
                              "rebuilt there with native features, replacing the imported solid")
     parser.add_argument("--step", help="the model's STEP file (same compile as the tree): "
                         "its assembly structure, part frames, names and colours")
-    parser.add_argument("--constraints", default="none", choices=["none", "fix", "infer"],
-                        help="with --assembly: none (default), fix every instance in place, or "
-                             "infer coincidence, contact and offset constraints from the faces "
-                             "(docs/assembly-constraints.md)")
-    parser.add_argument("--ground", help="--constraints infer: the instance id to ground "
-                        "(default: the largest)")
-    parser.add_argument("--drawing", default="none", choices=["none", "auto"],
-                        help="auto: after the build, a drawing of each part (and of the "
-                             "product) with the views, scale and sheet a designer would choose; "
-                             "the report's 'drawing' section (docs/drafting.md)")
-    parser.add_argument("--drawing-projection", default="first", choices=["first", "third"],
-                        help="first angle (ISO E, default) or third angle (ISO A)")
-    parser.add_argument("--drawing-pdf", help="folder to export each drawing to as PDF")
     parser.add_argument("--properties", default="auto", choices=["auto", "on", "off"],
                         help="colour, material and mass, product properties and "
                              "Knowledgeware after each part (docs/materials-properties.md): "
@@ -483,6 +472,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--checks", default="auto", choices=["auto", "on", "off"],
                         help="create the tree's checks (Knowledge Advisor): auto when the "
                              "capability probe found its licence, on, off")
+    parser.add_argument("--drawing", default="none", choices=["none", "auto"],
+                        help="auto: after the build, a drawing of each part (and of the "
+                             "product) with the views, scale and sheet a designer would choose; "
+                             "the report's 'drawing' section (docs/drafting.md)")
+    parser.add_argument("--drawing-projection", default="first", choices=["first", "third"],
+                        help="first angle (ISO E, default) or third angle (ISO A)")
+    parser.add_argument("--drawing-pdf", help="folder to export each drawing to as PDF")
+    parser.add_argument("--constraints", default="none", choices=["none", "fix", "infer"],
+                        help="with --assembly: none (default), fix every instance in place, or "
+                             "infer coincidence, contact and offset constraints from the faces "
+                             "(docs/assembly-constraints.md)")
+    parser.add_argument("--ground", help="--constraints infer: the instance id to ground "
+                        "(default: the largest)")
     parser.add_argument("--no-edit", action="store_true", help="skip the editability check")
     parser.add_argument("--deadline", type=float, default=170.0, help="build budget in seconds")
     parser.add_argument("--report", help="JSON report path (default tree_report.json, "

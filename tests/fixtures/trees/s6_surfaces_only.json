@@ -1,0 +1,129 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S6/Skins",
+   "name": "Skins",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Generatrix",
+     "wire": true,
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       -1,
+       0
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        10,
+        0
+       ],
+       "end": [
+        10,
+        20
+       ],
+       "id": "q1"
+      }
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Quarter",
+     "op": "revolve",
+     "inputs": [
+      "sketch1"
+     ],
+     "axis": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "direction": [
+       0,
+       0,
+       1
+      ]
+     },
+     "angle": 90,
+     "creates": [
+      "Quarter"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Arc",
+     "wire": true,
+     "plane": {
+      "origin": [
+       0,
+       0,
+       20
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "arc",
+       "start": [
+        -10,
+        0
+       ],
+       "mid": [
+        0,
+        10
+       ],
+       "end": [
+        10,
+        0
+       ],
+       "id": "a1"
+      }
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface2",
+     "name": "Vault",
+     "op": "extrude",
+     "inputs": [
+      "sketch2"
+     ],
+     "distance": 8,
+     "symmetric": true,
+     "creates": [
+      "Vault"
+     ]
+    }
+   ],
+   "bodies": []
+  }
+ ]
+}

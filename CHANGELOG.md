@@ -185,6 +185,16 @@ All notable changes to this project are documented here.
   `effects.modified=false` when nothing was touched.
 - `scripts/live_smoke_test.py`: builds and measures a throw-away part on a
   live V5 or 3DEXPERIENCE session and writes a JSON report.
+- **Reference geometry and surfaces** (`docs/surfaces.md`): sketch planes
+  are named elements made once per distinct plane (`Plane Z+20`, angle
+  planes about an axis confirmed by their first sketch, else equation
+  planes), with named axes and points, listed in each part's
+  `construction`; a sketch's `params.offset` / `params.angle` drive them.
+  New optional surface features (`surface` extrude, revolve, loft, sweep,
+  fill, offset; `join_surfaces`, `split_surface`; `thicken` and
+  `close_surface` into bodies) are built as GSD features checked by area
+  against build123d, and Thick / Close Surface solids by volume. Seven
+  new fixtures (`m10_reference_planes`, `s1` to `s6`).
 - Assembly constraints: `--constraints fix|infer` with `--assembly`. The
   inference (`catia_mcp/tree/mates.py`) finds coincidences of axes,
   contacts and offsets between the parts' faces, grounds the largest part

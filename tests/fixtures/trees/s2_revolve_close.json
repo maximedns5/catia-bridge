@@ -1,0 +1,100 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S2/Cup",
+   "name": "Cup",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Profile",
+     "wire": true,
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       -1,
+       0
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        0,
+        0
+       ],
+       "end": [
+        15,
+        0
+       ],
+       "id": "p1"
+      },
+      {
+       "type": "line",
+       "start": [
+        15,
+        0
+       ],
+       "end": [
+        15,
+        25
+       ],
+       "id": "p2"
+      }
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Revolve1",
+     "op": "revolve",
+     "inputs": [
+      "sketch1"
+     ],
+     "axis": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "direction": [
+       0,
+       0,
+       1
+      ]
+     },
+     "angle": 360,
+     "creates": [
+      "Cup"
+     ]
+    },
+    {
+     "type": "close_surface",
+     "id": "close1",
+     "name": "Close1",
+     "inputs": [
+      "Cup"
+     ],
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

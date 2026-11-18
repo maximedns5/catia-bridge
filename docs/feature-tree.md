@@ -39,7 +39,7 @@ tree carries them: see [materials-properties.md](materials-properties.md).
 
 | Tree feature | CATIA |
 |--------------|-------|
-| `sketch` (`line`, `circle`, 3-point `arc`, `spline`) | A sketch on the origin plane, or on an offset or equation plane in a `Tree_Construction` geometrical set. Splines: see [Spline sketch entities](#spline-sketch-entities) |
+| `sketch` (`line`, `circle`, 3-point `arc`, `spline`) | A sketch on the origin plane, or on a named offset, angle or equation plane in a `Tree_Construction` geometrical set, one per distinct plane ([surfaces.md](surfaces.md)). Splines: see [Spline sketch entities](#spline-sketch-entities) |
 | `extrude` `new_body` | Pad in the part's main body, then in new bodies |
 | `extrude` `join` / `cut` / `intersect` | Pad in a tool body, then Add / Remove / Intersect into the target |
 | `extrude` with `taper` (degrees, build123d's sign: positive narrows the solid), one-sided or symmetric, along the normal or a `direction` | One Multi-sections Solid per loop, from the loop to its 2D offset, as build123d builds it: inner loops get the opposite offset (holes widen when the outer loop shrinks) and are removed, the pieces are joined |
@@ -61,6 +61,9 @@ tree carries them: see [materials-properties.md](materials-properties.md).
 | `shell` with no removed face (build123d's `offset` without openings): `Kind.INTERSECTION` either way, `Kind.ARC` inward | One Thickness (`AddNewThickness`, then `AddFaceToThicken`) on every face of the body: each face moved, its neighbours re-intersected. The sign CATIA gives the offset is not documented: a Thickness that moves the volume the wrong way is deleted and made again with the other sign (live on R428 the tree's sign was right: 2 mm inward and 1 mm outward, both exact) |
 | `shell` with at least one removed face, inside or outside, `Kind.ARC` or `Kind.INTERSECTION` | One Shell (`AddNewShell`, then `AddFaceToRemove`), the thickness inside (`thickness` < 0) or outside |
 | `draft`, `extrude` with `until`, `hole` with `thread` or a V `bottom`, `loft` to a point | See [part-design.md](part-design.md): a Draft, a Pad or Pocket up to next / last / a plane / a face, a tapped Hole, a Multi-sections Solid to a point. Not validated live yet |
+
+Surface features (`surface`, `join_surfaces`, `split_surface`, `thicken`,
+`close_surface`) are in [surfaces.md](surfaces.md).
 
 Live on R428 (French), each on its first try and exact in volume: a body
 copied once turned 90° (pasted as a result with its link, then a Rotate)
