@@ -186,6 +186,17 @@ of element (occurrences, representation occurrences, instances,
 references; `Add` and `AddWithContext`) and reads which one registers its
 impacteds before trying the constraint again.
 
+Sixth live probe (`--engcst3`), and the conclusion for R428: a connection
+made from occurrences, representation occurrences, instances or references,
+with `Add` or `AddWithContext`, never registers its impacteds
+(`GetNbImpacteds()` = 0), and `AssemblyConstraints.Add` then refuses every
+geometry tried. Through COM on 3DEXPERIENCE R428 (student role) engineering
+connections can be created and removed (by name) but not given impacteds or
+constraints. `--constraints infer` therefore leaves the imported product as
+it is on 3DEXPERIENCE (every part exactly where the STEP file puts it) and
+says so; the constraints a designer would add are listed in the report's
+`mates` for doing by hand. On V5 the constraint route stands as built.
+
 The next probe creates a Fix, a Rigid and a Cylindrical connection (on
 instances, else occurrences), describes each and the objects it holds (its
 constraints collection), and removes it.
