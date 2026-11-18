@@ -269,7 +269,9 @@ run from a machine where CATIA V5 is installed.
 `python -m catia_mcp.tree build MODEL.tree.json --assembly product --step
 MODEL.step` builds each part once, in its own frame, and places every instance
 in a CATIA V5 product, a part used twice being one CATPart placed twice
-([docs/assemblies.md](docs/assemblies.md)).
+([docs/assemblies.md](docs/assemblies.md)). `--constraints infer` grounds one
+part and positions the others by coincidence, contact and offset constraints
+inferred from their faces ([docs/assembly-constraints.md](docs/assembly-constraints.md)).
 
 ### Drawings
 

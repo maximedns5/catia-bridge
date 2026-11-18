@@ -41,6 +41,9 @@ class Instance:
     color: tuple[float, float, float] | None
     volume_mm3: float
     cog_own_mm: tuple[float, float, float]  # in the part's own frame
+    # The prototype's OCP shape, in its own frame (assembly constraints read
+    # its faces: catia_mcp/tree/mates.py).
+    shape: Any = field(default=None, repr=False, compare=False)
 
     @property
     def cog_world_mm(self) -> tuple[float, float, float]:
@@ -161,10 +164,11 @@ def read(path: str) -> Structure:
                 walk(referred, child_id, placed)
                 continue
             key = prototypes.setdefault(referred.Tag(), f"p{len(prototypes) + 1}")
-            volume, cog = mass(Tool.GetShape_s(referred))
+            shape = Tool.GetShape_s(referred)
+            volume, cog = mass(shape)
             structure.instances.append(Instance(
                 child_id, label_name, name(instance) or label_name, node_id, key, rows(local),
-                rows(placed), color(instance) or color(referred), volume, cog))
+                rows(placed), color(instance) or color(referred), volume, cog, shape))
 
     walk(top, root.id, TopLoc_Location())
     return structure
