@@ -277,6 +277,15 @@ in a CATIA V5 product, a part used twice being one CATPart placed twice
 the views, sheet and scale a designer would choose, generated dimensions,
 hole callouts, title block, bill of materials and balloons
 ([docs/drafting.md](docs/drafting.md)).
+What the tree replay covers of Part Design, feature by feature, is in
+[docs/part-design.md](docs/part-design.md).
+### Materials and properties
+
+After each part, the tree build can apply its colour, its material (checking
+the mass CATIA measures against volume x density), the product properties
+the bill of materials reads, and its parameters in a parameter set with a
+design table for its variants
+([docs/materials-properties.md](docs/materials-properties.md)).
 
 ### Remote use: agent on a Mac or another machine
 

@@ -71,6 +71,9 @@ def feature_needs(feature: dict[str, Any], sketches: dict[str, dict[str, Any]]) 
     needs = {BASIC}
     if kind == "extrude":
         needs |= _sketch_needs(sketches.get(feature.get("sketch")))
+        limit = feature.get("until_plane") if feature.get("until") == "plane" else None
+        if limit and _off_origin(limit["origin"], limit["normal"]):
+            needs.add(WIREFRAME)  # a construction plane to stop at
     elif kind == "revolve":
         needs |= _sketch_needs(sketches.get(feature.get("sketch")))
         if WIREFRAME not in needs:
@@ -94,7 +97,12 @@ def feature_needs(feature: dict[str, Any], sketches: dict[str, dict[str, Any]]) 
         # Closing points are construction points.
         needs |= {ADVANCED, WIREFRAME}
         for name in feature.get("sections") or []:
-            needs |= _sketch_needs(sketches.get(name))
+            if isinstance(name, str):  # a point section is a construction point
+                needs |= _sketch_needs(sketches.get(name))
+    elif kind == "draft":
+        plane = feature.get("neutral_plane") or {}
+        if _off_origin(plane["origin"], plane["normal"]):
+            needs.add(WIREFRAME)  # the neutral element is a construction plane
     elif kind == "sweep":
         sketch = sketches.get(feature.get("sketch"))
         needs |= {ADVANCED} | _sketch_needs(sketch)

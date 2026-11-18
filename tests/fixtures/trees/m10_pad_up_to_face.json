@@ -1,0 +1,405 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/M10/PadUpToFace",
+   "name": "PadUpToFace",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30,
+        -20
+       ],
+       "end": [
+        30,
+        -20
+       ],
+       "id": "sketch1e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        -20
+       ],
+       "end": [
+        30,
+        20
+       ],
+       "id": "sketch1e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        20
+       ],
+       "end": [
+        -30,
+        20
+       ],
+       "id": "sketch1e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -30,
+        20
+       ],
+       "end": [
+        -30,
+        -20
+       ],
+       "id": "sketch1e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch1e1",
+        "sketch1e2",
+        "sketch1e3",
+        "sketch1e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 5,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Sketch2",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        25,
+        -20
+       ],
+       "end": [
+        30,
+        -20
+       ],
+       "id": "sketch2e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        -20
+       ],
+       "end": [
+        30,
+        20
+       ],
+       "id": "sketch2e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        20
+       ],
+       "end": [
+        25,
+        20
+       ],
+       "id": "sketch2e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        25,
+        20
+       ],
+       "end": [
+        25,
+        -20
+       ],
+       "id": "sketch2e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch2e1",
+        "sketch2e2",
+        "sketch2e3",
+        "sketch2e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude2",
+     "name": "Extrude2",
+     "sketch": "sketch2",
+     "distance": 30,
+     "operation": "join",
+     "bodies": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch3",
+     "name": "Sketch3",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       25
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30,
+        -20
+       ],
+       "end": [
+        30,
+        -20
+       ],
+       "id": "sketch3e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        -20
+       ],
+       "end": [
+        30,
+        20
+       ],
+       "id": "sketch3e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        30,
+        20
+       ],
+       "end": [
+        -30,
+        20
+       ],
+       "id": "sketch3e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -30,
+        20
+       ],
+       "end": [
+        -30,
+        -20
+       ],
+       "id": "sketch3e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch3e1",
+        "sketch3e2",
+        "sketch3e3",
+        "sketch3e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude3",
+     "name": "Extrude3",
+     "sketch": "sketch3",
+     "distance": 5,
+     "operation": "join",
+     "bodies": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch4",
+     "name": "Sketch4",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       5
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -20,
+        -10
+       ],
+       "end": [
+        0,
+        -10
+       ],
+       "id": "sketch4e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        0,
+        -10
+       ],
+       "end": [
+        0,
+        10
+       ],
+       "id": "sketch4e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        0,
+        10
+       ],
+       "end": [
+        -20,
+        10
+       ],
+       "id": "sketch4e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -20,
+        10
+       ],
+       "end": [
+        -20,
+        -10
+       ],
+       "id": "sketch4e4"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch4e1",
+        "sketch4e2",
+        "sketch4e3",
+        "sketch4e4"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude4",
+     "name": "Extrude4",
+     "sketch": "sketch4",
+     "until": "face",
+     "until_face": {
+      "type": "face",
+      "geometry": "plane",
+      "point": [
+       -2.5,
+       0,
+       25
+      ],
+      "normal": [
+       0,
+       0,
+       -1
+      ],
+      "area": 2200.0
+     },
+     "operation": "join",
+     "bodies": [
+      "Body1"
+     ]
+    }
+   ]
+  }
+ ]
+}
