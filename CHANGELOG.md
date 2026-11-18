@@ -185,6 +185,19 @@ All notable changes to this project are documented here.
   `effects.modified=false` when nothing was touched.
 - `scripts/live_smoke_test.py`: builds and measures a throw-away part on a
   live V5 or 3DEXPERIENCE session and writes a JSON report.
+- **Materials and properties** (`--properties`, docs/materials-properties.md):
+  after each part, its colour (on its bodies, read back; per feature too),
+  its material (V5 catalog or a new material, the tree's density; else
+  `Material` / `Density` / `Mass` parameters) with the measured mass checked
+  against volume x density, the product properties for the BOM (V5 product
+  fields and user properties; 3DEXPERIENCE PLM attributes, the rest as
+  parameters), typed parameters with comments in a parameter set named for
+  the part, a design table for the tree's configurations (each one built
+  and measured, then restored), and checks from bounds when Knowledge
+  Advisor is licensed. New optional tree fields `color`, `material`,
+  `properties`, `parameters`, `configurations`, `checks`. Every step is
+  recorded per route and never fails the part. `scripts/probe_properties.py`
+  probes each route live.
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart

@@ -271,6 +271,14 @@ MODEL.step` builds each part once, in its own frame, and places every instance
 in a CATIA V5 product, a part used twice being one CATPart placed twice
 ([docs/assemblies.md](docs/assemblies.md)).
 
+### Materials and properties
+
+After each part, the tree build can apply its colour, its material (checking
+the mass CATIA measures against volume x density), the product properties
+the bill of materials reads, and its parameters in a parameter set with a
+design table for its variants
+([docs/materials-properties.md](docs/materials-properties.md)).
+
 ### Remote use: agent on a Mac or another machine
 
 CATIA only runs on Windows, but the agent does not have to. Start the server
