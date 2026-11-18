@@ -160,25 +160,25 @@ ok, checks skipped`.
 
 ## Coverage
 
-Status: offline-tested against fakes (`tests/test_properties.py`); nothing
-here is validated live yet. `scripts/probe_properties.py` records each route
-on a live session.
+Status: offline-tested against fakes (`tests/test_properties.py`) and run
+live on 3DEXPERIENCE R428 (student role) with `p1_properties_plate` and
+`scripts/probe_properties.py`; CATIA V5 only against the fakes.
 
 | Area | CATIA V5 | 3DEXPERIENCE | Status |
 |---|---|---|---|
-| Appearance (colour) | Body, part and feature colours by `SetRealColor`, read back | Same calls on the editor's selection | Implemented, to validate live |
-| Materials | Catalog, else a new material document; density from the tree | Core Material search + manager (undocumented); else parameters | V5 implemented; 3DX probed, fallback by default |
-| Mass properties | Inertia mass vs volume x density | Same (InertiaService); with the fallback, a `Mass` parameter | Implemented |
-| Properties / attributes | PartNumber, Revision, Definition, Nomenclature, DescriptionRef, Source, user properties | V_Name, V_description, PLM_ExternalID; the rest as string parameters | Implemented |
-| Parameters | Parameter set named for the part, six types, comments | Same | Implemented (`CreateDimension` is live on R428 in the part's root; sets and the other types to validate) |
-| Formulas | Script parameters (feature-tree.md); `Mass = smartVolume * Density` | Same | Script formulas live on R428; the mass formula to validate |
-| Design tables | From a sheet the bridge writes, every configuration tried and restored | Same call, if the role allows it | Implemented, to validate live |
-| Rules | Not from the tree (it carries data, not rule text); the probe tries one with `--kwa` | Same | Probe only |
-| Checks | From bounds, Knowledge Advisor licence required | Same | Implemented behind `--checks` |
+| Appearance (colour) | Body, part and feature colours by `SetRealColor`, read back | Same calls on the editor's selection | Live on R428: body and feature colours set and read back (a part-level colour reads back black) |
+| Materials | Catalog, else a new material document; density from the tree | Core Material search + manager (undocumented); else parameters | V5 implemented (fake-tested). Live on R428 no material service is reachable and the Core Material search finds none: kept as parameters |
+| Mass properties | Inertia mass vs volume x density | Same (InertiaService); with the fallback, a `Mass` parameter | Live on R428: `Mass` = 0.149 kg by formula; the inertia uses CATIA's default density (7770 kg/m3) without a material |
+| Properties / attributes | PartNumber, Revision, Definition, Nomenclature, DescriptionRef, Source, user properties | V_Name, V_description, PLM_ExternalID; the rest as string parameters | Live on R428: `V_Name`, `V_description`, `PLM_ExternalID` set; revision and usage refused, kept as string parameters |
+| Parameters | Parameter set named for the part, six types, comments | Same | Live on R428: a set named for the part, six types with comments, read back |
+| Formulas | Script parameters (feature-tree.md); `Mass = smartVolume * Density` | Same | Live on R428, the mass formula included |
+| Design tables | From a sheet the bridge writes, every configuration tried and restored | Same call, if the role allows it | V5 implemented (fake-tested). Live on R428 all three `Relations` routes answer E_NOTIMPL: reported `unavailable`, the sheet left for a manual import |
+| Rules | Not from the tree (it carries data, not rule text); the probe tries one with `--kwa` | Same | Probe only; no Knowledge Advisor licence on R428 |
+| Checks | From bounds, Knowledge Advisor licence required | Same | Implemented behind `--checks`; skipped live (no Knowledge Advisor licence) |
 | Reactions | Not created; the probe reads whether `Relations` exposes a creator | Same | Probe only |
 | Knowledge patterns | Not created (Knowledge Advisor, and code-like) | Same | Not done |
 | Catalogs | Material catalogs read; no catalog documents written | PLM libraries not used | Read only |
-| Publications | The probe tries `Publications.Add` / `SetDirect` on the product | The probe reads `Part.Publications` | Probe only |
+| Publications | The probe tries `Publications.Add` / `SetDirect` on the product | The probe reads `Part.Publications` | Live on R428: none on the Part; a part reference's `Publications` only reads |
 
 ## Live probe
 
