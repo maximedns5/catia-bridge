@@ -124,6 +124,13 @@ solid was replaced by the native body. 2.3 s in all.
 put (fix, coincidence of axes, contact, offset), inferred from the faces,
 without moving any instance: see [assembly-constraints.md](assembly-constraints.md).
 
+## Clashes
+
+`--clashes offline|catia` checks every pair of instances for interferences,
+contacts and, with `--clearance MM`, clearances, offline from the STEP
+shapes (the default when OCP is installed) and on V5 also with DMU Space
+Analysis: see [clashes.md](clashes.md). A clash is reported, never fatal.
+
 ## What the app could send
 
 The STEP of the same compile is enough today. A tree that said it itself

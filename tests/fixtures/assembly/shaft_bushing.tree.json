@@ -1,0 +1,256 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/ShaftBushing/Bushing",
+   "name": "Bushing",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -15,
+        -15
+       ],
+       "end": [
+        15,
+        -15
+       ],
+       "id": "e1"
+      },
+      {
+       "type": "line",
+       "start": [
+        15,
+        -15
+       ],
+       "end": [
+        15,
+        15
+       ],
+       "id": "e2"
+      },
+      {
+       "type": "line",
+       "start": [
+        15,
+        15
+       ],
+       "end": [
+        -15,
+        15
+       ],
+       "id": "e3"
+      },
+      {
+       "type": "line",
+       "start": [
+        -15,
+        15
+       ],
+       "end": [
+        -15,
+        -15
+       ],
+       "id": "e4"
+      },
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 5,
+       "id": "c1"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "e1",
+        "e2",
+        "e3",
+        "e4"
+       ],
+       "inner": [
+        [
+         "c1"
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 20,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "/ShaftBushing/Shaft",
+   "name": "Shaft",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       -10
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 4.8,
+       "id": "c1"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "c1"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 40,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "/ShaftBushing/Collar",
+   "name": "Collar",
+   "bodies": [
+    "Body1"
+   ],
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Sketch1",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       20
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 8,
+       "id": "c1"
+      },
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 4.8,
+       "id": "c2"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "c1"
+       ],
+       "inner": [
+        [
+         "c2"
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 5,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ]
+  }
+ ]
+}

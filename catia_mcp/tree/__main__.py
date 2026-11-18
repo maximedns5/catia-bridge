@@ -5,6 +5,7 @@
     python -m catia_mcp.tree build TREE.json --plm-type 3DShape
     python -m catia_mcp.tree capabilities [--create] [--risky 3dpart]
     python -m catia_mcp.tree mates TREE.json --step MODEL.step   assembly constraints, no CATIA
+    python -m catia_mcp.tree clashes TREE.json --step MODEL.step [--clearance MM]   no CATIA
 
 build attaches to a running CATIA (it never starts one), builds every part in
 a new part, compares each part's volume with build123d's when build123d is
@@ -16,6 +17,8 @@ the build ends it with a report naming the part, the feature and the dialog's
 text. --part and --until build a prefix of one part, for development.
 --drawing auto then makes the drawing of each part and of the product
 (docs/drafting.md).
+--clashes offline|catia checks every pair of instances of an assembly for
+interferences, contacts and clearances (docs/clashes.md).
 --step-dir DIR lets STEP files stand in for features with no native rule
 (CATIA V5 only; see docs/step.md).
 
@@ -213,9 +216,10 @@ def _constrain(report, apply, mate_plan=None) -> None:
         print(f"Constraints not applied: {error}")
 
 
-def _assemble(conn, worker, builder, plan, report, mates=None) -> None:
+def _assemble(conn, worker, builder, plan, report, mates=None):
     """Place the built parts in a product (V5); on failure the parts stay
-    built and the report says why."""
+    built and the report says why. Returns the assembler (None on
+    3DEXPERIENCE)."""
     from catia_mcp.tree.assembler import AssemblerV5
 
     if conn.is_3dx:
@@ -224,7 +228,7 @@ def _assemble(conn, worker, builder, plan, report, mates=None) -> None:
             "note": "3DEXPERIENCE: the parts are built in their own frames; a scripted "
                     "Physical Product needs licences most roles lack (see "
                     "scripts/probe_assembly.py). Import the model's STEP to get the product."}
-        return
+        return None
     assembler = AssemblerV5(conn.app, log=print)
     try:
         report["assembly"] = worker.run_guarded(
@@ -236,13 +240,14 @@ def _assemble(conn, worker, builder, plan, report, mates=None) -> None:
         report["success"] = False
         report["error"] = {"part": None, "feature": "assembly", "message": str(error),
                            "note": "The parts are built; the product may be partial."}
-        return
+        return assembler
     if mates is not None:
         from catia_mcp.tree.assembly_constraints import apply_v5
 
         _constrain(report, lambda: worker.run_guarded(
             lambda: apply_v5(conn.app, assembler, plan, *mates, builder.part_documents,
                              report["assembly"], log=print), label="the assembly constraints"))
+    return assembler
 
 
 def _properties(tree, args, capabilities):
@@ -278,6 +283,36 @@ def _drawings(conn, worker, tree, builder, report, plan, adopted: bool, args) ->
                                       pdf_dir=args.drawing_pdf, adopted=adopted, log=print)
 
 
+def _clash_mode(plan, args) -> str:
+    """--clashes, its default resolved: offline when an assembly is built and
+    OCP is there, else none."""
+    from catia_mcp.tree.clashes import available
+
+    if plan is None:
+        if args.clashes not in (None, "none"):
+            print("--clashes needs --assembly product or adopt: no clash analysis")
+        return "none"
+    if args.clashes is None:
+        return "offline" if available() else "none"
+    return args.clashes
+
+
+def _offline_clashes(plan, args, mode: str):
+    """The offline clash analysis (docs/clashes.md), before CATIA is touched;
+    a failure is reported, never fatal."""
+    if mode == "none":
+        return None
+    from catia_mcp.tree import clashes
+
+    try:
+        result = clashes.offline(plan, args.step, args.clearance)
+    except Exception as error:  # no OCP, an unreadable shape: reported
+        print(f"Clash analysis failed: {error}")
+        return {"ok": False, "method": "offline", "error": str(error)}
+    print(f"Clashes: {clashes.summary(result)}")
+    return result
+
+
 def _build(tree, args) -> int:
     from catia_mcp.com_guard import ComWorker
     from catia_mcp.connection import CATIAConnection
@@ -295,6 +330,8 @@ def _build(tree, args) -> int:
         print(plan.summary())
         tree = plan.tree  # one part per prototype, in its own frame
     mates = _mates(plan, args)
+    clash_mode = _clash_mode(plan, args)
+    clashes = _offline_clashes(plan, args, clash_mode)
     try:
         expected = _expected(tree, args.expect, args.step_dir)
     except Exception as error:
@@ -330,7 +367,7 @@ def _build(tree, args) -> int:
     builder = TreeBuilder(conn, plm_type=args.plm_type, deadline_s=args.deadline, log=print,
                           ownership=args.ownership, step_dir=args.step_dir, style=args.style)
     builder.properties = _properties(tree, args, capabilities)
-    adopted = None
+    adopted = assembler = None
     if args.assembly == "adopt":
         adopted = _adopt(conn, worker, plan, builder)
         if adopted is None:
@@ -357,9 +394,11 @@ def _build(tree, args) -> int:
                 lambda: apply_3dx(conn, plan, *mates, leaves, builder.targets, references,
                                   log=print), label="the assembly constraints"), mates[0])
     elif plan is not None and report.get("success"):
-        _assemble(conn, worker, builder, plan, report, mates)
+        assembler = _assemble(conn, worker, builder, plan, report, mates)
     if args.drawing == "auto" and report.get("success"):
         _drawings(conn, worker, tree, builder, report, plan, adopted is not None, args)
+    if clashes is not None:  # last: the CATIA clash may meet a licence dialog
+        _report_clashes(conn, worker, plan, report, clashes, clash_mode, assembler, args)
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
     for part in report["parts_detail"]:
@@ -380,6 +419,48 @@ def _build(tree, args) -> int:
     print(f"FAILED at {error['part']} / {error['feature']}: {error['message']}\n{error['note']}")
     print(f"Report: {args.report}")
     return 1
+
+
+def _report_clashes(conn, worker, plan, report, result, mode, assembler, args) -> None:
+    """report["assembly"]["clashes"]: the offline analysis and, with
+    --clashes catia, CATIA's own, compared. A clash never fails the build."""
+    from catia_mcp.tree.clashes import catia_route
+
+    assembly = report.get("assembly") or {}
+    if mode == "catia" and "error" not in result:
+        product = getattr(assembler, "root", None) if assembly.get("ok") else None
+        result["catia"] = catia_route(conn, worker, product, assembly, result, args.clearance,
+                                      log=print)
+        print(f"CATIA clash: {result['catia'].get('status')}"
+              f"{': ' + str(result['catia'].get('reason')) if result['catia'].get('reason') else ''}")
+    report.setdefault("assembly", {"ok": False, "product": plan.root.name})["clashes"] = result
+
+
+def _clashes_command(tree, args) -> int:
+    """The clash analysis of the assembly, without CATIA."""
+    from catia_mcp.tree import clashes
+
+    if not clashes.available():
+        print("The clash analysis needs OCP: pip install -e \".[differential]\"")
+        return 2
+    plan = _assembly_plan(tree, args)
+    if plan is None:
+        return 1
+    print(plan.summary())
+    try:
+        result = clashes.offline(plan, args.step, args.clearance)
+    except ValueError as error:
+        print(error)
+        return 2
+    with open(args.report, "w", encoding="utf-8") as handle:
+        json.dump(result, handle, indent=2, ensure_ascii=False)
+    for clash in result["clashes"]:
+        where = ", ".join(f"{c:g}" for c in clash["location"])
+        print(f"  {clash['kind']} {clash['value']:g} {clash['unit']}: {clash['first']} / "
+              f"{clash['second']} at ({where})")
+    print(f"Clashes: {clashes.summary(result)}")
+    print(f"Report: {args.report}")
+    return 0
 
 
 def _mates_command(tree, args) -> int:
@@ -435,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m catia_mcp.tree",
                                      description=__doc__.split("\n")[0])
     parser.add_argument("command", choices=["check", "reference", "build", "capabilities",
-                                            "mates"])
+                                            "mates", "clashes"])
     parser.add_argument("tree", nargs="?", help="feature tree JSON (version 1)")
     parser.add_argument("--part", help="only this part id (development)")
     parser.add_argument("--until", help="only the features up to this id (development)")
@@ -485,6 +566,14 @@ def main(argv: list[str] | None = None) -> int:
                              "(docs/assembly-constraints.md)")
     parser.add_argument("--ground", help="--constraints infer: the instance id to ground "
                         "(default: the largest)")
+    parser.add_argument("--clashes", choices=["none", "offline", "catia"],
+                        help="with --assembly: check every pair of instances for "
+                             "interferences, contacts and clearances (docs/clashes.md); offline "
+                             "(the default when OCP is installed) from the STEP shapes, catia "
+                             "also runs CATIA V5's DMU clash and compares; none")
+    parser.add_argument("--clearance", type=float, default=0.0,
+                        help="clashes: also report pairs closer than this many mm (default 0, "
+                             "off)")
     parser.add_argument("--no-edit", action="store_true", help="skip the editability check")
     parser.add_argument("--deadline", type=float, default=170.0, help="build budget in seconds")
     parser.add_argument("--report", help="JSON report path (default tree_report.json, "
@@ -503,8 +592,9 @@ def main(argv: list[str] | None = None) -> int:
         return _capabilities(args)
     if not args.tree:
         parser.error(f"{args.command} needs a feature tree JSON file")
-    args.report = args.report or ("mates_report.json" if args.command == "mates"
-                                  else "tree_report.json")
+    args.report = args.report or {"mates": "mates_report.json",
+                                  "clashes": "clashes_report.json"}.get(args.command,
+                                                                        "tree_report.json")
     tree = _load(args)
     if args.command == "check":
         return _check(tree, _step_source(args))
@@ -512,6 +602,8 @@ def main(argv: list[str] | None = None) -> int:
         return _reference(tree, args.step_dir)
     if args.command == "mates":
         return _mates_command(tree, args)
+    if args.command == "clashes":
+        return _clashes_command(tree, args)
     return _build(tree, args)
 
 
