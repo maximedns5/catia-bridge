@@ -271,6 +271,8 @@ MODEL.step` builds each part once, in its own frame, and places every instance
 in a CATIA V5 product, a part used twice being one CATPart placed twice
 ([docs/assemblies.md](docs/assemblies.md)).
 
+What the tree replay covers of Part Design, feature by feature, is in
+[docs/part-design.md](docs/part-design.md).
 ### Materials and properties
 
 After each part, the tree build can apply its colour, its material (checking

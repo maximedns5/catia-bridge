@@ -185,6 +185,17 @@ All notable changes to this project are documented here.
   `effects.modified=false` when nothing was touched.
 - `scripts/live_smoke_test.py`: builds and measures a throw-away part on a
   live V5 or 3DEXPERIENCE session and writes a JSON report.
+- **Part Design additions** (`docs/part-design.md`, not validated live yet):
+  `draft` (one Draft on the anchored faces about the neutral plane, its angle
+  a parameter), `extrude` with `until` (a Pad or Pocket up to next, last, a
+  plane or a face, straight into its body), tapped holes (`thread`: ISO
+  designation, depth, pitch, side; the hole keeps its tap drill) and V-bottomed
+  holes (`bottom`), and lofts to a point (a Multi-sections Solid to a
+  construction point, a Shaft for a right cone CATIA will not loft). Each has
+  preflight rules, a build123d reference and a fixture (`m10_*`);
+  `scripts/probe_part_design.py` reads their enums and builds every fixture on
+  a live CATIA. A Part Design coverage table lists every CATIA Part Design
+  feature with its status.
 - **Materials and properties** (`--properties`, docs/materials-properties.md):
   after each part, its colour (on its bodies, read back; per feature too),
   its material (V5 catalog or a new material, the tree's density; else
