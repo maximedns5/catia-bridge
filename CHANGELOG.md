@@ -239,6 +239,16 @@ All notable changes to this project are documented here.
   `properties`, `parameters`, `configurations`, `checks`. Every step is
   recorded per route and never fails the part. `scripts/probe_properties.py`
   probes each route live.
+- **Clash analysis** (`--clashes`, `python -m catia_mcp.tree clashes`,
+  docs/clashes.md): every pair of instances of an assembly checked offline
+  from the STEP shapes (bounding boxes, exact minimum distance, common
+  volume) for interferences (volume and centre), contacts and, with
+  `--clearance MM`, clearances; in the build report's `assembly.clashes`,
+  never fatal. `--clashes catia` also runs CATIA V5's DMU Space Analysis
+  clash under the dialog watchdog and compares; on 3DEXPERIENCE the result
+  is the offline analysis and `scripts/probe_clashes.py` looks for a clash
+  API. New fixtures `pin_interference` and `shaft_bushing`
+  (`scripts/make_clash_fixtures.py`).
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart

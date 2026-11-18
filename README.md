@@ -272,6 +272,10 @@ in a CATIA V5 product, a part used twice being one CATPart placed twice
 ([docs/assemblies.md](docs/assemblies.md)). `--constraints infer` grounds one
 part and positions the others by coincidence, contact and offset constraints
 inferred from their faces ([docs/assembly-constraints.md](docs/assembly-constraints.md)).
+`--clashes` checks every pair of instances for interferences, contacts and
+clearances, offline from the STEP shapes and on V5 with DMU Space Analysis;
+`python -m catia_mcp.tree clashes` runs it without CATIA
+([docs/clashes.md](docs/clashes.md)).
 
 ### Drawings
 
