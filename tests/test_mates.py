@@ -446,3 +446,20 @@ def test_the_mates_command_writes_the_constraints(tmp_path):
     data = json.loads(out.read_text())
     assert data["ground"] == "/PinPlate/Plate"
     assert [m["kind"] for m in data["placements"][1]["mates"]] == ["coincidence", "contact"]
+
+
+def test_refused_constraints_still_report_the_inferred_mates():
+    # Live on 3DEXPERIENCE R428 no constraint can be given through COM: the
+    # report keeps the mates for a designer to add by hand.
+    from types import SimpleNamespace
+
+    from catia_mcp.tree.__main__ import _constrain
+
+    report = {"assembly": {}}
+
+    def refuse():
+        raise RuntimeError("no constraint collection")
+
+    _constrain(report, refuse, SimpleNamespace(to_dict=lambda: {"mates": ["axis"]}))
+    constraints = report["assembly"]["constraints"]
+    assert not constraints["ok"] and constraints["mates"] == {"mates": ["axis"]}

@@ -193,14 +193,18 @@ def _mates(plan, args):
     return mate_plan, components
 
 
-def _constrain(report, apply) -> None:
+def _constrain(report, apply, mate_plan=None) -> None:
     """Put the constraints; a failure is reported, never fatal (every
-    instance stays where the STEP file puts it)."""
+    instance stays where the STEP file puts it). The inferred mates go in
+    the report either way, for a designer to add by hand (live on
+    3DEXPERIENCE R428 no constraint can be given through COM)."""
     try:
         report["assembly"]["constraints"] = result = apply()
         print(f"Constraints: {result.get('counts')}, positions kept: {result.get('positions_ok')}")
     except Exception as error:
         report["assembly"]["constraints"] = {"ok": False, "error": str(error)}
+        if mate_plan is not None:
+            report["assembly"]["constraints"]["mates"] = mate_plan.to_dict()
         print(f"Constraints not applied: {error}")
 
 
@@ -312,7 +316,7 @@ def _build(tree, args) -> int:
 
             _constrain(report, lambda: worker.run_guarded(
                 lambda: apply_3dx(conn, plan, *mates, leaves, builder.targets, references,
-                                  log=print), label="the assembly constraints"))
+                                  log=print), label="the assembly constraints"), mates[0])
     elif plan is not None and report.get("success"):
         _assemble(conn, worker, builder, plan, report, mates)
     with open(args.report, "w", encoding="utf-8") as handle:
