@@ -167,6 +167,15 @@ constraints. `EngConnections.Remove(connection)` failed (E_FAIL): the
 probe's connections stayed in the product. `--engcst` now tries which
 geometries `AssemblyConstraints.Add` takes, and other ways to remove.
 
+Fourth live probe (`--engcst`): `AssemblyConstraints.Add` refused (E_FAIL)
+a fix-instance constraint on the instance, the occurrence and the
+reference, and a parallelism given as Part references or plane objects or
+occurrence and reference pairs; nothing moved. `EngConnections.Remove`
+works with the connection's name, not the object. `--engcst2` reads how a
+connection names its impacteds (`GetImpacted`) and tries geometry found
+from the product with `Selection.Search`, through each item's `Reference`
+(a reference in the assembly's context).
+
 The next probe creates a Fix, a Rigid and a Cylindrical connection (on
 instances, else occurrences), describes each and the objects it holds (its
 constraints collection), and removes it.
