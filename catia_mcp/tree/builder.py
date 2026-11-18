@@ -265,6 +265,9 @@ class TreeBuilder:
         self.targets: dict[str, Any] = {}
         self.adopting = False
         self.cog_checked = False
+        # Appearance, material, product properties, Knowledgeware after each
+        # part (catia_mcp/tree/properties.py PartProperties), when set.
+        self.properties: Any = None
 
     # ── Entry point ──
 
@@ -293,6 +296,8 @@ class TreeBuilder:
                     self._check_editability(record)
                 if self.adopting:
                     self._replace_import(part, record)
+                if self.properties is not None:
+                    self.properties.apply(self, part, record)
             report["success"] = True
             dead = any(r.dead_bodies for r in report["parts_detail"])
             report["native_history"] = "partial" if dead else True
