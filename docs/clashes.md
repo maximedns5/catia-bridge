@@ -139,9 +139,9 @@ activating windows in turn hung CATIA live, so the probe never does.
 
 | Route | Status |
 |---|---|
-| Offline | Tested on the assembly fixtures: bracket (a contact; the turned bolt 7 mm away), pin_plate, box_base, bolted_plates (contacts only), pin_interference (133.5177 mm3), shaft_bushing (a 0.2 mm clearance, two contacts) |
+| Offline | Run on Jules' Windows machine: the bracket gives the same single contact (15, 0, 4) in 0.015 s. Tested on the assembly fixtures: bracket (a contact; the turned bolt 7 mm away), pin_plate, box_base, bolted_plates (contacts only), pin_interference (133.5177 mm3), shaft_bushing (a 0.2 mm clearance, two contacts) |
 | V5 DMU Space Analysis | Against a fake CATIA only |
-| 3DEXPERIENCE | Offline; `scripts/probe_clashes.py` not yet run live |
+| 3DEXPERIENCE | Offline. First live probe on R428 with no product open: none of the eleven clash service names answers `GetService` or `GetSessionService`, and the `Application` and `Editor` members hold nothing clash-related; the product-level checks still need the bracket imported |
 
 The fixtures `pin_interference` and `shaft_bushing` are written by
 `scripts/make_clash_fixtures.py`, like the mate fixtures.
