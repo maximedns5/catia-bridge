@@ -393,6 +393,122 @@ def engcst(conn: Any) -> dict[str, Any]:
     return out
 
 
+def _impacted(cnx: Any, k: int) -> Any:
+    """GetImpacted(k, out impacted, out context): late binding returns the
+    out strings, or wants placeholders for them."""
+    for args in ((k,), (k, "", "")):
+        try:
+            got = cnx.GetImpacted(*args)
+        except Exception as error:
+            last = str(error)
+            continue
+        return [str(x) for x in got] if isinstance(got, (tuple, list)) else str(got)
+    return f"error: {last}"
+
+
+SEARCHES = ("CATPrtSearch.Plane,all", "Type=Plane,all", "CATPrtSearch.Plane,sel")
+
+
+def engcst2(conn: Any) -> dict[str, Any]:
+    """Assembly constraints need geometry seen from the product. Live on R428
+    AssemblyConstraints.Add refused Part references, plane objects and
+    instances (E_FAIL). This step reads how an existing connection names
+    its impacteds (GetImpacted's out strings), finds the parts' planes from
+    the product with Selection.Search and keeps each found item's Reference
+    (the usual way to get a reference in an assembly context), then tries a
+    parallelism of two such planes in a Rigid connection and a fix on a
+    selected occurrence. Connections made here are removed by name (live:
+    Remove(name) works, Remove(object) does not)."""
+    from catia_mcp.automation import safe_get
+
+    root = conn.root_occurrence()
+    reference = safe_get(root, "ReferenceRootOccurrenceOf")
+    connections = reference.GetItem("CATEngConnections")
+    occurrences = [root.Occurrences.Item(i) for i in range(1, int(root.Occurrences.Count) + 1)]
+    instances = [o.InstanceOccurrenceOf for o in occurrences]
+    out: dict[str, Any] = {}
+
+    impacted = []
+    for i in range(1, min(int(connections.Count), 3) + 1):
+        cnx = connections.Item(i)
+        count = _safe(lambda c=cnx: int(c.GetNbImpacteds()))
+        row: dict[str, Any] = {"name": _safe(lambda c=cnx: str(c.Name)), "count": count}
+        if isinstance(count, int):
+            row["impacted"] = [_impacted(cnx, k) for k in range(1, count + 1)]
+        impacted.append(row)
+    out["impacted"] = impacted
+
+    selection = conn.app.ActiveEditor.Selection
+    found: dict[str, Any] = {}
+    items: list[Any] = []
+    for query in SEARCHES:
+        rows = []
+        try:
+            selection.Clear()
+            if query.endswith(",sel"):
+                selection.Add(occurrences[0])
+            selection.Search(query)
+            count = int(selection.Count)
+            for k in range(1, min(count, 12) + 1):
+                item = selection.Item(k)
+                row = {"value": _safe(lambda it=item: str(it.Value.Name)),
+                       "type": _safe(lambda it=item: str(it.Type)),
+                       "leaf": _safe(lambda it=item: str(it.LeafProduct.Name)),
+                       "reference": _safe(lambda it=item: str(it.Reference.DisplayName))}
+                rows.append(row)
+                if query == SEARCHES[0] or not items:
+                    items.append((row, _safe(lambda it=item: it.Reference),
+                                  _safe(lambda it=item: it.Value)))
+            found[query] = {"count": count, "items": rows}
+        except Exception as error:
+            found[query] = {"error": str(error)}
+    out["search"] = found
+    selection.Clear()
+
+    tries = []
+    refs = [(row, ref, value) for row, ref, value in items if not isinstance(ref, str)]
+    leaves = []
+    for row, ref, value in refs:  # the first plane of two different leaves
+        if all(row["leaf"] != other[0]["leaf"] for other in leaves):
+            leaves.append((row, ref, value))
+        if len(leaves) == 2:
+            break
+    if len(leaves) == 2:
+        rigid = connections.Add(10, instances[:2])
+        name = str(rigid.Name)
+        for label, geometries in (("Selection references", [leaves[0][1], leaves[1][1]]),
+                                  ("Selection values", [leaves[0][2], leaves[1][2]])):
+            row = {"geometries": label, "leaves": [leaves[0][0], leaves[1][0]]}
+            try:
+                cst = rigid.AssemblyConstraints.Add(41, geometries)  # parallel planes
+                row["made"] = _explore(cst)
+            except Exception as error:
+                row["error"] = str(error)
+            tries.append(row)
+        out["remove_rigid"] = _safe(lambda: connections.Remove(name) or True)
+    else:
+        tries.append({"error": "the search found no planes in two different leaves"})
+    try:
+        selection.Clear()
+        selection.Add(occurrences[0])
+        occurrence_ref = selection.Item(1).Reference
+        selection.Clear()
+        fix = connections.Add(2, [instances[0]])
+        name = str(fix.Name)
+        row = {"geometries": "selected occurrence's Reference"}
+        try:
+            row["made"] = _explore(fix.AssemblyConstraints.Add(30, [occurrence_ref]))
+        except Exception as error:
+            row["error"] = str(error)
+        tries.append(row)
+        out["remove_fix"] = _safe(lambda: connections.Remove(name) or True)
+    except Exception as error:
+        tries.append({"geometries": "selected occurrence's Reference", "error": str(error)})
+    out["constraints"] = tries
+    out["count_after"] = _safe(lambda: int(connections.Count))
+    return out
+
+
 def create(conn: Any, plan: Any) -> dict[str, Any]:
     """A published plane in the first part and a Fix on the first instance,
     both removed again."""
@@ -516,6 +632,9 @@ def main() -> int:
     parser.add_argument("--window", default=None,
                         help="the name of the imported product's window to activate first, "
                              "as CATIA's Window menu shows it (e.g. 'Bracket A:4')")
+    parser.add_argument("--engcst2", action="store_true",
+                        help="read how connections name their impacteds and try constraints "
+                             "on planes found by Selection.Search (removed again by name)")
     parser.add_argument("--engcst", action="store_true",
                         help="create a Fix and a Rigid connection and try assembly constraints "
                              "in them (removed again where CATIA allows)")
@@ -550,6 +669,8 @@ def main() -> int:
     steps.append(("engcnx", lambda: engcnx(conn, args.engcnx_create)))
     if args.engcst:
         steps.append(("engcst", lambda: engcst(conn)))
+    if args.engcst2:
+        steps.append(("engcst2", lambda: engcst2(conn)))
     if args.create:
         steps.append(("create", lambda: create(conn, plan)))
     if args.apply and plan is not None:
