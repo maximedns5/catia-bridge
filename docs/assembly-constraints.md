@@ -120,7 +120,7 @@ Elements are published on the part's reference, else the Part; references
 are made by name from the root occurrence, else its reference, with the
 root's name in the path or not. Every variant tried is recorded.
 
-**Not validated live.** `scripts/probe_constraints.py` records what a
+**Live on R428: no constraint can be put** (six probes, below). `scripts/probe_constraints.py` records what a
 session allows on the imported product: the constraint enums, the members of
 the root, the instance, its reference and its Part, every route above, the
 engineering connections already there (create one by hand first to see its
@@ -210,11 +210,11 @@ candidate arguments, describes what each makes, and removes it.
 
 | Capability | Status |
 |---|---|
-| Fix | V5: `--constraints fix`/`infer` (fake-tested). 3DX: probed |
-| Coincidence (axes) | V5: inferred and applied (fake-tested). 3DX: probed |
+| Fix | V5: `--constraints fix`/`infer` (fake-tested). 3DX: not possible through COM on R428; reported |
+| Coincidence (axes) | V5: inferred and applied (fake-tested). 3DX: inferred and reported, not applied |
 | Coincidence (planes) | Used as the fallback of a refused contact |
-| Contact (planar) | V5: inferred and applied, SurfContact then On then offset 0. 3DX: probed |
-| Offset | V5: inferred (value, orientation) and applied. 3DX: probed |
+| Contact (planar) | V5: inferred and applied, SurfContact then On then offset 0. 3DX: inferred and reported, not applied |
+| Offset | V5: inferred (value, orientation) and applied. 3DX: inferred and reported, not applied |
 | Angle | Inferred only when nothing else stops a rotation; applied as catCstTypeAngle |
 | Parallelism, perpendicularity | Not inferred (an offset or an angle of 90 covers them); types 8 and 11 in `CST_TYPES` |
 | Fix together | Not done: no documented automation call |

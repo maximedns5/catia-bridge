@@ -159,29 +159,29 @@ View` on the product) and use the interactive drafting tools
 
 | Capability | Status |
 |---|---|
-| Front view | Automatic (V5, 3DEXPERIENCE factory: live for products through the tools) |
-| Projection views | Automatic: top and side, first or third angle |
+| Front view | Automatic. Live on R428 for an imported product (`--assembly adopt`); a standalone 3D Shape gets no view |
+| Projection views | Automatic: top and side, first or third angle (live on R428) |
 | Auxiliary view | Not done: no automatic choice; `DefineAuxiliaryView` signature recorded by the probe |
-| Isometric view | Automatic; not yet run live |
-| Section view | Automatic: straight cut through hole or revolution axes |
+| Isometric view | Automatic (live on R428) |
+| Section view | Automatic: straight cut through hole or revolution axes (not yet met live: the bracket needs none) |
 | Section cut | Not done (the builder uses `SectionView`; the tool `catia_drawing_section_view` takes `SectionCut`) |
 | Aligned / stepped section | Not done automatically; the tool takes `Aligned` and offset profiles |
-| Detail view | Automatic: circular, for features under 3 mm on paper |
+| Detail view | Automatic: circular, for features under 3 mm on paper (not yet met live) |
 | Clipping view | Not done |
 | Broken view | Not done |
 | Breakout view | Not done; signature recorded by the probe |
-| Generated dimensions | Automatic: `GenerateDimensions` per view (from sketch constraints and pad lengths) |
+| Generated dimensions | Automatic: `GenerateDimensions` per view (from sketch constraints and pad lengths; live on R428) |
 | Manual dimensions | Not possible on generative views: CATIA does not expose projected edges to automation (field-proven V5R20 and R428) |
 | Hole and thread callouts | Hole callouts as texts with a leader (simple, blind, counterbore, countersink, counts); threads: not in the tree contract |
 | Centre lines and axes | Not done (CATIA's generation settings may add them) |
 | Annotations (texts) | Automatic: callouts; tool `catia_drawing_add_text` |
 | GD&T | Not done |
 | Surface roughness | Not done |
-| BOM | Automatic for assemblies: a table, one row per part name, with quantities |
-| Balloons | Automatic: circled texts with a leader; not yet run live |
-| Title block and frame | Automatic: drawn lines and texts with the ISO projection symbol (no CATIA standard frame) |
+| BOM | Automatic for assemblies: a table, one row per part name, with quantities (live on R428) |
+| Balloons | Automatic: circled texts with a leader (live on R428) |
+| Title block and frame | Automatic: drawn lines and texts with the ISO projection symbol (no CATIA standard frame; live on R428) |
 | Multi-sheet | Not done: one sheet per drawing |
-| PDF export | V5 automatic (`--drawing-pdf`); 3DEXPERIENCE tried, documented as unavailable |
+| PDF export | V5 automatic (`--drawing-pdf`); 3DEXPERIENCE refused live (`ExportData` E_FAIL) |
 | DXF export | Not done (`ExportData(path, "dxf")` would be the V5 route) |
 
 ## Contract additions requested from the app

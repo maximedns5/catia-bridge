@@ -13,30 +13,32 @@ reference agrees with each fixture's closed form to 1e-9.
 
 ## Coverage
 
-Status: **done** (in `main`), **this PR** (added here, not validated live),
-**contract** (CATIA can, but the tree has no field for it yet), **no
-build123d** (build123d has no matching operation, so no tree can carry it).
+Status: **done** (in `main`, every row validated live on 3DEXPERIENCE R428,
+the drafts, limits, tapped holes and lofts to a point in five probe runs;
+CATIA V5 only against the test fake), **contract** (CATIA can, but the tree
+has no field for it yet: asked of the app), **no build123d** (build123d has
+no matching operation, so no tree can carry it).
 
 | CATIA Part Design feature | Status | Tree feature / note |
 |---|---|---|
 | Pad | done | `extrude` (`new_body`, `join`), `direction`, `symmetric` |
-| Pad up to next / last / plane / surface | this PR | `extrude` with `until` |
+| Pad up to next / last / plane / surface | done | `extrude` with `until` |
 | Pocket | done | `extrude` `cut` |
-| Pocket up to next / last / plane / surface | this PR | `extrude` `cut` with `until` |
+| Pocket up to next / last / plane / surface | done | `extrude` `cut` with `until` |
 | Drafted filleted pad / pocket | no build123d | build123d tapers (`extrude(taper=...)`, built as lofts) and fillets apart; the tree carries both features |
 | Multi-pad / multi-pocket | no build123d | one length per extrude; a sketch of several profiles is one Pad |
 | Shaft | done | `revolve` `new_body` / `join` |
 | Groove | done | `revolve` `cut` |
 | Hole: simple, counterbored, countersunk | done | `hole` `kind` |
-| Hole: tapped (thread, designation, depth, pitch) | this PR | `hole` `thread` |
-| Hole: V bottom | this PR | `hole` `bottom` |
+| Hole: tapped (thread, designation, depth, pitch) | done | `hole` `thread` |
+| Hole: V bottom | done | `hole` `bottom` |
 | Hole: tapered, counterdrilled | no build123d | |
 | Rib | done | `sweep` along a planar path |
 | Rib along a helix (threads, springs) | contract | `sweep` paths are lines and arcs; needs a helix path entity |
 | Slot (removed rib) | done | `sweep` `cut` |
 | Stiffener | no build123d | build123d has no stiffener; a tree would carry it as an extrude |
 | Multi-sections Solid | done | `loft` between two sections, ruled through more |
-| Multi-sections Solid to a point | this PR | `loft` with a point section |
+| Multi-sections Solid to a point | done | `loft` with a point section |
 | Removed Multi-sections Solid | done | `loft` `cut` |
 | Multi-sections Solid, smooth through 3+ sections, with guides or spines | contract | OpenCascade's smooth loft is not CATIA's; needs guide curves in the tree |
 | Solid Combine | no build123d | |
@@ -44,14 +46,15 @@ build123d** (build123d has no matching operation, so no tree can carry it).
 | Variable radius fillet | contract | build123d has none on edges; refused |
 | Face-face fillet, tritangent fillet | no build123d | |
 | Chamfer (two lengths, length and angle) | done | `chamfer` |
-| Draft angle (basic) | this PR | `draft` |
+| Draft angle (basic) | done | `draft` |
 | Draft reflect line, variable angle draft | no build123d | |
 | Shell | done | `shell` with removed faces |
 | Thickness | done | `shell` without removed faces (build123d's `offset`) |
 | Thread / Tap (cosmetic, on a cylindrical face) | contract | a tapped `hole` is covered; a thread on a shaft needs the face and the designation |
 | Remove Face / Replace Face | no build123d | |
 | Split | done | `split` by a plane |
-| Thick Surface, Close Surface, Sew Surface | no build123d | surfaces do not reach the tree |
+| Thick Surface, Close Surface | done | `thicken`, `close_surface` ([surfaces.md](surfaces.md)), live on R428 |
+| Sew Surface | contract | a surface sewn onto a body needs its own tree feature |
 | Translation, Rotation | done | `copy` (a body copied, then moved) |
 | Symmetry, Axis to axis | contract | a body moved in place has no tree feature yet; `copy` does the moved copy |
 | Mirror | done | `mirror` joined back |
