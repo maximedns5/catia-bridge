@@ -249,6 +249,49 @@ All notable changes to this project are documented here.
   is the offline analysis and `scripts/probe_clashes.py` looks for a clash
   API. New fixtures `pin_interference` and `shaft_bushing`
   (`scripts/make_clash_fixtures.py`).
+- **One live run** (`scripts/live_suite.py`, docs/live-testing.md): every
+  tree fixture, the probes and, with `--product`, the assembly steps, run in
+  one command on a live CATIA; the reports, `summary.json` and a short
+  French `summary.txt` packed into one zip. Stops at a blocking dialog.
+
+- **Generative Shape Design, second slice** (docs/surfaces.md): 3D curves
+  as tree features (`curve`: helix, spline, polyline, circle, projection,
+  intersection) in a `Curves` set, each checked by its length and centre;
+  surfaces from curves (extrude, revolve, fill, sweep along a guide);
+  sphere and cylinder; translate, rotate, symmetry, scaling and affinity of
+  a surface; ruled multi-sections through three or more sections;
+  `trim_surfaces` and `extract`. CATIA's undocumented senses are tried in
+  order and checked against build123d; splines are CATIA's own
+  interpolation, checked within 2 %. Blend, shape fillets and smooth
+  multi-sections through more sections are documented as having no
+  build123d reference. Eight `s7_*` fixtures.
+- **Drafting, second slice** (docs/drafting.md): centre marks, axis lines
+  and pitch circles in every orthographic view (the views' generation
+  settings where CATIA has them, else drawn dash-dot); hole callouts with
+  the ISO 129 symbols, thread callouts (`M6 - 6H ↧10 / ⌀5 ↧12`) and pattern
+  counts, back in words where the font lacks a symbol; an auxiliary view
+  along an inclined face's normal (`DefineAuxiliaryView`, else a view along
+  the normal with its arrow drawn); stepped and aligned sections through
+  holes on no common line; further sheets (`Sheets.Add`, each with its frame
+  and title block) when the views do not fit the largest allowed sheet
+  (`--drawing-max-sheet`), and for an assembly one sheet per distinct part
+  after the product's; a PDF and a DXF of each sheet (`--drawing-dxf`), the
+  3DEXPERIENCE routes tried once each and refused or not, recorded. New
+  fixtures `d1`-`d3` and the `drafting_parts` assembly
+  (`scripts/make_drafting_fixtures.py`); `scripts/probe_drawing.py` probes
+  each new route (`--window`).
+- **Part Design, second slice** (`docs/part-design.md`, not validated live
+  yet): sweeps along a `helix` path entity (springs, modelled threads: a GSD
+  Helix and a Rib or Slot pulled along its axis, checked by the screw
+  motion's closed form or build123d's body, the helix measured for its hand
+  and way), `thread` (a cosmetic Thread on a shaft's cylindrical face from
+  its limit face, the ISO table or "No Standard", the volume unchanged and
+  the values read back), user patterns of holes in one plane that form no
+  grid or circle (one Hole and a User Pattern on a sketch of points, else one
+  Hole each), `move` (a Rotate and a Translate of the body in place) and
+  `mirror_in_place` (a Symmetry). Optional tree fields, preflight rules,
+  build123d references, fake CATIA tests and seven `m11_*` fixtures, added
+  to `scripts/probe_part_design.py`.
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart

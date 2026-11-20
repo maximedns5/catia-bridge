@@ -61,11 +61,13 @@ tree carries them: see [materials-properties.md](materials-properties.md).
 | `shell` with no removed face (build123d's `offset` without openings): `Kind.INTERSECTION` either way, `Kind.ARC` inward | One Thickness (`AddNewThickness`, then `AddFaceToThicken`) on every face of the body: each face moved, its neighbours re-intersected. The sign CATIA gives the offset is not documented: a Thickness that moves the volume the wrong way is deleted and made again with the other sign (live on R428 the tree's sign was right: 2 mm inward and 1 mm outward, both exact) |
 | `shell` with at least one removed face, inside or outside, `Kind.ARC` or `Kind.INTERSECTION` | One Shell (`AddNewShell`, then `AddFaceToRemove`), the thickness inside (`thickness` < 0) or outside |
 | `draft`, `extrude` with `until`, `hole` with `thread` or a V `bottom`, `loft` to a point | See [part-design.md](part-design.md): a Draft, a Pad or Pocket up to next / last / a plane / a face, a tapped Hole, a Multi-sections Solid to a point (a Close Surface for a pyramid, a Shaft for a cone). Live on R428: every m10 fixture exact |
+| `sweep` along a `helix`, `thread`, `hole` `pattern` user, `move`, `mirror_in_place` | See [part-design.md](part-design.md): a GSD Helix and a Rib or Slot, a cosmetic Thread, a Hole and a User Pattern, Rotate and Translate, Symmetry. Not run live yet (m11 fixtures) |
 
 What the bridge covers of each CATIA workbench: [coverage.md](coverage.md).
 
 Surface features (`surface`, `join_surfaces`, `split_surface`, `thicken`,
-`close_surface`) are in [surfaces.md](surfaces.md).
+`close_surface`, `trim_surfaces`, `extract`) and 3D curves (`curve`) are in
+[surfaces.md](surfaces.md).
 
 Live on R428 (French), each on its first try and exact in volume: a body
 copied once turned 90° (pasted as a result with its link, then a Rotate)

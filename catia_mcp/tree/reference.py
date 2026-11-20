@@ -38,6 +38,7 @@ from catia_mcp.tree.anchors import (
     match_edges,
     match_faces,
 )
+from catia_mcp.tree.curve_reference import record_shape
 from catia_mcp.tree.extrude import extrude_vector
 from catia_mcp.tree.geometry import (
     Frame,
@@ -50,8 +51,9 @@ from catia_mcp.tree.geometry import (
     scale,
 )
 from catia_mcp.tree.nurbs import Nurbs, clamped
+from catia_mcp.tree.partdesign_extra import EXTRA_TYPES
 from catia_mcp.tree.placement import place_part
-from catia_mcp.tree.surface_reference import solid_of, surface_of, surface_properties
+from catia_mcp.tree.surface_reference import solid_of
 from catia_mcp.tree.surfaces import SOLID_FROM_SURFACE, SURFACE_TYPES
 
 
@@ -116,6 +118,10 @@ def _combine(target: Any, tool: Any, operation: str) -> Any:
 def _path_edge(entity: dict[str, Any]) -> Edge:
     """A sweep path entity, in world coordinates."""
     kind = entity["type"]
+    if kind == "helix":  # catia_mcp/tree/reference_extra.py
+        from catia_mcp.tree.reference_extra import helix_edge
+
+        return helix_edge(entity)
     if kind == "line":
         return Edge.make_line(entity["start"], entity["end"])
     if kind == "arc":
@@ -309,14 +315,16 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
             bodies[target] = _dressup(feature, bodies[target])
         elif kind == "draft" and "faces" in feature and "neutral_plane" in feature:
             _plus(feature, bodies, sketches)
+        elif kind in EXTRA_TYPES:  # thread, move, mirror_in_place
+            from catia_mcp.tree.reference_extra import apply
+
+            apply(feature, bodies, _location)
         elif kind in SOLID_FROM_SURFACE:
             solid = solid_of(feature, surfaces)
             out.setdefault("solids", {})[str(feature.get("id"))] = mass(solid)
             _add_solid(bodies, feature, solid)
-        elif kind in SURFACE_TYPES:
-            (name,) = feature["creates"]
-            surfaces[name] = surface_of(feature, sketches, surfaces)
-            out.setdefault("surfaces", {})[name] = surface_properties(surfaces[name])
+        elif kind in SURFACE_TYPES:  # surfaces and 3D curves (curve_reference.py)
+            record_shape(feature, sketches, surfaces, bodies, out)
         elif external is not None:
             external(part, feature, bodies)
         else:
@@ -379,8 +387,17 @@ def _volume(solid: Any) -> float:
     from OCP.GProp import GProp_GProps
 
     props = GProp_GProps()
-    BRepGProp.VolumePropertiesGK_s(solid.wrapped, props, 1e-9)
+    if _ADAPTIVE_VOLUME:
+        # Helix sweeps: Gauss-Kronrod at 1e-9 can run for minutes on their
+        # faces; the adaptive Gauss rule agrees with the closed form to 2e-6.
+        BRepGProp.VolumeProperties_s(solid.wrapped, props, 1e-9)
+    else:
+        BRepGProp.VolumePropertiesGK_s(solid.wrapped, props, 1e-9)
     return float(props.Mass())
+
+
+# Set by expected() while it measures a part with a helix sweep.
+_ADAPTIVE_VOLUME = False
 
 
 def mass(solid: Any) -> dict[str, Any]:
@@ -407,8 +424,15 @@ def expected(tree: dict[str, Any], external: Any = None,
             snapshots[str(feature.get("id"))] = {name: mass(body) for name, body in bodies.items()}
 
         surface_out: dict[str, Any] = {}
-        props = properties(build_part(part, external, record if features else None,
-                                      surface_out))
+        global _ADAPTIVE_VOLUME
+        from catia_mcp.tree.reference_extra import has_helix
+
+        _ADAPTIVE_VOLUME = has_helix(part)
+        try:
+            props = properties(build_part(part, external, record if features else None,
+                                          surface_out))
+        finally:
+            _ADAPTIVE_VOLUME = False
         if features:
             props["features"] = snapshots
         props.update(surface_out)

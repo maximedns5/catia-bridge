@@ -1,13 +1,15 @@
 # Drafting: the drawing a designer would make
 
 `python -m catia_mcp.tree build TREE.json --drawing auto` makes, after a
-successful build, a drawing of each built part and, with `--assembly`, of the
-product. The build stays a success whatever happens to the drawings; each
-step is recorded in the report's `drawing` section.
+successful build, a drawing of each built part or, with `--assembly`, one
+drawing of the product with a sheet per distinct part after the product's.
+The build stays a success whatever happens to the drawings; each step is
+recorded in the report's `drawing` section.
 
 ```bat
-python -m catia_mcp.tree build TREE.json --drawing auto --drawing-pdf out
+python -m catia_mcp.tree build TREE.json --drawing auto --drawing-pdf out --drawing-dxf out
 python -m catia_mcp.tree build TREE.json --drawing auto --drawing-projection third
+python -m catia_mcp.tree build TREE.json --drawing auto --drawing-max-sheet A3
 python -m catia_mcp.tree.drawing_plan TREE.json --report drawing_plan.json
 python -m catia_mcp.tree.drawing_plan MODEL.tree.json --step MODEL.step
 ```
@@ -42,6 +44,27 @@ sections, sweep paths).
   line across the front view, through the most hole axes (or the revolution
   axis). It takes the slot of the projection it replaces and is labelled
   A-A. A part without internal features gets no section.
+  - **Stepped.** When no straight line meets a hole of every hole feature,
+    the line steps at right angles through one hole of each (the one
+    nearest the best straight line), halfway between holes
+    (`Offset` profile).
+  - **Aligned.** Holes on a bolt circle about a centre (a revolution axis
+    seen end on, or a single hole at the centre of a pattern of three or
+    more), with no straight line through the centre finding holes on both
+    sides (three or five holes): two lines from the centre through holes,
+    at an angle (`Aligned` profile). Six holes keep a straight section.
+- **Auxiliary view.** The inclined planar face whose true shape the main
+  views miss, seen edge on in the front, top or side view: a face holes
+  are drilled into first, else the largest, at least a tenth of the part's
+  largest projected area, sloped at least 15° off every axis (no drafts),
+  not a chamfer (no face within twice the chamfer's size of a chamfered
+  edge), and only on a part with one or two such slopes (a hexagonal
+  prism gets none). The view looks along the face's normal, from the side
+  the normal points to; its cutting line in the parent runs along the
+  face's edge, and its arrow points at the face from outside the part. It
+  sits next to the parent in the arrow's direction, else where there is
+  room. Labelled with the next letter (View B after section A-A). A face
+  oblique to every main view gets a note (no secondary auxiliary view).
 - **Detail.** When the smallest hole, fillet or chamfer seen in the front
   view is under 3 mm on paper: a circular detail B at a standard scale at
   least twice the sheet's, drawing the feature at least 8 mm big.
@@ -56,17 +79,49 @@ sections, sweep paths).
   Each view is padded by 10 mm for its dimensions, plus 8 mm under a
   labelled view. Views never overlap each other or the title block (tested
   on every fixture). Projections stay aligned with the front view.
-- **Annotations.** One callout per hole feature seen as circles, with a
-  leader: `Ø6 THRU`, `Ø4 x 4 DEEP`, `Ø4 THRU, CBORE Ø8 x 2`,
-  `Ø4 THRU, CSK Ø8 x 90°`, `12 x Ø6 THRU, CBORE Ø10 x 3`.
+- **Hole and thread callouts.** One callout per hole feature, in the first
+  view that shows its holes as circles, with a leader, in ISO 129-1
+  symbols: `⌀6 THRU`, `⌀4 ↧4`, `⌀4 THRU ⌴⌀8 ↧2`, `⌀4 THRU ⌵⌀8 × 90°`,
+  `12× ⌀6 THRU ⌴⌀10 ↧3`. A tapped hole leads with its thread: designation,
+  tolerance class (`6H` unless the tree says), thread depth, then the tap
+  drill: `M6 - 6H ↧10 / ⌀5 ↧12`, `M8 - 6H THRU / ⌀6.8 THRU`,
+  `M8×1 LH - 6H ↧10 / ...`. Each callout also has its words
+  (`Ø4 THRU, CBORE Ø8 x 2`, `M6 - 6H x 10 DEEP / Ø5 x 12 DEEP`): the
+  builder writes them instead where CATIA reads the text back changed (a
+  font without the symbols). `--callouts text` in the plan command plans
+  the words.
+- **Centre lines.** In every orthographic view: a centre mark (two crossed
+  lines) on each hole and extruded circle seen end on, reaching past its
+  largest diameter; an axis line along each hole, cylinder and revolution
+  axis seen side on, over its length (a through hole: as far as the part
+  goes); a pitch circle through three or more holes of one feature on a
+  circle. Lines overshoot the outline by 3 mm of paper (ISO 128-24);
+  collinear axes merge. A section shows only those its cutting line meets;
+  an aligned section's second line is unfolded about the centre.
 - **Title block.** Title (part name), number (part id), scale, sheet,
   projection method with the ISO 5456-2 symbol (a truncated cone and its end
   view), material (`part.material`, see below), date, units.
+- **Further sheets.** When the views do not fit the largest allowed sheet
+  (`--drawing-max-sheet`, A0 by default), or fit it only at a smaller scale
+  than the orthographic views alone reach there, the isometric and
+  auxiliary views go to further sheets; when even those do not fit, the
+  front view (and its section) stays on the first sheet and every other
+  view goes further. A view on another sheet than its parent is made on
+  its own, along its plane (an auxiliary view gets its arrow drawn in the
+  parent). Further sheets take every leftover view at the first sheet's
+  scale where they fit together, else one each at the largest scale that
+  fits. Each sheet has its frame and title block, `A4 2/3` in its Sheet
+  cell. With a forced sheet and scale, this is where it shows most.
 - **Assembly.** A front view (the product upright, from the front or the
   side, whichever is larger) and an isometric view. A bill of materials
   above the title block: item, part, quantity, one row per part name (two
   bolts are one row, quantity 2, with or without the STEP file). One balloon
   per row in the front view, with a leader to the part's first instance.
+  Then one sheet (or more) per bill of materials row: the part's own plan,
+  projecting the part. The part ids each sheet shows are the plan's
+  `covers`. When the product's drawing cannot be made (not assembled, a
+  standalone build on 3DEXPERIENCE), each part gets its own drawing as
+  before.
 
 ## The builder (`catia_mcp/tree/drawing_builder.py`)
 
@@ -76,12 +131,17 @@ sections, sweep paths).
 | Sheet | `PaperSize`, `Orientation`, `Scale`, `ProjectionMethod` (enum values read from the type library, documented values otherwise), size read back | same; not run live yet |
 | Source | the part document (the product document for an assembly) | the editor's root occurrence (3D Part, or the adopted product); with `--assembly adopt`, a part's drawing projects its first occurrence |
 | Views | `Views.Add`, `GenerativeBehavior.Document`, `DefineFrontView`, `DefineProjectionView`, `DefineSectionView`, `DefineCircularDetailView`, `DefineIsometricView`, then `x`, `y`, `Scale`, `Update`; section and detail labels by `SetViewName` | the `DrawingDefineGenView` factory, bound by parameter name (`catia_mcp/tools/drawing.py`), or `GenerativeBehavior` where a release still exposes it |
-| Dimensions | `GenerateDimensions` with the drawing active and each generative view active in turn; counted per view | same (live R428: sketch constraints and Pad/Pocket lengths) |
-| Callouts | `Texts.Add` and `Leaders.Add` in the front view | same API |
+| Auxiliary view | `DefineAuxiliaryView(x1, y1, x2, y2, parent)`, then `(..., 1, parent)`, then `(profile, parent)`; refused, or the parent on another sheet: `DefineFrontView` along the face's normal, its arrow (three lines) and letter drawn in the parent | `DrawingDefineGenView.DefineAuxiliaryView` bound by name (`iX1`... or `iProfile`, `iParentView`); same fallback |
+| Stepped, aligned section | `DefineSectionView(profile, "SectionView", "Offset" or "Aligned", 1, parent)` | the factory, `CatOffsetSectionProfile` or `CatAlignedSectionProfile` |
+| Generation settings | on each orthographic view, `CenterLineMode`, `GenerateCenterLines`, `CenterLine`, then the same for axes and threads, on `GenerativeBehavior` then the view, where the type library has the name; set to true and read back, then the view updated | same where a view has them |
+| Centre lines | unless the view generates them: `Factory2D.CreateLine` (and `CreateClosedCircle` for a pitch circle) in the view, then `Selection.VisProperties.SetRealLineType(4, 1)` (dash-dot) and `SetRealWidth(1, 1)` | same, the editor's `Selection` if the drawing has none |
+| Sheets | `Sheets.Add(name)`, then format, scale, projection, views, frame and title block as for the first | same |
+| Dimensions | `GenerateDimensions` with the drawing, the sheet and each generative view active in turn; counted per view; views left without any are listed with how many generated elements they expose (`GeometricElements.Count`) | same (live R428: sketch constraints and Pad/Pocket lengths) |
+| Callouts | `Texts.Add` and `Leaders.Add` in the view; read back, the words written instead if CATIA changed the symbols | same API |
 | Frame, title block, symbol | lines and circles by `Factory2D` in the background view, then texts | same API; not run live yet |
 | BOM | `Tables.Add` in the background view | same API |
 | Balloons | a text with `FrameType` = circle and a leader | same API; not run live yet |
-| PDF | `ExportData(path, "pdf")`, checked on disk | tried and the refusal recorded (live on R428: `ExportData` refused, E_FAIL) |
+| PDF, DXF | each sheet active in turn, `ExportData(path, "pdf")` then `"PDF"` (`"dxf"`, `"DXF"`) to `NAME.pdf`, or `NAME_2.pdf`... with several sheets, checked on disk (a file CATIA names itself after the stem counts) | the same, then on `ActiveDocument`: each route once, every refusal recorded (live on R428: `ExportData` refused, E_FAIL); never `PrintOut` |
 
 A standalone 3D Shape (the default `--plm-type 3DShape`) cannot be drawn:
 3DEXPERIENCE generative views project product instances, and CATIA creates
@@ -123,12 +183,19 @@ written.
 ### Report
 
 `report["drawing"]` = `{"mode": "auto", "parts": {part id: entry},
-"assembly": entry or null}`. Each entry holds `ok` (the front view was
-made), `route` (`v5/generative`, `3dx/factory`, ...), `sheet`, `scale`,
-`projection`, `geometry` (`build123d` or `estimate`), `views` (name, kind,
-scale, ok or error), `dimensions` and `dimensions_by_view`, `annotations`,
-`title_block`, `bom_rows` and `balloons` for a product, `pdf`, `steps` (each
-step ok or its error) and `notes` (why these views).
+"assembly": entry or null}`. Each entry holds `ok` (the front view of the
+first sheet was made), `route` (`v5/generative`, `3dx/factory`, ...),
+`sheet`, `scale`, `projection`, `geometry` (`build123d` or `estimate`),
+`sheets` (index, name, format, scale, source part, ok), `views` (name, kind,
+scale, sheet, ok or error; `route` for an auxiliary view; `generation` for
+the centre line settings found; `geometric_elements`), `dimensions` and
+`dimensions_by_view`, `views_without_dimensions`, `annotations`,
+`callouts_in_words`, `centre_lines` and `centre_line_type`, `title_block`,
+`bom_rows` and `balloons` for a product, `pdf` and `pdf_files`, `dxf` and
+`dxf_files`, `exports` (every route tried per format and sheet), `steps`
+(each step ok or its error, `sheet 2: ...` on further sheets) and `notes`
+(why these views). A part drawn on a sheet of the product's drawing has
+the entry `{"ok", "drawing": product name, "catia_name", "sheet": index}`.
 
 ## Live probe
 
@@ -138,6 +205,7 @@ without saving.
 
 ```bat
 python scripts\probe_drawing.py --report drawing_probe.json
+python scripts\probe_drawing.py --window "DraftingParts A.1" --report drawing_probe.json
 python scripts\probe_drawing.py --tree tests\fixtures\trees\m1_holes.json --pdf out
 ```
 
@@ -146,8 +214,33 @@ drawing, the sheet's members, the enums used, the signature of every
 `DrawingDefineGenView.Define*`, the sheet set to A3 and read back, each way
 to make a front view until one works, the derived views, generated
 dimensions per view, a text with a leader, a balloon, a table, background
-lines, and the PDF export. With `--tree`, it also runs the drafting step of
-the tree build on the active source.
+lines, and the PDF export. Then the second slice's routes from that front
+view: the view's members about axes, centre lines and threads, the
+generation settings set and read back, a dash-dot centre mark, an auxiliary
+view by each known signature (else along the normal, with its arrow), a
+stepped and an aligned section, a callout in ISO 129 symbols read back,
+`GeometricElements.Count` of the front view, a second sheet with a line and
+a text, and the PDF and DXF by every route, once each. It records the
+signature of any `PrintToFile` (sheet, drawing, window) and calls it only
+with `--print-to-file`; never `PrintOut`. With `--window NAME` it activates
+that one window first and never loops over windows (CATIA may hold
+hundreds). With `--tree`, it also runs the drafting step of the tree build
+on the active source (on an imported product, the occurrence of the tree's
+part).
+
+### Fixtures
+
+`scripts/make_drafting_fixtures.py` writes three parts made for the second
+slice, each alone (`tests/fixtures/trees/d1_inclined_block.json`,
+`d2_holes_not_in_line.json`, `d3_flange_three_holes.json`) and together as
+an assembly with its STEP (`tests/fixtures/assembly/drafting_parts.step`
+and `.tree.json`), for the live run on 3DEXPERIENCE:
+
+| Part | What its drawing shows |
+| --- | --- |
+| InclinedBlock | auxiliary view B along the 45° face, section A-A through the hole |
+| HolePlate | stepped section A-A through a through hole, a counterbore, a tapped M6 and a countersink; `M6 - 6H ↧8 / ⌀5 ↧10`, `4× ⌀4.5 THRU ⌵⌀9 × 90°` |
+| Flange | aligned section A-A through the bore and two of three bolt holes; the pitch circle |
 
 Fallback when no route works on 3DEXPERIENCE: put the shape in a 3D Part or
 a product (`--assembly adopt` after importing the model's STEP, or
@@ -161,34 +254,37 @@ View` on the product) and use the interactive drafting tools
 |---|---|
 | Front view | Automatic. Live on R428 for an imported product (`--assembly adopt`); a standalone 3D Shape gets no view |
 | Projection views | Automatic: top and side, first or third angle (live on R428) |
-| Auxiliary view | Not done: no automatic choice; `DefineAuxiliaryView` signature recorded by the probe |
+| Auxiliary view | Automatic for one inclined face seen edge on in a main view (`DefineAuxiliaryView`, else a view along the normal with its arrow); not run live yet. No secondary auxiliary view |
 | Isometric view | Automatic (live on R428) |
 | Section view | Automatic: straight cut through hole or revolution axes (not yet met live: the bracket needs none) |
 | Section cut | Not done (the builder uses `SectionView`; the tool `catia_drawing_section_view` takes `SectionCut`) |
-| Aligned / stepped section | Not done automatically; the tool takes `Aligned` and offset profiles |
+| Aligned / stepped section | Automatic: stepped through one hole of each hole feature, aligned through a bolt circle of three or five holes; not run live yet |
 | Detail view | Automatic: circular, for features under 3 mm on paper (not yet met live) |
 | Clipping view | Not done |
 | Broken view | Not done |
 | Breakout view | Not done; signature recorded by the probe |
 | Generated dimensions | Automatic: `GenerateDimensions` per view (from sketch constraints and pad lengths; live on R428) |
-| Manual dimensions | Not possible on generative views: CATIA does not expose projected edges to automation (field-proven V5R20 and R428) |
-| Hole and thread callouts | Hole callouts as texts with a leader (simple, blind, counterbore, countersink, counts); threads: not in the tree contract |
-| Centre lines and axes | Not done (CATIA's generation settings may add them) |
+| Manual dimensions | Not possible on generative views: CATIA does not expose projected edges to automation (field-proven V5R20 and R428). The report lists the views left without a generated dimension and how many generated elements each exposes (`GeometricElements.Count`), so a release that exposes them shows |
+| Hole and thread callouts | Automatic, ISO 129-1 symbols: simple, blind, counterbore, countersink, pattern counts (`4×`), tapped holes (`M6 - 6H ↧10 / ⌀5 ↧12`); in words where the font lacks a symbol |
+| Centre lines and axes | Automatic: centre marks, axis lines, pitch circles in every orthographic view, by the views' generation settings where found, else drawn dash-dot; not run live yet |
 | Annotations (texts) | Automatic: callouts; tool `catia_drawing_add_text` |
 | GD&T | Not done |
 | Surface roughness | Not done |
 | BOM | Automatic for assemblies: a table, one row per part name, with quantities (live on R428) |
 | Balloons | Automatic: circled texts with a leader (live on R428) |
 | Title block and frame | Automatic: drawn lines and texts with the ISO projection symbol (no CATIA standard frame; live on R428) |
-| Multi-sheet | Not done: one sheet per drawing |
-| PDF export | V5 automatic (`--drawing-pdf`); 3DEXPERIENCE refused live (`ExportData` E_FAIL) |
-| DXF export | Not done (`ExportData(path, "dxf")` would be the V5 route) |
+| Multi-sheet | Automatic: further sheets when the views do not fit the largest allowed sheet (`--drawing-max-sheet`); an assembly: the product's sheet, then one per distinct part. Each with its frame and title block |
+| PDF export | V5 automatic per sheet (`--drawing-pdf`); 3DEXPERIENCE refused live (`ExportData` E_FAIL), every route tried once and recorded |
+| DXF export | V5 automatic per sheet (`--drawing-dxf`); 3DEXPERIENCE as the PDF |
 
 ## Contract additions requested from the app
 
 - `part.material` (optional string, for example `"S235JR"` or
   `"AlMg3"`): written in the title block. The bridge accepts it today and
   prints `-` without it.
+- `hole.thread.tolerance` (optional string, for example `"6H"` or `"5H"`):
+  the internal thread's tolerance class in its callout. The bridge accepts
+  it today; without it the callout says `6H` (ISO 965-1's default).
 
 ## Assumptions to check live
 
@@ -199,3 +295,18 @@ View` on the product) and use the interactive drafting tools
   `DefineFrontView` on V5.
 - `iSideToDraw` = 1 draws the side the plan expects for section A-A.
 - `CatPaperSize` A0 to A4 are 0 to 4 when the type library cannot be read.
+- `DefineAuxiliaryView` takes the cutting line's two points and the parent
+  (the V5 documentation); the other variants are tried after it. Which side
+  the view looks from is CATIA's: the plan expects the viewer on the side
+  the face's normal points to.
+- Line type 4 is the dash-dot (axis) line of the drafting standard in use.
+- The generation settings' names (`CenterLineMode`, `AxisMode`,
+  `ThreadMode`...) are guesses from the view properties dialog: the probe
+  lists the members of the view and of its generative behaviour whose
+  names mention axes, centre lines or threads.
+- An aligned section unfolds its second cutting line about the centre, to
+  the side away from the first one.
+- `ExportData` of a drawing writes the active sheet (V5); if it writes all
+  sheets at once, each per-sheet file holds them all.
+- CATIA's drafting font draws `⌀ ↧ ⌴ ⌵ ×`; where it does not, the read-back
+  text differs and the words are written instead.

@@ -854,6 +854,6 @@ def test_the_probe_script_cases_pass_preflight():
     spec = importlib.util.spec_from_file_location("probe_part_design", path)
     probe = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(probe)
-    assert set(probe.FIXTURES) == set(M10_MM3)
+    assert set(probe.FIXTURES) == set(M10_MM3) | {p.stem for p in TREES.glob("m11_*.json")}
     for name in probe.FIXTURES:
         assert not analyze(load(name)), name

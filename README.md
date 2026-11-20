@@ -279,9 +279,12 @@ clearances, offline from the STEP shapes and on V5 with DMU Space Analysis;
 
 ### Drawings
 
-`--drawing auto` adds to the build a drawing of each part and of the product:
-the views, sheet and scale a designer would choose, generated dimensions,
-hole callouts, title block, bill of materials and balloons
+`--drawing auto` adds to the build a drawing of each part, or of the product
+with one sheet per part after its own: the views, sheet and scale a designer
+would choose (sections stepped or aligned through the holes, auxiliary views
+of inclined faces, further sheets when one is not enough), generated
+dimensions, hole and thread callouts, centre lines, title block, bill of
+materials and balloons, and a PDF and DXF of each sheet on V5
 ([docs/drafting.md](docs/drafting.md)).
 What the tree replay covers of Part Design, feature by feature, is in
 [docs/part-design.md](docs/part-design.md).
@@ -293,8 +296,8 @@ the bill of materials reads, and its parameters in a parameter set with a
 design table for its variants
 ([docs/materials-properties.md](docs/materials-properties.md)).
 
-Surface features (Generative Shape Design) and the named reference planes
-sketches sit on are in [docs/surfaces.md](docs/surfaces.md).
+Surface features and 3D curves (Generative Shape Design) and the named
+reference planes sketches sit on are in [docs/surfaces.md](docs/surfaces.md).
 
 ### Remote use: agent on a Mac or another machine
 

@@ -2,20 +2,25 @@
 
 What the feature tree replay (`docs/feature-tree.md`) covers of CATIA's Part
 Design workbench, and the features added after the first milestones: drafts,
-extrudes up to a limit, tapped and V-bottomed holes, and lofts to a point.
-They are built as a designer would model them: one native feature each,
-with its parameters editable.
+extrudes up to a limit, tapped and V-bottomed holes, and lofts to a point
+(the first slice, live on R428); sweeps along a helix, cosmetic threads on a
+shaft, user patterns of holes, and bodies moved or mirrored in place (the
+second slice, not run live yet). They are built as a designer would model
+them: one native feature each, with its parameters editable.
 
-None of the additions has run on a live CATIA yet. The offline tests drive
-them through a fake CATIA (`tests/test_part_design.py`), and the build123d
-reference agrees with each fixture's closed form to 1e-9.
+The offline tests drive them through a fake CATIA (`tests/test_part_design.py`,
+`tests/test_part_design_extra.py`), and the build123d reference agrees with
+each fixture's closed form (1e-9 for the first slice, 1e-5 for the helix
+sweeps, whose helix OpenCascade approximates).
 `scripts/probe_part_design.py` runs them live; see [Live checks](#live-checks).
 
 ## Coverage
 
 Status: **done** (in `main`, every row validated live on 3DEXPERIENCE R428,
 the drafts, limits, tapped holes and lofts to a point in five probe runs;
-CATIA V5 only against the test fake), **contract** (CATIA can, but the tree
+CATIA V5 only against the test fake), **built, not live** (the tree field,
+preflight, build123d reference, CATIA build and fixtures exist and pass the
+fake; waiting for a live probe run), **contract** (CATIA can, but the tree
 has no field for it yet: asked of the app), **no build123d** (build123d has
 no matching operation, so no tree can carry it).
 
@@ -34,7 +39,7 @@ no matching operation, so no tree can carry it).
 | Hole: V bottom | done | `hole` `bottom` |
 | Hole: tapered, counterdrilled | no build123d | |
 | Rib | done | `sweep` along a planar path |
-| Rib along a helix (threads, springs) | contract | `sweep` paths are lines and arcs; needs a helix path entity |
+| Rib or Slot along a helix (threads, springs) | built, not live | `sweep` along a `helix` path entity, Frenet |
 | Slot (removed rib) | done | `sweep` `cut` |
 | Stiffener | no build123d | build123d has no stiffener; a tree would carry it as an extrude |
 | Multi-sections Solid | done | `loft` between two sections, ruled through more |
@@ -50,16 +55,17 @@ no matching operation, so no tree can carry it).
 | Draft reflect line, variable angle draft | no build123d | |
 | Shell | done | `shell` with removed faces |
 | Thickness | done | `shell` without removed faces (build123d's `offset`) |
-| Thread / Tap (cosmetic, on a cylindrical face) | contract | a tapped `hole` is covered; a thread on a shaft needs the face and the designation |
+| Thread / Tap (cosmetic, on a cylindrical face) | built, not live | `thread` on a shaft; a tapped `hole` is done |
 | Remove Face / Replace Face | no build123d | |
 | Split | done | `split` by a plane |
 | Thick Surface, Close Surface | done | `thicken`, `close_surface` ([surfaces.md](surfaces.md)), live on R428 |
 | Sew Surface | contract | a surface sewn onto a body needs its own tree feature |
-| Translation, Rotation | done | `copy` (a body copied, then moved) |
-| Symmetry, Axis to axis | contract | a body moved in place has no tree feature yet; `copy` does the moved copy |
+| Translation, Rotation | done | `copy` (a body copied, then moved); in place: `move` (built, not live) |
+| Symmetry | built, not live | `mirror_in_place` |
+| Axis to axis | contract | a `move` between two axis systems would carry it; `move` takes the matrix |
 | Mirror | done | `mirror` joined back |
 | Rectangular pattern, circular pattern | done | of holes (`hole` frames); patterns of other features reach the tree unrolled |
-| User pattern | contract | holes at frames that form no grid or circle are one Hole each; a user pattern needs the positions sketch named in the tree |
+| User pattern | built, not live | of holes in one plane that form no grid or circle, or `pattern: {"kind": "user"}`; of other features: contract |
 | Scaling, Affinity | done | `scale` |
 | Add, Remove, Intersect (boolean operations) | done | `combine`, and every `join` / `cut` / `intersect` |
 | Assemble | no build123d | |
@@ -129,6 +135,87 @@ thread, and CATIA's thread is cosmetic, so the solid is the drilled hole.
 One section is a point (`{"point": [x, y, z]}`), first or last, the other a
 sketch of one profile without holes. build123d's `loft([face, Vertex])`.
 
+### `sweep` along a `helix`
+
+```json
+{"type": "sweep", "id": "sweep1", "sketch": "sketch1", "frenet": true,
+ "operation": "new_body", "creates": ["Body1"],
+ "path": [{"type": "helix", "pitch": 4, "height": 10, "radius": 10,
+           "center": [0, 0, 0], "direction": [0, 0, 1],
+           "lefthand": false, "cone_angle": 0}]}
+```
+
+build123d's `sweep(profile, Helix(pitch, height, radius, center, direction,
+cone_angle, lefthand), is_frenet=True)`. The path is that one entity.
+`height` or `turns` (`height = turns x pitch x cos(cone_angle)`, both may be
+given if they agree); `center` (default the origin) and `direction`
+(default +Z) are the axis; `lefthand` defaults to false; `cone_angle`
+(degrees, default 0, positive widens along the direction) is
+build123d's: the pitch is then measured along the cone, so the advance per
+turn along the axis is `pitch x cos(cone_angle)`. The helix starts where
+OpenCascade starts it: `center + radius x X`, X the direction `gp_Ax3` picks
+for the axis (+X for a Z axis). An optional `start` point, if given, must be
+that point. `frenet` must be true: build123d's default frame twists the
+profile along a helix (0.8 % off for a 2 x 2 square). The profile is any
+planar sketch of one profile, anywhere (usually in a plane through the
+axis at the start), not reaching the axis, no taller along the axis than
+the pitch when there is more than one turn, and never edge-on to the motion.
+
+### `thread`
+
+```json
+{"type": "thread", "id": "thread1", "bodies": ["Body1"],
+ "face": {"type": "face", "geometry": "cylinder", "point": [0, 0, 25],
+          "area": 942.4778, "radius": 5},
+ "limit_face": {"type": "face", "geometry": "plane", "point": [0, 0, 40],
+                "normal": [0, 0, 1], "area": 78.5398},
+ "thread": "M10", "length": 15}
+```
+
+A cosmetic thread on a shaft: build123d has none, so the solid is
+unchanged. `face` is the cylindrical face anchor, `limit_face` the planar
+face anchor the thread starts from (which end), `length` its depth from
+there. `thread` is a designation or a mapping as a hole's (`designation`,
+`nominal_diameter`, `pitch`, default ISO coarse, `side` `right` or `left`).
+A `radius` on the face is optional; a shaft whose diameter is not the
+thread's nominal one is noted, not refused. A thread in a bore is a
+tapped `hole`.
+
+### `hole` `pattern`
+
+```json
+{"type": "hole", ..., "frames": [...], "pattern": {"kind": "user"}}
+```
+
+The hole's frames are the positions. Holes whose frames share their
+drilling direction and their plane, and form no grid or circle, are one
+seed Hole and a User Pattern without the field; `{"kind": "user"}` asks for
+it even for a grid. An optional `positions` list must be the frames'
+origins, in order. Patterns of other features still reach the tree
+unrolled: a `pattern` on them is a contract for later.
+
+### `move`
+
+```json
+{"type": "move", "id": "move1", "bodies": ["Body1"],
+ "matrix": [[0, -1, 0, 50], [1, 0, 0, 0], [0, 0, 1, 0]]}
+```
+
+The body moved in place by the rigid matrix `[R|t]` (determinant +1), its
+name kept: build123d's `body = body.moved(Location(...))`. A copy that
+moves is `copy`; a mirror is `mirror_in_place`.
+
+### `mirror_in_place`
+
+```json
+{"type": "mirror_in_place", "id": "mirror1", "bodies": ["Body1"],
+ "plane": {"origin": [40, 0, 0], "normal": [1, 1, 0]}}
+```
+
+The body replaced by its mirror image: build123d's
+`mirror(body, Plane(...), mode=Mode.REPLACE)`. A mirror joined back into
+its source stays `mirror`.
+
 ## How each is built
 
 | Tree | CATIA | Checked by |
@@ -138,6 +225,22 @@ sketch of one profile without holes. build123d's `loft([face, Vertex])`.
 | `hole` `thread` | The Hole as before, then `ThreadingMode` threaded, `HoleThreadStandard` "Metric Thick Pitch" (or "Metric Thin Pitch") with `HoleThreadDescription` the designation, `ThreadDepth`, `ThreadSide` | the hole's volume, as for any hole |
 | `hole` `bottom` `v` | `BottomType` V bottom, `BottomAngle` | the hole's volume |
 | `loft` to a point | A Multi-sections Solid from the sketch to a construction point, in its own body | the cone's closed form: volume `A·h/3`, centre of gravity a quarter of the way from the section's centroid to the apex |
+| `sweep` along a `helix` | The helix axis and start point (construction elements), a GSD Helix in `Tree_Construction` (pitch along the axis, height, taper; editable), the profile sketch, then a Rib (a Slot to cut) pulled along the axis: straight into the body in the human style, else in its own body | the helix's distance to two points of the tree's (a quarter turn in, the end); build123d's body after the feature; else the screw motion's closed form (below); a tapered helix has none, so only the part's volume |
+| `thread` | One Thread on the matched cylindrical face from the matched planar face, its side, diameter, depth and pitch set, the ISO table loaded (`CreateStandardThreadDesignTable`) | the body's volume unchanged (1e-6), the Thread reading back the tree's diameter, depth and pitch |
+| `hole` `pattern` user | The seed Hole, a sketch of the other positions (constrained in the human style), and a User Pattern (`AddNewUserPattern`, `AddFeatureToLocatePositions`) | build123d's body after the holes |
+| `move` | A Rotate about a construction line through the origin and a Translate of the body in work (`AddNewRotate2`, `AddNewTranslate2`) | volume unchanged, centre of gravity at `R c + t` |
+| `mirror_in_place` | A Symmetry of the body in work about the plane (an origin plane or a construction plane) | volume unchanged, centre of gravity mirrored |
+
+The screw motion's closed form: along a cylindrical helix the Frenet frame
+turns about the axis and advances `pitch / 2π` per radian, so every point of
+the profile moves rigidly. With `w(q) = s (d × (q − O))·n + (p / 2π) d·n`
+the motion's flux through the profile's plane (`s` +1 right-handed, `d` the
+axis, `n` the profile's normal), the volume is `Θ ∫w dA` (`Θ = 2π turns`):
+`A × 2π r_c × turns` for a profile in a plane through the axis (Pappus),
+`π a² × L` for a circle square to the helix. The centre of gravity
+integrates the screw over the profile's second moments
+(`catia_mcp/tree/helix.py`). build123d agrees to 2e-6 on the volume and
+1e-5 mm on the centre, both hands, on and off the origin.
 
 What is not documented, and so tried in order, each refusal or mismatch
 noted in the feature's report entry:
@@ -165,6 +268,35 @@ noted in the feature's report entry:
 - Without the Hole features (exact style, or every Hole layout refused), a V
   bottom is cut as a turned cone and the thread is noted as not modelled.
 
+The second slice, not run live yet, tries in order:
+
+- **Helix:** `AddNewHelix(axis, invert, start, pitch, height, clockwise,
+  0, taper, outward)` counter-clockwise first (right-handed about the axis
+  line's direction), then clockwise, each with the axis as given then
+  inverted. Each is measured against the tree's helix (a quarter turn in
+  tells the hand, the end the way); a helix CATIA cannot measure is kept
+  only if the Rib then matches, and with a whole number of turns its hand
+  is noted as unverified (either hand's centre of gravity is on the axis).
+- **Rib:** `AddNewRibFromRef` (references), then `AddNewRib` (objects);
+  each pulled along the helix axis (`PullingDirElement`), then with the
+  default profile control (keep angle). `AddNewSlotFromRef` and
+  `AddNewSlot` to cut. CATIA's helix is a spline approximation: the part's
+  volume check allows 5e-4 of each swept solid.
+- **Thread:** `AddNewThreadWithRef(face, limit)`, then
+  `AddNewThreadWithOutRef` and its `LateralFaceElement` and
+  `LimitFaceElement`. The ISO table (`CreateStandardThreadDesignTable`,
+  thick or thin pitch, `CatThreadStandard` from the type library, else the
+  Hole's values read live) first; a table that changes a value is removed
+  (the relations it added) for "No Standard". An update that fails is tried
+  once with `ReverseDirection`.
+- **User pattern:** as many instances as points (V5's recipe), then with
+  `AnchorPoint` the seed's position, then counting the seed. Live on R428
+  the interactive tool saw a user pattern of a Hole refused on update; then
+  the holes are one Hole each, as before, and the positions sketch is
+  hidden, not deleted.
+- **Symmetry:** `AddNewSymmetry2(plane)`, then `AddNewSymmetry2` of nothing
+  with its `HybridShape.Reference` set after.
+
 ## Live checks
 
 The m10 fixtures in `tests/fixtures/trees/` are the live cases:
@@ -181,8 +313,21 @@ The m10 fixtures in `tests/fixtures/trees/` are the live cases:
 | `m10_loft_pyramid_tip` | a 20×20 square lofted to an off-centre point | 2000 |
 | `m10_loft_cone_join` | a Ø16 cone lofted onto a block | 10005.3096 |
 
+The m11 fixtures are the second slice's (not run live yet):
+
+| Fixture | Feature | Expected (mm³) |
+|---|---|---|
+| `m11_move_in_place` | an L block turned 90° about Z and moved 50 mm in X, then drilled where it now is | 3499.4690 |
+| `m11_mirror_in_place` | the L block mirrored in place about the plane x + y = 40 | 3600 (centre 30.8333, 28.3333, 4) |
+| `m11_shaft_thread` | a cosmetic M10 thread, 15 mm from the end of a stepped shaft | 4366.8138 (unchanged) |
+| `m11_user_pattern_holes` | four Ø6 through holes at no grid: a Hole and a user pattern | 22869.0266 |
+| `m11_helix_spring` | a Ø2 wire, 2.5 turns of radius 10, pitch 4 | 493.4802 (centre 0, 1.2764, 5) |
+| `m11_helix_thread_cut` | a left-hand 60° groove, 9.5 turns of pitch 1.5, cut in a Ø12 shaft | 3266.4683 |
+| `m11_helix_tapered_spring` | a Ø1.6 wire on a helix widening 8° | 414.8661 (build123d only) |
+
 `python scripts/probe_part_design.py --report part_design_probe.json` reads
-the enums above from the type library, then builds every fixture with the
+the enums above (and the thread's, the helix's and the transformations'
+signatures) from the type library, then builds every fixture with the
 tree command, each in a new part, and writes one JSON report with every
 build's notes (which way each feature was built). One fixture at a time:
 `python -m catia_mcp.tree build tests\fixtures\trees\m10_draft_two_sides.json --report draft.json`.
@@ -236,9 +381,13 @@ M8, at the tree's tap drills).
 ## Not done yet
 
 - Stiffener: no build123d operation, so no tree carries one.
-- Helix paths for ribs and slots (springs, modelled threads): the `sweep`
-  path would need a helix entity (build123d's `Helix`), drawn as a GSD
-  helix in `Tree_Construction`.
+- Helix paths mixed with lines or arcs (a spring with straight ends), and
+  sweeps whose profile is not Frenet (`frenet: false`).
+- Patterns of other features than holes (`pattern` on an extrude), and user
+  patterns of holes in several planes.
+- Sew Surface (a surface sewn onto a body), Axis to axis.
+- Internal cosmetic threads (taps) on an existing bore: a tapped `hole`
+  covers the usual case.
 - Drafts with a parting element, reflect-line and variable drafts; drafts of
   faces CATIA can only reach after a fillet.
 - Extrudes up to a limit in another body (`until_target`), tapered or
