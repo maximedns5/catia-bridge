@@ -109,7 +109,7 @@ def feature_needs(feature: dict[str, Any], sketches: dict[str, dict[str, Any]]) 
         # GSD surfaces (catia_mcp/tree/surface_builder.py): their axes, split
         # planes and loft closing points are construction elements.
         needs.add(SURFACE)
-        if kind in ("surface", "split_surface"):
+        if kind in ("surface", "split_surface", "curve"):  # curves: named points, axes
             needs.add(WIREFRAME)
     elif kind == "sweep":
         sketch = sketches.get(feature.get("sketch"))

@@ -1,0 +1,164 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S7/Wires",
+   "name": "Wires",
+   "features": [
+    {
+     "type": "curve",
+     "id": "curve1",
+     "name": "Polyline1",
+     "op": "polyline",
+     "points": [
+      [
+       0,
+       0,
+       0
+      ],
+      [
+       20,
+       0,
+       5
+      ],
+      [
+       20,
+       15,
+       0
+      ],
+      [
+       0,
+       15,
+       5
+      ]
+     ],
+     "closed": true,
+     "creates": [
+      "Loop"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Extrude1",
+     "op": "extrude",
+     "inputs": [
+      "Loop"
+     ],
+     "direction": [
+      0,
+      0,
+      10
+     ],
+     "creates": [
+      "Band"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve2",
+     "name": "Polyline2",
+     "op": "polyline",
+     "points": [
+      [
+       30,
+       0,
+       0
+      ],
+      [
+       50,
+       0,
+       0
+      ],
+      [
+       40,
+       10,
+       10
+      ]
+     ],
+     "closed": true,
+     "creates": [
+      "Triangle"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface2",
+     "name": "Fill1",
+     "op": "fill",
+     "inputs": [
+      "Triangle"
+     ],
+     "creates": [
+      "Plate"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve3",
+     "name": "Circle1",
+     "op": "circle",
+     "center": [
+      0,
+      40,
+      10
+     ],
+     "normal": [
+      1,
+      1,
+      1
+     ],
+     "radius": 6,
+     "creates": [
+      "Hoop"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface3",
+     "name": "Fill2",
+     "op": "fill",
+     "inputs": [
+      "Hoop"
+     ],
+     "creates": [
+      "Disc"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface4",
+     "name": "Extrude2",
+     "op": "extrude",
+     "inputs": [
+      "Hoop"
+     ],
+     "direction": [
+      5,
+      5,
+      5
+     ],
+     "creates": [
+      "Pipe"
+     ]
+    },
+    {
+     "type": "thicken",
+     "id": "thicken1",
+     "name": "Thicken1",
+     "inputs": [
+      "Disc"
+     ],
+     "thickness": 2,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

@@ -38,6 +38,7 @@ from catia_mcp.tree.anchors import (
     match_edges,
     match_faces,
 )
+from catia_mcp.tree.curve_reference import record_shape
 from catia_mcp.tree.extrude import extrude_vector
 from catia_mcp.tree.geometry import (
     Frame,
@@ -51,7 +52,7 @@ from catia_mcp.tree.geometry import (
 )
 from catia_mcp.tree.nurbs import Nurbs, clamped
 from catia_mcp.tree.placement import place_part
-from catia_mcp.tree.surface_reference import solid_of, surface_of, surface_properties
+from catia_mcp.tree.surface_reference import solid_of
 from catia_mcp.tree.surfaces import SOLID_FROM_SURFACE, SURFACE_TYPES
 
 
@@ -313,10 +314,8 @@ def build_part(part: dict[str, Any], external: Any = None, on_feature: Any = Non
             solid = solid_of(feature, surfaces)
             out.setdefault("solids", {})[str(feature.get("id"))] = mass(solid)
             _add_solid(bodies, feature, solid)
-        elif kind in SURFACE_TYPES:
-            (name,) = feature["creates"]
-            surfaces[name] = surface_of(feature, sketches, surfaces)
-            out.setdefault("surfaces", {})[name] = surface_properties(surfaces[name])
+        elif kind in SURFACE_TYPES:  # surfaces and 3D curves (curve_reference.py)
+            record_shape(feature, sketches, surfaces, bodies, out)
         elif external is not None:
             external(part, feature, bodies)
         else:
