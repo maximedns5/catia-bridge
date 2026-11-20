@@ -1,0 +1,75 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S7/Ribbon",
+   "name": "Ribbon",
+   "features": [
+    {
+     "type": "curve",
+     "id": "curve1",
+     "name": "Spline1",
+     "op": "spline",
+     "points": [
+      [
+       0,
+       0,
+       0
+      ],
+      [
+       10,
+       5,
+       3
+      ],
+      [
+       20,
+       0,
+       8
+      ],
+      [
+       30,
+       -5,
+       4
+      ]
+     ],
+     "creates": [
+      "Rail"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Extrude1",
+     "op": "extrude",
+     "inputs": [
+      "Rail"
+     ],
+     "direction": [
+      0,
+      0,
+      10
+     ],
+     "creates": [
+      "Ribbon"
+     ]
+    },
+    {
+     "type": "thicken",
+     "id": "thicken1",
+     "name": "Thicken1",
+     "inputs": [
+      "Ribbon"
+     ],
+     "thickness": 1,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

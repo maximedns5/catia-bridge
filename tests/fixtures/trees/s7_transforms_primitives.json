@@ -1,0 +1,156 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S7/Shapes",
+   "name": "Shapes",
+   "features": [
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Sphere1",
+     "op": "sphere",
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "radius": 10,
+     "creates": [
+      "Ball"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface2",
+     "name": "Cylinder1",
+     "op": "cylinder",
+     "axis": {
+      "origin": [
+       30,
+       0,
+       0
+      ],
+      "direction": [
+       0,
+       0,
+       1
+      ]
+     },
+     "radius": 5,
+     "length": 20,
+     "creates": [
+      "Post"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface3",
+     "name": "Translate1",
+     "op": "translate",
+     "inputs": [
+      "Post"
+     ],
+     "vector": [
+      0,
+      20,
+      0
+     ],
+     "creates": [
+      "Post2"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface4",
+     "name": "Rotate1",
+     "op": "rotate",
+     "inputs": [
+      "Post"
+     ],
+     "axis": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "direction": [
+       0,
+       0,
+       1
+      ]
+     },
+     "angle": 90,
+     "creates": [
+      "Post3"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface5",
+     "name": "Mirror1",
+     "op": "mirror",
+     "inputs": [
+      "Post"
+     ],
+     "plane": {
+      "origin": [
+       50,
+       0,
+       0
+      ],
+      "normal": [
+       1,
+       0,
+       0
+      ]
+     },
+     "creates": [
+      "Post4"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface6",
+     "name": "Scale1",
+     "op": "scale",
+     "inputs": [
+      "Ball"
+     ],
+     "center": [
+      20,
+      0,
+      0
+     ],
+     "ratio": 0.5,
+     "creates": [
+      "Pebble"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface7",
+     "name": "Affinity1",
+     "op": "affinity",
+     "inputs": [
+      "Ball"
+     ],
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "ratios": [
+      2,
+      1,
+      1
+     ],
+     "creates": [
+      "Egg"
+     ]
+    }
+   ],
+   "bodies": []
+  }
+ ]
+}

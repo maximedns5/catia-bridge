@@ -92,6 +92,57 @@ body into the target with Add / Remove / Intersect.
   measurable, then the `volume` one; on V5 from `SPAWorkbench`
   (`catia_mcp/measure.py`).
 
+### 3D curves, trims, extracts, transforms (second slice)
+
+`catia_mcp/tree/curves.py` (contract), `curve_builder.py` (CATIA),
+`curve_reference.py` (build123d). Curves have names of their own, in the
+same namespace as surfaces, and go in a `Curves` geometrical set; their
+points and axes are named construction elements (`Point (8, 0, 0)`,
+`Helix axis Z`).
+
+| Tree feature | build123d reference | CATIA |
+|---|---|---|
+| `curve` `op: helix`, `axis`, `pitch`, `height`, `radius`, `hand`, `taper` | `Edge.make_helix` | Helix (`AddNewHelix`) about a named axis, from a named start point |
+| `curve` `op: spline`, `points`, `tangents`, `closed` | `Edge.make_spline` | Spline (`AddNewSpline`, `AddPoint` or `AddPointWithConstraintExplicit`) through named points |
+| `curve` `op: polyline`, `points`, `closed` | `Wire.make_polygon` | Polyline (`AddNewPolyline`, `InsertElement`) |
+| `curve` `op: circle`, `center`, `normal`, `radius` | `Edge.make_circle` | Circle (`AddNewCircleCtrRad`) on a named plane, whole |
+| `curve` `op: project`, `inputs` [curve or sketch, surface], `direction` | `Wire.project_to_shape` (nearest solution), or OpenCascade's normal projection | Projection (`AddNewProject`), along a direction or normal |
+| `curve` `op: intersect`, `inputs` [surface, surface] or [surface] and `plane` | OpenCascade's section | Intersection (`AddNewIntersection`) with a surface or a named plane |
+| `surface` `op: extrude` / `revolve` / `fill` with a curve input, `sweep` with a `guide` curve | `Shell.extrude`, `Shell.revolve`, `Face`, `Shell.sweep` | Extrude, Revolution, Fill, explicit Sweep of the curve itself |
+| `surface` `op: sphere`, `center`, `radius` | the sphere's face | Sphere (`AddNewSphere`), whole |
+| `surface` `op: cylinder`, `axis`, `radius`, `length` | the extruded circle | Cylinder (`AddNewCylinder`) |
+| `surface` `op: translate` (`vector`), `rotate` (`axis`, `angle`), `mirror` (`plane`), `scale` (`center`, `ratio`), `affinity` (`origin`, `ratios`) | OpenCascade transformations | Translate, Rotate, Symmetry, Scaling (`AddNewHybridScaling`, else an Affinity), Affinity (`AddNewAffinity`) |
+| `surface` `op: loft`, three or more sections, `ruled: true` | one ruled band per pair, sewn | one Multi-sections Surface per pair (`<name> band 1`...), joined |
+| `trim_surfaces`, `inputs` [two surfaces], `keep_points` | each surface split by the other, the part nearest its keep point kept, sewn | Trim (`AddNewHybridTrim`) |
+| `extract`, `bodies` [one body], `face` (a face anchor) | the body's face the anchor names | Extract (`AddNewExtract`, no propagation) of the face found as a shell's faces are |
+
+- **Checks.** Each curve's length, and its centre when CATIA measures it,
+  must agree with build123d's within 1e-3 (the expected properties'
+  `curves`); surfaces as in the first slice. The report lists each part's
+  `curves` (name, op, CATIA name, measured and expected length, centre).
+- **Undocumented senses, tried in order.** A helix's axis (as given or
+  inverted), turning sense and taper side; a cylinder's direction; a
+  translation's and a rotation's sense; a trim's two orientations; an
+  extract's propagation (none, tangent, CATIA's default); a projection's
+  solution type (CATIA's default, then nearest, then all). A fractional
+  number of turns puts a helix's centre off its axis, so the centre tells
+  its hand.
+- **Helix numbers.** build123d's pitch runs along a tapered helix's cone; CATIA
+  gets the pitch along the axis (`pitch x cos(taper)`). The helix starts at
+  `origin + radius x X`, X being OpenCascade's reference direction for the
+  axis (`gp_Ax2`), so the start point is the script's.
+- **Splines.** CATIA interpolates its own spline through the tree's points
+  (and tangents when the script gives them), not OpenCascade's: the spline
+  and everything made from it are checked within 2 % and the report gives
+  the `deviation`. A solid made from it adds 2 % of its volume to the part
+  check's spline allowance.
+- **Parameters.** A helix's `params.pitch` (untapered) and `params.height`,
+  a circle's or a sphere's `params.radius`, a translation's
+  `params.distance`, a rotation's `params.angle`, a scaling's
+  `params.ratio` drive the CATIA values when CATIA exposes them.
+- **3DEXPERIENCE lengths.** The curve measurable's unit is not documented:
+  the reading that fits build123d's length (m or mm) is kept for the part.
+
 ### Contract additions requested from the app
 
 All optional and additive; existing trees are unchanged.
@@ -105,15 +156,39 @@ All optional and additive; existing trees are unchanged.
   `join_surfaces`, `split_surface`, `thicken`, `close_surface`. `distance` and
   `thickness` follow build123d's face normal, as the script sees it.
 - Part `bodies` may be empty: a part of surfaces only.
+- Second slice: `curve` (`op` `helix`, `spline`, `polyline`, `circle`,
+  `project`, `intersect`; `creates` [one curve name]); surface ops `sphere`,
+  `cylinder`, `translate`, `rotate`, `mirror`, `scale`, `affinity`; curve
+  inputs to `extrude` (with `direction`, the full vector), `revolve`, `fill`
+  and `sweep` (`guide`: a curve name instead of `path`); `loft` through three
+  or more sections when `ruled`; `trim_surfaces` (`inputs`, `keep_points`: a
+  point on the part of each surface to keep, as a designer clicks it);
+  `extract` (`bodies`, `face`: a face anchor, as a shell's). Helices follow
+  build123d's `Helix` (`taper` is its `cone_angle`, `hand: left` its
+  `lefthand`), splines its `Spline` (`closed` is `periodic`).
 
-### Limits of this first slice
+### Limits
 
-Refused by `check`: spline entities in a surface's curves, a curve that is
-not one connected chain, fills of open curves, lofts through more than two
-sections or with wire sections, sweeps outside the solid sweep's rules
-(planar, tangent-continuous path; profile perpendicular at the start), and
+Refused by `check`: spline entities in a sketch used as a surface's curve,
+a sketch curve that is not one connected chain, fills of open or non-planar
+curves, smooth lofts through more than two sections, lofts with wire or
+curve sections, sketch-path sweeps outside the solid sweep's rules (planar,
+tangent-continuous path; profile perpendicular at the start), and
 thickening on both sides. Close Surface needs planar openings in the
 reference.
+
+Not done, and why:
+
+- **Smooth multi-sections through three or more sections, guides.**
+  OpenCascade interpolates one surface through every section, CATIA its own;
+  build123d has no guided loft. No reference would agree with CATIA.
+- **Blend.** build123d has no blend; a tangent or curvature blend has no
+  OpenCascade counterpart, and a point blend is CATIA's own surface, not a
+  ruled loft in general.
+- **Shape fillet.** OpenCascade fillets edges of solids only, not two
+  surfaces: no reference.
+- **Spiral, conics, healing, boundary, extrapolate, near, sew.** Not in
+  build123d's vocabulary yet.
 
 ## Generative Shape Design coverage
 
@@ -126,29 +201,30 @@ Status of each GSD tool in the tree builder (the interactive MCP tools in
 | Line | done | point-point, named axes and directions |
 | Plane | done | offset, angle, equation; one per distinct plane |
 | Curves (sketch) | done | sketches on named planes; `wire: true` curves |
-| Circle / conic (3D) | not yet | sketch circles and arcs only |
-| Helix | not yet | |
+| Circle / conic (3D) | done, not live | `curve` `op: circle`, a whole circle; conics not yet |
+| Helix | done, not live | `curve` `op: helix`, taper and hand |
 | Spiral | not yet | |
-| Spline (3D) | not yet | sketch splines exist for solids, not for surfaces |
-| Projection | not yet | |
-| Intersection | not yet | |
+| Spline (3D) | done, not live | `curve` `op: spline`, checked within 2 % (CATIA's interpolation) |
+| Polyline | done, not live | `curve` `op: polyline` |
+| Projection | done, not live | `curve` `op: project`, along a direction or normal |
+| Intersection | done, not live | `curve` `op: intersect`, two surfaces or a surface and a plane |
 | Extrude | done | `surface` `op: extrude` |
 | Revolve | done | `surface` `op: revolve` |
-| Sphere | not yet | |
-| Cylinder | not yet | an extruded circle gives the same surface |
+| Sphere | done, not live | `surface` `op: sphere`, whole |
+| Cylinder | done, not live | `surface` `op: cylinder` |
 | Offset | done | `surface` `op: offset` |
 | Sweep | done | explicit sweep along a planar path |
 | Fill | done | planar fill of one closed curve |
-| Multi-sections Surface | done | two sections |
-| Blend | not yet | |
+| Multi-sections Surface | done | two sections (live); three or more ruled (not live); smooth or guided through more: no reference |
+| Blend | no | no build123d reference (see Limits) |
 | Join | done | `join_surfaces` |
 | Healing | not yet | |
 | Split | done | `split_surface` by a plane |
-| Trim | not yet | two surfaces trimming each other |
+| Trim | done, not live | `trim_surfaces` with keep points |
 | Boundary | not yet | |
-| Extract | not yet | |
-| Shape fillets | not yet | |
-| Translate / Rotate / Symmetry / Scaling / Affinity | not yet for surfaces | bodies: `copy` (Rotate, Translate), `mirror`, `scale` (Affinity) |
+| Extract | done, not live | `extract` of a face named by a face anchor |
+| Shape fillets | no | no OpenCascade surface-to-surface fillet (see Limits) |
+| Translate / Rotate / Symmetry / Scaling / Affinity | done for surfaces, not live | `surface` ops; bodies: `copy`, `mirror`, `scale` |
 | Extrapolate | not yet | |
 | Near | not yet | |
 | Thick Surface | done | `thicken` |
@@ -166,6 +242,14 @@ Status of each GSD tool in the tree builder (the interactive MCP tools in
 | `s4_loft_split_offset_thicken` | a frustum skin lofted, split at mid height, offset 1 mm, thickened |
 | `s5_sweep_ribbon_thicken` | a ribbon swept along a line and a quarter turn, thickened |
 | `s6_surfaces_only` | a quarter revolution and a symmetric arc extrude, no body |
+| `s7_helix_coil` | a helix (2.5 turns) and a 3D circle at its start, swept into a coil, thickened |
+| `s7_helix_taper_left` | a tapered left-hand helix about X and a helix about Y, curves only |
+| `s7_spline_ribbon` | a spline through four points, extruded, thickened (checked within 2 %) |
+| `s7_polyline_circle` | a closed saddle polyline extruded, a planar triangle filled, a tilted 3D circle filled and extruded |
+| `s7_project_intersect` | a drum cut by a tilted plane (ellipse filled), a circle projected along Y and normally, two surfaces intersected |
+| `s7_loft_three_sections` | a ruled vase through three circles (two bands joined), closed |
+| `s7_trim_extract` | a block's top face extracted and trimmed with a cylinder |
+| `s7_transforms_primitives` | a sphere and a cylinder, translated, rotated, mirrored, scaled, affine |
 
 ## Live status
 
@@ -187,5 +271,8 @@ Also live with the new reference geometry, each exact: `p1_properties_plate`
 `Plane Z+40`, an equation plane for a tilted limit).
 
 What to read in each report: `success`, each part's `construction` (names,
-`verified`, notes), `surfaces` (measured against expected area) and the
-features' `notes` (which variant CATIA needed).
+`verified`, notes), `surfaces` (measured against expected area), `curves`
+(measured against expected length) and the features' `notes` (which variant
+CATIA needed).
+
+The `s7_*` fixtures (second slice) have not run live yet.

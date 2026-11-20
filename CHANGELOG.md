@@ -249,6 +249,17 @@ All notable changes to this project are documented here.
   is the offline analysis and `scripts/probe_clashes.py` looks for a clash
   API. New fixtures `pin_interference` and `shaft_bushing`
   (`scripts/make_clash_fixtures.py`).
+- **Generative Shape Design, second slice** (docs/surfaces.md): 3D curves
+  as tree features (`curve`: helix, spline, polyline, circle, projection,
+  intersection) in a `Curves` set, each checked by its length and centre;
+  surfaces from curves (extrude, revolve, fill, sweep along a guide);
+  sphere and cylinder; translate, rotate, symmetry, scaling and affinity of
+  a surface; ruled multi-sections through three or more sections;
+  `trim_surfaces` and `extract`. CATIA's undocumented senses are tried in
+  order and checked against build123d; splines are CATIA's own
+  interpolation, checked within 2 %. Blend, shape fillets and smooth
+  multi-sections through more sections are documented as having no
+  build123d reference. Eight `s7_*` fixtures.
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart
