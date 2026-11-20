@@ -14,7 +14,7 @@ student role); the CATIA V5 routes have only run against the test fake.
 | Knowledgeware | typed parameters with comments, formulas, parameter sets, mass formula | yes | design tables (E_NOTIMPL on R428), rules and checks (no Knowledge Advisor licence) | [materials-properties.md](materials-properties.md) |
 | Materials, appearance, properties | colours, BOM properties, PLM attributes, material (V5 catalog) | yes, the material as parameters | a 3DEXPERIENCE Core Material (no service reachable) | [materials-properties.md](materials-properties.md) |
 | Assembly Design | STEP structure, native parts placed exactly, inferred constraints | positions yes, constraints no | constraints on 3DEXPERIENCE (no impacteds through COM: reported for doing by hand); V5 constraints fake-tested | [assemblies.md](assemblies.md), [assembly-constraints.md](assembly-constraints.md) |
-| Generative Drafting | views, sections, details, ISO scale, generated dimensions, title block, BOM, balloons | yes (bracket) | auxiliary, broken, breakout views; centre lines; GD&T; roughness; multi-sheet; PDF/DXF on 3DEXPERIENCE | [drafting.md](drafting.md) |
+| Generative Drafting | views, sections (straight, stepped, aligned), details, auxiliary views, ISO scale, generated dimensions, hole and thread callouts (ISO 129 symbols), centre lines, title block, BOM, balloons, multi-sheet (a sheet per part of an assembly), PDF/DXF per sheet on V5 | the first slice yes (bracket); the second slice not yet | broken, breakout, clipping views; GD&T; roughness; manual dimensions (no generated geometry exposed); PDF/DXF on 3DEXPERIENCE (ExportData refused) | [drafting.md](drafting.md) |
 
 Not covered, and why:
 
