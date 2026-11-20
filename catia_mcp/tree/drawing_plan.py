@@ -38,6 +38,7 @@ from datetime import date as _date
 from typing import Any
 
 from catia_mcp.tree.geometry import Frame, Vec, add, cross, dot, norm, scale, unit
+from catia_mcp.tree.helix import helix_samples
 
 SHEETS: dict[str, tuple[float, float]] = {
     "A4": (297.0, 210.0), "A3": (420.0, 297.0), "A2": (594.0, 420.0),
@@ -212,6 +213,7 @@ def estimate_geometry(part: dict[str, Any]) -> PartGeometry:
         elif kind == "sweep":
             path = [tuple(float(c) for c in e[k]) for e in feature.get("path") or []
                     for k in ("start", "mid", "end") if e.get(k) is not None]
+            path += helix_samples(feature.get("path") or [])  # helix.py
             profile = sketch_points(sketches[feature["sketch"]]) if feature.get(
                 "sketch") in sketches else []
             reach = 0.0

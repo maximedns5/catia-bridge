@@ -249,6 +249,18 @@ All notable changes to this project are documented here.
   is the offline analysis and `scripts/probe_clashes.py` looks for a clash
   API. New fixtures `pin_interference` and `shaft_bushing`
   (`scripts/make_clash_fixtures.py`).
+- **Part Design, second slice** (`docs/part-design.md`, not validated live
+  yet): sweeps along a `helix` path entity (springs, modelled threads: a GSD
+  Helix and a Rib or Slot pulled along its axis, checked by the screw
+  motion's closed form or build123d's body, the helix measured for its hand
+  and way), `thread` (a cosmetic Thread on a shaft's cylindrical face from
+  its limit face, the ISO table or "No Standard", the volume unchanged and
+  the values read back), user patterns of holes in one plane that form no
+  grid or circle (one Hole and a User Pattern on a sketch of points, else one
+  Hole each), `move` (a Rotate and a Translate of the body in place) and
+  `mirror_in_place` (a Symmetry). Optional tree fields, preflight rules,
+  build123d references, fake CATIA tests and seven `m11_*` fixtures, added
+  to `scripts/probe_part_design.py`.
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart

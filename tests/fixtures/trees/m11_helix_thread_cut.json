@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "/M11/HelixThreadCut",
+      "name": "HelixThreadCut",
+      "bodies": [
+        "Body1"
+      ],
+      "features": [
+        {
+          "type": "sketch",
+          "id": "sketch1",
+          "name": "Sketch1",
+          "plane": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          },
+          "entities": [
+            {
+              "type": "circle",
+              "center": [
+                0,
+                0
+              ],
+              "radius": 6.0,
+              "id": "c"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "c"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "extrude1",
+          "name": "Extrude1",
+          "sketch": "sketch1",
+          "distance": 30,
+          "operation": "new_body",
+          "creates": [
+            "Body1"
+          ]
+        },
+        {
+          "type": "sketch",
+          "id": "sketch2",
+          "name": "Sketch2",
+          "plane": {
+            "origin": [
+              6,
+              0,
+              5
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ]
+          },
+          "entities": [
+            {
+              "type": "line",
+              "start": [
+                -0.8,
+                0.0
+              ],
+              "end": [
+                0.4,
+                -0.692820323027551
+              ],
+              "id": "e0"
+            },
+            {
+              "type": "line",
+              "start": [
+                0.4,
+                -0.692820323027551
+              ],
+              "end": [
+                0.4,
+                0.692820323027551
+              ],
+              "id": "e1"
+            },
+            {
+              "type": "line",
+              "start": [
+                0.4,
+                0.692820323027551
+              ],
+              "end": [
+                -0.8,
+                0.0
+              ],
+              "id": "e2"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "e0",
+                "e1",
+                "e2"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "sweep",
+          "id": "sweep1",
+          "name": "Sweep1",
+          "sketch": "sketch2",
+          "frenet": true,
+          "transition": "Transition.TRANSFORMED",
+          "operation": "cut",
+          "bodies": [
+            "Body1"
+          ],
+          "path": [
+            {
+              "type": "helix",
+              "pitch": 1.5,
+              "turns": 9.5,
+              "radius": 6,
+              "center": [
+                0,
+                0,
+                5
+              ],
+              "direction": [
+                0,
+                0,
+                1
+              ],
+              "lefthand": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

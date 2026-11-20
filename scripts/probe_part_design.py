@@ -1,5 +1,7 @@
 """Live probe of the Part Design additions: drafts, extrudes up to a limit,
-tapped and V-bottomed holes, lofts to a point (docs/part-design.md).
+tapped and V-bottomed holes, lofts to a point, and the second slice (sweeps
+along a helix, a cosmetic thread on a shaft, a user pattern of holes, bodies
+moved and mirrored in place) (docs/part-design.md).
 
 None of their COM calls has been validated on a live CATIA yet. This probe
 attaches to the running CATIA (it never starts one) and:
@@ -7,7 +9,7 @@ attaches to the running CATIA (it never starts one) and:
 1. reads, in a scratch part, the type library's enums the builder relies on
    (limit modes, hole threading, bottoms and thread sides, draft modes),
    since their values are only the CAA help's declared order otherwise;
-2. builds each m10 fixture with the tree command, exactly as
+2. builds each m10 and m11 fixture with the tree command, exactly as
    `python -m catia_mcp.tree build <fixture> --report <file>` does, each in
    a new part, and keeps every report: the notes say which way each feature
    was built (which limit mode, which draft orientation, which thread
@@ -50,11 +52,26 @@ FIXTURES = (
     "m10_tapped_holes",
     "m10_loft_pyramid_tip",
     "m10_loft_cone_join",
+    # The second slice (docs/part-design.md): helix sweeps, a shaft thread, a
+    # user pattern of holes, bodies moved and mirrored in place.
+    "m11_move_in_place",
+    "m11_mirror_in_place",
+    "m11_shaft_thread",
+    "m11_user_pattern_holes",
+    "m11_helix_spring",
+    "m11_helix_thread_cut",
+    "m11_helix_tapered_spring",
 )
 ENUMS = ("CatLimitMode", "CatHoleThreadingMode", "CatHoleThreadSide", "CatHoleBottomType",
          "CatHoleType", "CatDraftMode", "CatDraftNeutralPropagationMode",
-         "CatDraftMultiselectionMode", "CatDraftPartingMode", "CatHoleThreadStandard")
-SIGNATURES = ("AddNewDraft", "AddNewCloseSurface", "AddNewHoleFromSketch", "AddNewLoft")
+         "CatDraftMultiselectionMode", "CatDraftPartingMode", "CatHoleThreadStandard",
+         "CatThreadSide", "CatThreadStandard", "CatThreadPolarity")
+SIGNATURES = ("AddNewDraft", "AddNewCloseSurface", "AddNewHoleFromSketch", "AddNewLoft",
+              "AddNewRib", "AddNewRibFromRef", "AddNewSlotFromRef", "AddNewThreadWithRef",
+              "AddNewThreadWithOutRef", "AddNewUserPattern", "AddNewSymmetry2",
+              "AddNewRotate2", "AddNewTranslate2")
+# HybridShapeFactory methods whose exact signature the second slice relies on.
+GSD_SIGNATURES = ("AddNewHelix",)
 
 
 def facts(platform: str, plm_type: str) -> dict[str, Any]:
@@ -75,6 +92,8 @@ def facts(platform: str, plm_type: str) -> dict[str, Any]:
         found: dict[str, Any] = {name: find_enum(objs, name) for name in ENUMS}
         # The exact signatures: live on R428 AddNewDraft failed every way tried.
         found["signatures"] = {m: method_params(part.ShapeFactory, m) for m in SIGNATURES}
+        found["gsd_signatures"] = {m: method_params(part.HybridShapeFactory, m)
+                                   for m in GSD_SIGNATURES}
         return found
 
     out["enums"] = worker.run_guarded(read, label="the enums")
@@ -130,7 +149,7 @@ def build(name: str, args) -> dict[str, Any]:
     detail = (record.get("report") or {}).get("parts_detail") or []
     record["summary"] = [
         {"id": f.get("id"), "type": f.get("type"), "ok": f.get("ok"), "catia": f.get("catia"),
-         "notes": f.get("notes"), "thread": f.get("thread")}
+         "notes": f.get("notes"), "thread": f.get("thread"), "helix": f.get("helix")}
         for part in detail for f in part.get("features", []) if f.get("type") != "sketch"]
     return record
 

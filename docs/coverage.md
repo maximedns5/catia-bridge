@@ -8,7 +8,7 @@ student role); the CATIA V5 routes have only run against the test fake.
 
 | Workbench | Covered | Live on R428 | Missing (why) | Details |
 |---|---|---|---|---|
-| Part Design | 26 of 43 features | all 26 | 7 need a tree field from the app (helix, guided loft, variable fillet, shaft thread, user pattern, move in place, sew surface); 10 have no build123d operation (stiffener, multi-pad, Solid Combine, Remove/Replace Face, variable drafts...) | [part-design.md](part-design.md) |
+| Part Design | 30 of 44 features | 26; 4 built and fake-tested, not run live yet (rib or slot along a helix, shaft thread, user pattern of holes, symmetry and move in place) | 4 need a tree field from the app (guided loft, variable fillet, sew surface, axis to axis); 10 have no build123d operation (stiffener, multi-pad, Solid Combine, Remove/Replace Face, variable drafts...) | [part-design.md](part-design.md) |
 | Sketcher | lines, circles, arcs, splines; fully constrained rectangles, circles, slots, polygons, stepped profiles | yes | constraints on free-form sketches | [feature-tree.md](feature-tree.md) |
 | Generative Shape Design | 14 of 32 tools: points, lines, named planes, extrude, revolve, loft, sweep, fill, offset, join, split, thick surface, close surface | yes, 7 fixtures exact | helix, spiral, 3D curves, projection, intersection, blend, trim, extract, shape fillets, surface transforms | [surfaces.md](surfaces.md) |
 | Knowledgeware | typed parameters with comments, formulas, parameter sets, mass formula | yes | design tables (E_NOTIMPL on R428), rules and checks (no Knowledge Advisor licence) | [materials-properties.md](materials-properties.md) |
