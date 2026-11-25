@@ -96,11 +96,14 @@ from catia_mcp.tree.geometry import (
     scaled_point,
     unit,
 )
+from catia_mcp.tree.helix import is_helix_path
 from catia_mcp.tree.loft import LoftPlan, plan_loft, section_sketch
 from catia_mcp.tree.nurbs import Nurbs, drawing
 from catia_mcp.tree.parameters import ParameterPlan
 from catia_mcp.tree.partdesign import bottom_angle, native, thread_spec, tip_height, tip_sketch
 from catia_mcp.tree.partdesign_com import PartDesignFailed, PartDesignPlus
+from catia_mcp.tree.partdesign_extra import UserLayout
+from catia_mcp.tree.partdesign_extra_com import ExtraFeatures
 from catia_mcp.tree.patterns import GridPattern, PolarPattern, detect
 from catia_mcp.tree.placement import place_part, placement_transform
 from catia_mcp.tree.preflight import SUPPORTED, check
@@ -249,7 +252,7 @@ class HumanMismatch(BuildFailed):
         self.items = items
 
 
-class TreeBuilder(SurfaceFeatures):
+class TreeBuilder(SurfaceFeatures, ExtraFeatures):
     def __init__(self, conn: CATIAConnection, plm_type: str = "3DShape",
                  deadline_s: float = 170.0, log: Callable[[str], None] = lambda _: None,
                  ownership: str | None = None, step_dir: str | None = None,
@@ -564,12 +567,15 @@ class TreeBuilder(SurfaceFeatures):
     def _feature_hole(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
         if self._human(feature):
             pattern = detect(feature["frames"])
+            user = self._user_layout(feature, pattern)  # partdesign_extra_com.py
             # One Hole and a pattern when the positions form a grid or a
-            # circle; else, or if that fails, one Hole per position; else
+            # circle, or a user pattern of them in one plane; else, or if
+            # that fails, one Hole per position; else
             # (a through hole whose frame is not on an outer face: build123d
             # drills both ways from it, a Hole only one) cut cylinders. A
             # V-bottomed hole's depth is the cylinder's, else its tip's.
-            ways = [(layout, False) for layout in ([pattern] if pattern else []) + [None]]
+            ways = [(layout, False) for layout in ([user] if user else [])
+                    + ([pattern] if pattern and not user else []) + [None]]
             if bottom_angle(feature) is not None:
                 ways.append((None, True))
             for layout, tip in ways:
@@ -826,6 +832,9 @@ class TreeBuilder(SurfaceFeatures):
                 entry.setdefault("notes", []).append(f"{body.Name} hidden: {error}")
 
     def _feature_sweep(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        if is_helix_path(feature["path"]):  # springs, threads: helix_com.py
+            self._helix_sweep(feature, entry)
+            return
         sketch = self.sketches[feature["sketch"]]
         self._into_body(feature, entry,
                         lambda body: self._verified_rib(body, sketch, feature["path"], entry))
@@ -1110,6 +1119,9 @@ class TreeBuilder(SurfaceFeatures):
         directions are construction lines from the seed's frame, and each way
         round is tried until the body matches build123d's. The last one is
         kept for the caller to judge; the report lists what each removed."""
+        if isinstance(pattern, UserLayout):  # partdesign_extra_com.py
+            self._user_pattern(body, seed, pattern, target, before, made, entry)
+            return
         part = self.part
         factory = part.ShapeFactory
         if isinstance(pattern, GridPattern):
@@ -1967,7 +1979,9 @@ def _reverse_hole(item: Any) -> bool:
         return False
 
 
-def _pattern_note(pattern: GridPattern | PolarPattern) -> str:
+def _pattern_note(pattern: GridPattern | PolarPattern | UserLayout) -> str:
+    if isinstance(pattern, UserLayout):
+        return f"one Hole and a user pattern on {len(pattern.positions)} sketch points"
     if isinstance(pattern, GridPattern):
         (n1, n2), (s1, s2) = pattern.counts, pattern.steps
         return f"one Hole and a {n1} x {n2} rectangular pattern ({s1:g} x {s2:g} mm)"

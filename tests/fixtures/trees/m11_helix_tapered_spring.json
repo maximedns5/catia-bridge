@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "/M11/HelixTaperedSpring",
+      "name": "HelixTaperedSpring",
+      "bodies": [
+        "Body1"
+      ],
+      "features": [
+        {
+          "type": "sketch",
+          "id": "sketch1",
+          "name": "Sketch1",
+          "plane": {
+            "origin": [
+              10,
+              0,
+              0
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ]
+          },
+          "entities": [
+            {
+              "type": "circle",
+              "center": [
+                0,
+                0
+              ],
+              "radius": 0.8,
+              "id": "c"
+            }
+          ],
+          "profiles": [
+            {
+              "outer": [
+                "c"
+              ],
+              "inner": []
+            }
+          ]
+        },
+        {
+          "type": "sweep",
+          "id": "sweep1",
+          "name": "Sweep1",
+          "sketch": "sketch1",
+          "frenet": true,
+          "transition": "Transition.TRANSFORMED",
+          "operation": "new_body",
+          "creates": [
+            "Body1"
+          ],
+          "path": [
+            {
+              "type": "helix",
+              "pitch": 4,
+              "height": 12,
+              "radius": 10,
+              "center": [
+                0,
+                0,
+                0
+              ],
+              "direction": [
+                0,
+                0,
+                1
+              ],
+              "cone_angle": 8
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

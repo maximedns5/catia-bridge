@@ -101,6 +101,12 @@ def feature_needs(feature: dict[str, Any], sketches: dict[str, dict[str, Any]]) 
         for name in feature.get("sections") or []:
             if isinstance(name, str):  # a point section is a construction point
                 needs |= _sketch_needs(sketches.get(name))
+    elif kind == "move":
+        needs.add(WIREFRAME)  # the rotation axis, the translation's direction
+    elif kind == "mirror_in_place":
+        plane = feature.get("plane") or {}
+        if _off_origin(plane["origin"], plane["normal"]):
+            needs.add(WIREFRAME)
     elif kind == "draft":
         plane = feature.get("neutral_plane") or {}
         if _off_origin(plane["origin"], plane["normal"]):
@@ -114,6 +120,8 @@ def feature_needs(feature: dict[str, Any], sketches: dict[str, dict[str, Any]]) 
     elif kind == "sweep":
         sketch = sketches.get(feature.get("sketch"))
         needs |= {ADVANCED} | _sketch_needs(sketch)
+        if any(e.get("type") == "helix" for e in feature.get("path") or []):
+            return needs | {WIREFRAME}  # the helix, its axis and start point
         frame, _ = sweep_expectation(sketch, feature.get("path") or [])
         if _off_origin(frame.origin, frame.normal):
             needs.add(WIREFRAME)

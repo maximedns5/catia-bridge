@@ -33,6 +33,8 @@ from catia_mcp.tree.partdesign import (
     check_until,
     native,
 )
+from catia_mcp.tree.partdesign_extra import EXTRA_TYPES, check_extra, check_hole_pattern
+from catia_mcp.tree.helix import check_helix_sweep, is_helix_path
 from catia_mcp.tree.requirements import refuse_unavailable
 from catia_mcp.tree.step_source import StepSource
 from catia_mcp.tree.surfaces import SURFACE_TYPES, SurfaceCheck, check_wire_sketch
@@ -43,7 +45,7 @@ from catia_mcp.tree.sweep import sweep_expectation
 # sweeps.
 SUPPORTED = ("sketch", "extrude", "revolve", "combine", "hole", "mirror", "split", "loft",
              "remove", "copy", "scale",
-             "sweep", "fillet", "chamfer", "shell", "draft") + SURFACE_TYPES
+             "sweep", "fillet", "chamfer", "shell", "draft") + SURFACE_TYPES + EXTRA_TYPES
 ENTITY_TYPES = ("line", "circle", "arc", "spline")
 EXTRUDE_OPERATIONS = ("new_body", "join", "cut", "intersect")
 COMBINE_OPERATIONS = ("join", "cut", "intersect")
@@ -160,6 +162,8 @@ def analyze(tree: dict[str, Any], capabilities: dict[str, Any] | None = None,
                 _check_copy(feature, bodies, refuse, f"{pid} {where}")
             elif kind == "scale":
                 _check_scale(feature, bodies, refuse, f"{pid} {where}")
+            elif kind in EXTRA_TYPES:  # catia_mcp/tree/partdesign_extra.py
+                check_extra(feature, bodies, refuse, f"{pid} {where}")
     if capabilities is not None:
         refuse_unavailable(tree, capabilities, plm_type, refuse, _where)
     return reasons
@@ -334,6 +338,8 @@ def _check_sweep(feature, sketches, bodies, refuse, where) -> None:
         # as approximating sketch splines. Spline paths are refused by
         # sweep.path_plane: a Rib's centre curve would need its own check.
         refuse("sweep profiles with spline entities are not supported yet", where)
+    elif is_helix_path(feature.get("path")):  # catia_mcp/tree/helix.py
+        check_helix_sweep(feature, sketch, refuse, where)
     else:
         try:
             sweep_expectation(sketch, feature.get("path") or [])
@@ -438,6 +444,7 @@ def _check_hole(feature, bodies, refuse, where) -> None:
         elif feature["countersink_diameter"] <= feature.get("diameter", 0):
             refuse("countersink diameter must exceed the hole diameter", where)
     check_hole_extras(feature, refuse, where)  # threads and V bottoms
+    check_hole_pattern(feature, refuse, where)  # user patterns
 
 
 def _positive(value: Any) -> bool:
