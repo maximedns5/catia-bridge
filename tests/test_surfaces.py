@@ -49,6 +49,8 @@ CLOSED_FORM_MM3 = {
 
 
 def _wire_of(sketch):
+    if hasattr(sketch, "shape"):  # a 3D curve the fake built (test_curves.py)
+        return Wire.combine(sketch.shape.edges())[0]
     return sketch_wire({**_tree_sketch(sketch), "wire": True})
 
 

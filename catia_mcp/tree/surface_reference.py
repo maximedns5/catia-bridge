@@ -32,6 +32,14 @@ from catia_mcp.tree.extrude import extrude_vector
 from catia_mcp.tree.geometry import Frame, scale
 from catia_mcp.tree.surfaces import chain
 
+# Faces whose area OpenCascade integrates exactly; the others (B-splines,
+# extrusions and revolutions of them, offsets) are integrated in
+# DIVIDE_PIECES pieces: its default Gauss rule is off by up to 0.4 % on one
+# whole approximated face (an affine image of a sphere), and its adaptive
+# rule fails on others (a projected curve extruded).
+EXACT_FACES = ("PLANE", "CYLINDER", "CONE", "SPHERE", "TORUS")
+DIVIDE_PIECES = 64
+
 
 class SurfaceReferenceError(Exception):
     """The reference cannot build this surface."""
@@ -203,7 +211,23 @@ def surface_properties(shape: Any) -> dict[str, Any]:
     from OCP.GProp import GProp_GProps
 
     props = GProp_GProps()
-    BRepGProp.SurfaceProperties_s(shape.wrapped, props)
+    for face in shape.faces():
+        part = GProp_GProps()
+        BRepGProp.SurfaceProperties_s(_divided(face), part)
+        props.Add(part)
     centre = props.CentreOfMass()
     return {"area_mm2": float(props.Mass()),
             "cog_mm": [float(centre.X()), float(centre.Y()), float(centre.Z())]}
+
+
+def _divided(face: Any) -> Any:
+    """The face to integrate: itself when its geometry is exact, else cut
+    into about DIVIDE_PIECES pieces of equal area."""
+    if face.geom_type.name in EXACT_FACES:
+        return face.wrapped
+    from OCP.ShapeUpgrade import ShapeUpgrade_ShapeDivideArea
+
+    divider = ShapeUpgrade_ShapeDivideArea(face.wrapped)
+    divider.MaxArea = face.area / DIVIDE_PIECES
+    divider.Perform()
+    return divider.Result()

@@ -1,0 +1,84 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S7/Coil",
+   "name": "Coil",
+   "features": [
+    {
+     "type": "curve",
+     "id": "curve1",
+     "name": "Helix1",
+     "op": "helix",
+     "axis": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "direction": [
+       0,
+       0,
+       1
+      ]
+     },
+     "pitch": 10,
+     "height": 25,
+     "radius": 8,
+     "creates": [
+      "Helix"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve2",
+     "name": "Ring1",
+     "op": "circle",
+     "center": [
+      8,
+      0,
+      0
+     ],
+     "normal": [
+      0,
+      50.265482457437,
+      10
+     ],
+     "radius": 1.5,
+     "creates": [
+      "Ring"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Sweep1",
+     "op": "sweep",
+     "inputs": [
+      "Ring"
+     ],
+     "guide": "Helix",
+     "creates": [
+      "Coil"
+     ]
+    },
+    {
+     "type": "thicken",
+     "id": "thicken1",
+     "name": "Thicken1",
+     "inputs": [
+      "Coil"
+     ],
+     "thickness": 0.5,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

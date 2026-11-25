@@ -1,0 +1,62 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S7/Spring",
+   "name": "Spring",
+   "features": [
+    {
+     "type": "curve",
+     "id": "curve1",
+     "name": "Helix1",
+     "op": "helix",
+     "axis": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "direction": [
+       1,
+       0,
+       0
+      ]
+     },
+     "pitch": 6,
+     "height": 15,
+     "radius": 5,
+     "taper": 8,
+     "hand": "left",
+     "creates": [
+      "Spring"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve2",
+     "name": "Helix2",
+     "op": "helix",
+     "axis": {
+      "origin": [
+       0,
+       30,
+       0
+      ],
+      "direction": [
+       0,
+       1,
+       0
+      ]
+     },
+     "pitch": 4,
+     "height": 10,
+     "radius": 3,
+     "creates": [
+      "Coil"
+     ]
+    }
+   ],
+   "bodies": []
+  }
+ ]
+}
