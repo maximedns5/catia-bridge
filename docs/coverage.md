@@ -28,3 +28,5 @@ Not covered, and why:
 
 The fields the app can already send, and those still to agree, are listed in
 each page's "Contract additions requested from the app".
+
+To run every live check at once and send the reports back: [live-testing.md](live-testing.md).

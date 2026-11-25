@@ -260,6 +260,11 @@ All notable changes to this project are documented here.
   interpolation, checked within 2 %. Blend, shape fillets and smooth
   multi-sections through more sections are documented as having no
   build123d reference. Eight `s7_*` fixtures.
+- **One live run** (`scripts/live_suite.py`, docs/live-testing.md): every
+  tree fixture, the probes and, with `--product`, the assembly steps, run in
+  one command on a live CATIA; the reports, `summary.json` and a short
+  French `summary.txt` packed into one zip. Stops at a blocking dialog.
+
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart
