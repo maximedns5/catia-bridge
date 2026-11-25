@@ -249,6 +249,21 @@ All notable changes to this project are documented here.
   is the offline analysis and `scripts/probe_clashes.py` looks for a clash
   API. New fixtures `pin_interference` and `shaft_bushing`
   (`scripts/make_clash_fixtures.py`).
+- **Drafting, second slice** (docs/drafting.md): centre marks, axis lines
+  and pitch circles in every orthographic view (the views' generation
+  settings where CATIA has them, else drawn dash-dot); hole callouts with
+  the ISO 129 symbols, thread callouts (`M6 - 6H ↧10 / ⌀5 ↧12`) and pattern
+  counts, back in words where the font lacks a symbol; an auxiliary view
+  along an inclined face's normal (`DefineAuxiliaryView`, else a view along
+  the normal with its arrow drawn); stepped and aligned sections through
+  holes on no common line; further sheets (`Sheets.Add`, each with its frame
+  and title block) when the views do not fit the largest allowed sheet
+  (`--drawing-max-sheet`), and for an assembly one sheet per distinct part
+  after the product's; a PDF and a DXF of each sheet (`--drawing-dxf`), the
+  3DEXPERIENCE routes tried once each and refused or not, recorded. New
+  fixtures `d1`-`d3` and the `drafting_parts` assembly
+  (`scripts/make_drafting_fixtures.py`); `scripts/probe_drawing.py` probes
+  each new route (`--window`).
 - **Generative Shape Design, second slice** (docs/surfaces.md): 3D curves
   as tree features (`curve`: helix, spline, polyline, circle, projection,
   intersection) in a `Curves` set, each checked by its length and centre;

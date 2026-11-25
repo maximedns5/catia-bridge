@@ -280,9 +280,11 @@ def _drawings(conn, worker, tree, builder, report, plan, adopted: bool, args) ->
     from catia_mcp.tree.drawing_builder import make_drawings
     from catia_mcp.tree.drawing_plan import DrawingOptions
 
-    options = DrawingOptions(projection=args.drawing_projection)
+    options = DrawingOptions(projection=args.drawing_projection,
+                             max_sheet=args.drawing_max_sheet)
     report["drawing"] = make_drawings(conn, worker, tree, builder, report, plan, options,
-                                      pdf_dir=args.drawing_pdf, adopted=adopted, log=print)
+                                      pdf_dir=args.drawing_pdf, adopted=adopted, log=print,
+                                      dxf_dir=args.drawing_dxf)
 
 
 def _clash_mode(plan, args) -> str:
@@ -562,6 +564,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--drawing-projection", default="first", choices=["first", "third"],
                         help="first angle (ISO E, default) or third angle (ISO A)")
     parser.add_argument("--drawing-pdf", help="folder to export each drawing to as PDF")
+    parser.add_argument("--drawing-dxf", help="folder to export each drawing sheet to as DXF")
+    parser.add_argument("--drawing-max-sheet", default="A0",
+                        choices=["A4", "A3", "A2", "A1", "A0"],
+                        help="the largest sheet a drawing may use; views that do not fit go "
+                             "on further sheets (default A0)")
     parser.add_argument("--constraints", default="none", choices=["none", "fix", "infer"],
                         help="with --assembly: none (default), fix every instance in place, or "
                              "infer coincidence, contact and offset constraints from the faces "
