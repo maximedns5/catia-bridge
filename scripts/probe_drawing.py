@@ -22,14 +22,28 @@ open, unsaved: close them without saving):
    section through the middle, a detail; GenerateDimensions per view; a
    text with a leader; a balloon (a circled text); a table; a line and a
    circle in the background view;
-7. the PDF export (ExportData) of the drawing;
-8. with --tree TREE.json: the whole drafting step of the tree build for the
+7. the second slice's routes from that front view: the view's generation
+   settings for centre lines, axes and threads (every member whose name
+   says so, then the ones the builder sets, read back); a dash-dot centre
+   line drawn in the view; an auxiliary view (DefineAuxiliaryView, each
+   known signature, else a view along the normal); a stepped and an aligned
+   section; texts with the ISO 129 symbols, read back; the generated
+   geometry a manual dimension would need (GeometricElements); a second
+   sheet with a line and a text;
+8. the PDF and DXF export of the drawing, by every known route, once each;
+   the signature of any PrintToFile method (called only with
+   --print-to-file; never PrintOut, which opens a dialog);
+9. with --tree TREE.json: the whole drafting step of the tree build for the
    tree's first part (or --part ID), on the active source (the part must be
    the one the tree describes, already built).
+
+With --window NAME, that one window is activated first (activating every
+window in turn hung CATIA live; CATIA may hold hundreds of windows).
 
 Usage (Windows, CATIA started and logged in, the built part or product in
 the active window):
     python scripts/probe_drawing.py --report drawing_probe.json
+    python scripts/probe_drawing.py --window "DraftingParts A.1" --report drawing_probe.json
     python scripts/probe_drawing.py --tree tests\\fixtures\\trees\\m1_holes.json --pdf out
 """
 
@@ -356,25 +370,184 @@ class Probe:
         self.step("view label SetViewName", lambda: self.sheet.Views.Item(
             int(self.sheet.Views.Count)).SetViewName("DETAIL ", "B", ""))
 
-    # ── 7. Export ──
+    # ── 7. Second slice ──
 
-    def export(self, folder: str) -> None:
+    def second_slice(self) -> None:
+        from catia_mcp.tree.drawing_builder import DrawingBuilder, _FactoryViews, _GenerativeViews
+        from catia_mcp.tree.drawing_plan import ViewPlan
+
+        front = self.front
+        builder = DrawingBuilder(self.conn)
+        generative = not self.conn.is_3dx or _has(front, "GenerativeBehavior")
+
+        def settings() -> dict[str, Any]:
+            from catia_mcp.introspect import describe_members
+
+            out: dict[str, Any] = {}
+            for label, target in (("GenerativeBehavior", _get(front, "GenerativeBehavior")),
+                                  ("view", front)):
+                if target is None:
+                    continue
+                members = _safe(describe_members, target)
+                if isinstance(members, list):
+                    out[f"{label} members"] = sorted(
+                        m["name"] for m in members if any(
+                            k in m["name"].lower() for k in ("axis", "center", "centre",
+                                                              "thread", "hidden", "fillet")))
+            out["set and read back"] = builder._generation_settings(front)
+            return out
+
+        self.report["generation_settings"] = self.step("view generation settings (centre "
+                                                       "lines, axes, threads)", settings)
+
+        def centre_line() -> dict[str, Any]:
+            with contextlib.suppress(Exception):
+                front.Activate()
+            factory = front.Factory2D
+            items = [factory.CreateLine(-40.0, 0.0, 40.0, 0.0),
+                     factory.CreateLine(0.0, -40.0, 0.0, 40.0)]
+            return {"line_type": builder._dash_dot(self.drawing, items)}
+
+        self.step("centre mark drawn dash-dot in the front view", centre_line)
+
+        def plan(name: str, kind: str, profile, **extra) -> ViewPlan:
+            return ViewPlan(name, kind, (1.0, 0.0, 0.0), (0.0, 0.7071, 0.7071), 1.0,
+                            extra.pop("anchor", (330.0, 200.0)), (300, 170, 360, 230),
+                            parent="Probe front", profile=profile, **extra)
+
+        maker = (_GenerativeViews(self.sheet, front.GenerativeBehavior.Document) if generative
+                 else _FactoryViews(self._tools(), self.sheet, [self.root]))
+        aux = plan("Probe aux", "auxiliary", [-20.0, -20.0, 20.0, 20.0], label="C",
+                   arrow=(40.0, -40.0, 25.0, -25.0))
+
+        def auxiliary() -> dict[str, Any]:
+            try:
+                view, used = maker.auxiliary(aux, front)
+                return {"route": used, "name": str(view.Name)}
+            except Exception as error:
+                view = maker.front(aux)
+                arrow = _safe(builder._arrow, front, aux)
+                return {"refused": str(error), "fallback": "a front view along the normal",
+                        "name": str(view.Name), "arrow": arrow}
+
+        self.step("auxiliary view (DefineAuxiliaryView, else along the normal)", auxiliary)
+        stepped = plan("Probe stepped", "section", [-1000.0, 0.0, 0.0, 0.0, 0.0, 10.0,
+                                                    1000.0, 10.0],
+                       profile_type="Offset", anchor=(150.0, 60.0))
+        aligned = plan("Probe aligned", "section", [-100.0, 0.0, 0.0, 0.0, 70.7, 70.7],
+                       profile_type="Aligned", anchor=(280.0, 60.0))
+        for view in (stepped, aligned):
+            self.step(f"{view.profile_type.lower()} section", lambda v=view: str(
+                maker.section(v, front).Name))
+
+        def symbols() -> dict[str, Any]:
+            text = ("\u23006.6 THRU \u2334\u230011 \u21a76.5 / M6 - 6H \u21a78 / "
+                    "4\u00d7 \u2335")
+            item = front.Texts.Add(text, 40.0, -40.0)
+            back = str(item.Text)
+            return {"written": text, "read_back": back, "same": back == text}
+
+        self.step("callout with ISO 129 symbols, read back", symbols)
+        self.step("generated geometry exposed (GeometricElements.Count)", lambda: {
+            "front": _safe(lambda: int(front.GeometricElements.Count)),
+            "dimensions": _safe(lambda: int(front.Dimensions.Count))})
+
+        def second_sheet() -> dict[str, Any]:
+            sheets = self.drawing.Sheets
+            sheet = sheets.Add("Probe sheet 2")
+            _safe(sheet.Activate)
+            views = sheet.Views
+            background = views.Item("Background View") if _has_item(views, "Background View") \
+                else views.Item(2)
+            background.Activate()
+            background.Factory2D.CreateLine(20.0, 10.0, 410.0, 10.0)
+            background.Texts.Add("Probe sheet 2", 240.0, 30.0)
+            out = {"sheets": int(sheets.Count), "name": str(sheet.Name),
+                   "views": int(views.Count)}
+            _safe(self.sheet.Activate)
+            return out
+
+        self.step("second sheet (Sheets.Add), a line and a text", second_sheet)
+
+    def _tools(self) -> Any:
+        from catia_mcp.tools.drawing import DraftingTools
+
+        return DraftingTools(self.conn)
+
+    # ── 8. Export ──
+
+    def export(self, folder: str, print_to_file: bool = False) -> None:
+        from catia_mcp.introspect import method_params
+        from catia_mcp.tree.drawing_builder import DrawingBuilder
+
         os.makedirs(folder, exist_ok=True)
-        path = os.path.abspath(os.path.join(folder, "drawing_probe.pdf"))
+        builder = DrawingBuilder(self.conn)
+        for fmt in ("pdf", "dxf"):
+            path = os.path.abspath(os.path.join(folder, f"drawing_probe.{fmt}"))
+            for label, call in builder._export_routes(self.drawing, fmt):
+                def export_with(call=call, path=path) -> dict[str, Any]:
+                    if os.path.exists(path):
+                        os.remove(path)
+                    call(path)
+                    return {"written": os.path.exists(path), "path": path}
 
-        def export_with(target_name: str, target) -> dict[str, Any]:
-            if os.path.exists(path):
-                os.remove(path)
-            target().ExportData(path, "pdf")
-            return {"target": target_name, "written": os.path.exists(path), "path": path}
+                result = self.step(f"{fmt.upper()} export: {label}", export_with)
+                if result and result.get("written"):
+                    break
+        targets = {"sheet": self.sheet, "drawing": self.drawing,
+                   "window": _get(self.conn.app, "ActiveWindow")}
+        self.report["print_to_file"] = {
+            name: _safe(method_params, target, "PrintToFile") for name, target in
+            targets.items() if target is not None}
+        if print_to_file:
+            path = os.path.abspath(os.path.join(folder, "drawing_probe_print.prn"))
+            for name, target in targets.items():
+                if target is None or not _has(target, "PrintToFile"):
+                    continue
+                result = self.step(f"{name}.PrintToFile", lambda t=target: (
+                    t.PrintToFile(path), {"written": os.path.exists(path)})[1])
+                if result and result.get("written"):
+                    break
 
-        for name, target in (("drawing", lambda: self.drawing),
-                             ("drawing.Parent", lambda: self.drawing.Parent),
-                             ("ActiveDocument", lambda: self.conn.app.ActiveDocument)):
-            result = self.step(f"PDF export through {name}.ExportData",
-                               lambda n=name, t=target: export_with(n, t))
-            if result and result.get("written"):
-                break
+
+def _has(obj: Any, name: str) -> bool:
+    from catia_mcp.automation import name_exists
+
+    return obj is not None and name_exists(obj, name)
+
+
+def _get(obj: Any, name: str) -> Any:
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return None
+
+
+def _has_item(collection: Any, name: str) -> bool:
+    try:
+        collection.Item(name)
+        return True
+    except Exception:
+        return False
+
+
+def select_window(conn: Any, wanted: str | None) -> dict[str, Any]:
+    """Activate the one window named `wanted` (never every window in turn:
+    that hung CATIA live); count the open windows."""
+    out: dict[str, Any] = {}
+    windows = conn.app.Windows
+    count = int(windows.Count)
+    out["windows"] = count
+    if not wanted:
+        return out
+    for i in range(1, count + 1):
+        window = windows.Item(i)
+        if str(window.Name) == wanted or str(_get(window, "Caption")) == wanted:
+            window.Activate()
+            out["window"] = f"activated {wanted!r}"
+            return out
+    out["window"] = f"no open window is named {wanted!r}"
+    return out
 
 
 def run_builder(conn: Any, worker: Any, probe: Probe, tree_path: str, part_id: str | None,
@@ -390,11 +563,16 @@ def run_builder(conn: Any, worker: Any, probe: Probe, tree_path: str, part_id: s
     placed = place_part(part)
     plan = plan_part_drawing(placed, part_geometry(placed))
     if conn.is_3dx:
-        source = worker.run_guarded(lambda: instances_3dx(conn, probe.editor),
-                                    label="the instances")
+        def instances() -> Any:
+            try:  # the part's occurrence in an imported product
+                return instances_3dx(conn, probe.editor, title=part.get("name") or part["id"])
+            except Exception:
+                return instances_3dx(conn, probe.editor)
+
+        source = worker.run_guarded(instances, label="the instances")
     else:
         source = probe.source
-    builder = DrawingBuilder(conn, log=print, pdf_dir=pdf)
+    builder = DrawingBuilder(conn, log=print, pdf_dir=pdf, dxf_dir=pdf)
     entry = worker.run_guarded(lambda: builder.draw(plan, source), label="the drawing")
     entry["plan"] = plan.to_dict()
     return entry
@@ -405,10 +583,15 @@ def main() -> int:
     parser.add_argument("--report", default="drawing_probe.json")
     parser.add_argument("--platform", default="auto", help="auto, v5 or 3dx")
     parser.add_argument("--pdf", default="drawing_probe_pdf",
-                        help="folder for the PDF exports (created)")
+                        help="folder for the PDF and DXF exports (created)")
     parser.add_argument("--tree", help="a tree JSON whose part is the active one: also run the "
                         "tree build's drafting step on it")
     parser.add_argument("--part", help="with --tree: the part id (default: the first)")
+    parser.add_argument("--window", help="the name of the window to activate first (the "
+                        "imported product's); only that one is activated")
+    parser.add_argument("--print-to-file", action="store_true",
+                        help="also call PrintToFile where the type library has it (it may "
+                             "use the default printer; never PrintOut)")
     args = parser.parse_args()
 
     from catia_mcp.com_guard import ComWorker
@@ -423,6 +606,7 @@ def main() -> int:
         print(error)
         return 2
     probe = Probe(conn, worker, report)
+    report["window"] = probe.step("window", lambda: select_window(conn, args.window))
     report["source"] = probe.step("source", probe.find_source)
     if args.tree:
         # First, while the source is still the active window.
@@ -436,7 +620,8 @@ def main() -> int:
         probe.front_routes()
         if probe.front is not None:
             probe.derived()
-        probe.export(args.pdf)
+            probe.second_slice()
+        probe.export(args.pdf, args.print_to_file)
     report["summary"] = {
         "drawing_route": report.get("drawing_route"),
         "front_route": report.get("front_route"),

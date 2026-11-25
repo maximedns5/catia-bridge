@@ -66,7 +66,8 @@ tree carries them: see [materials-properties.md](materials-properties.md).
 What the bridge covers of each CATIA workbench: [coverage.md](coverage.md).
 
 Surface features (`surface`, `join_surfaces`, `split_surface`, `thicken`,
-`close_surface`) are in [surfaces.md](surfaces.md).
+`close_surface`, `trim_surfaces`, `extract`) and 3D curves (`curve`) are in
+[surfaces.md](surfaces.md).
 
 Live on R428 (French), each on its first try and exact in volume: a body
 copied once turned 90° (pasted as a result with its link, then a Rotate)

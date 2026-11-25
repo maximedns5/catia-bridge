@@ -233,6 +233,8 @@ class PartRecord:
     construction: list[dict[str, Any]] = field(default_factory=list)
     # The surfaces made for the part, with their areas (surface_builder.py).
     surfaces: list[dict[str, Any]] = field(default_factory=list)
+    # The 3D curves made for the part, with their lengths (curve_builder.py).
+    curves: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _parallel(a: Vec, b: Vec) -> float:

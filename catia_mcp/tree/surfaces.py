@@ -26,20 +26,29 @@ features use and that `thicken` or `close_surface` turn into a body:
 A sketch drawn only to give a curve sets `wire: true` and needs no closed
 profile. Surface inputs are one chain of lines, arcs and circles (open or
 closed); spline entities are refused for now.
+
+The second slice (curves.py) adds 3D curves (`curve`), surfaces made from
+them, primitives, transforms, ruled lofts through three or more sections,
+`trim_surfaces` and `extract`.
 """
 
 from __future__ import annotations
 
 import math
+from itertools import pairwise
 from typing import Any
 
+from catia_mcp.tree.curves import CURVE_INPUT_OPS, MORE_OPS, MORE_TYPES, MoreCheck, vec
 from catia_mcp.tree.extrude import extrude_vector
 from catia_mcp.tree.geometry import Arc, Frame, dot, unit
 from catia_mcp.tree.loft import plan_loft
 from catia_mcp.tree.sweep import JOIN_TOL, path_plane, path_segments
 
-SURFACE_TYPES = ("surface", "join_surfaces", "split_surface", "thicken", "close_surface")
-SURFACE_OPS = ("extrude", "revolve", "loft", "sweep", "fill", "offset")
+# The first slice's features, then the second's (curves.py: 3D curves, trims,
+# extracts).
+SURFACE_TYPES = ("surface", "join_surfaces", "split_surface", "thicken",
+                 "close_surface") + MORE_TYPES
+SURFACE_OPS = ("extrude", "revolve", "loft", "sweep", "fill", "offset") + MORE_OPS
 # Features that make a body from a surface.
 SOLID_FROM_SURFACE = ("thicken", "close_surface")
 CHAIN_TYPES = ("line", "arc", "circle")
@@ -148,12 +157,15 @@ class SurfaceCheck:
 
     def __init__(self) -> None:
         self.surfaces: set[str] = set()
+        self.more = MoreCheck(self)  # curves, trims, extracts (curves.py)
 
     def check(self, feature: dict[str, Any], sketches: dict[str, dict[str, Any]],
               bodies: set[str], refuse, where: str) -> None:
         kind = feature.get("type")
         inputs = feature.get("inputs") or []
-        if kind == "surface":
+        if kind in MORE_TYPES:
+            self.more.check(feature, sketches, bodies, refuse, where)
+        elif kind == "surface":
             self._surface(feature, inputs, sketches, refuse, where)
         elif kind == "join_surfaces":
             if len(inputs) < 2 or any(name not in self.surfaces for name in inputs):
@@ -190,7 +202,26 @@ class SurfaceCheck:
                 refuse("an offset surface needs a non-zero distance", where)
             self._creates(feature, refuse, where)
             return
-        wanted = 2 if op == "loft" else 1
+        if op in MORE_OPS:
+            self.more.surface_op(feature, op, inputs, refuse, where)
+            self._creates(feature, refuse, where)
+            return
+        if op in CURVE_INPUT_OPS and len(inputs) == 1 and self.more.curve_input(inputs[0]):
+            try:
+                self._curve_op(feature, op, self.more.curve_input(inputs[0]), sketches)
+            except (KeyError, TypeError, ValueError) as error:
+                refuse(f"{op} surface is not supported ({error})", where)
+            self._creates(feature, refuse, where)
+            return
+        if op == "loft" and len(inputs) > 2:
+            if not feature.get("ruled"):
+                # OpenCascade interpolates one smooth surface through every
+                # section, CATIA its own: not the same surface.
+                refuse("smooth loft surfaces through more than two sections are not "
+                       "supported", where)
+            wanted = len(inputs)
+        else:
+            wanted = 2 if op == "loft" else 1
         if len(inputs) != wanted or any(name not in sketches for name in inputs):
             refuse(f"a {op} surface needs {'two sketches' if wanted == 2 else 'one sketch'} "
                    "as inputs", where)
@@ -199,9 +230,36 @@ class SurfaceCheck:
         found = [sketches[name] for name in inputs]
         try:
             self._op(feature, op, found)
+            if op == "sweep" and feature.get("guide") is not None:
+                self._guide(feature)
         except (KeyError, TypeError, ValueError) as error:
             refuse(f"{op} surface is not supported ({error})", where)
         self._creates(feature, refuse, where)
+
+    def _guide(self, feature) -> None:
+        if feature["guide"] not in self.more.curves:
+            raise ValueError(f"the guide '{feature['guide']}' is not a known curve")
+
+    def _curve_op(self, feature, op, curve, sketches) -> None:
+        """A surface made from a 3D curve (curves.py)."""
+        if op == "extrude":
+            if feature.get("direction") is None:
+                raise ValueError("a curve is extruded along a `direction`")
+            if math.dist(vec(feature["direction"]), (0, 0, 0)) < 1e-9:
+                raise ValueError("the direction has no length")
+        elif op == "revolve":
+            angle = feature.get("angle")
+            if not _number(angle) or not 0 < angle <= 360:
+                raise ValueError("the angle must be in (0, 360] degrees")
+            vec(feature["axis"]["origin"])
+            unit(vec(feature["axis"]["direction"]))
+        elif op == "fill":
+            if curve["closed"] is False or curve["planar"] is False:
+                raise ValueError("a fill needs a closed planar curve")
+        elif op == "sweep":
+            if feature.get("guide") is None:
+                raise ValueError("a curve is swept along a `guide` curve")
+            self._guide(feature)
 
     @staticmethod
     def _op(feature, op, found) -> None:
@@ -212,7 +270,12 @@ class SurfaceCheck:
                 raise ValueError("loft sections must be sketches with one closed profile")
             for s in found:
                 chain(s)
-            plan_loft(*found)
+            for pair in pairwise(found):
+                plan_loft(*pair)
+            if len(found) > 2:
+                from catia_mcp.tree.preflight import _check_ruled_chain
+
+                _check_ruled_chain(range(len(found)), dict(enumerate(found)))
             return
         _, closed = chain(sketch)
         if op == "extrude":
@@ -227,7 +290,7 @@ class SurfaceCheck:
             offset = tuple(o - p for o, p in zip(origin, frame.origin, strict=True))
             if abs(dot(direction, frame.normal)) > 1e-6 or abs(dot(offset, frame.normal)) > 1e-6:
                 raise ValueError("the axis does not lie in the sketch plane")
-        elif op == "sweep":
+        elif op == "sweep" and feature.get("guide") is None:
             sweep_frame(sketch, feature.get("path") or [])
         elif op == "fill" and not closed:
             raise ValueError("a fill needs a closed curve")
@@ -240,6 +303,8 @@ class SurfaceCheck:
         created = feature.get("creates") or []
         if len(created) != 1:
             refuse(f"a {feature.get('type')} feature must create exactly one surface", where)
+        if any(name in self.more.curves for name in created):
+            refuse(f"'{created[0]}' already names a curve", where)
         self.surfaces.update(created)
 
     @staticmethod

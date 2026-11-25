@@ -1,0 +1,241 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S7/Drum",
+   "name": "Drum",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Base",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 20,
+       "id": "sketch1c"
+      }
+     ],
+     "wire": true
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Extrude1",
+     "op": "extrude",
+     "inputs": [
+      "sketch1"
+     ],
+     "distance": 40,
+     "creates": [
+      "Drum"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve1",
+     "name": "Intersect1",
+     "op": "intersect",
+     "inputs": [
+      "Drum"
+     ],
+     "plane": {
+      "origin": [
+       0,
+       0,
+       20
+      ],
+      "normal": [
+       0,
+       1,
+       2
+      ]
+     },
+     "creates": [
+      "Oval"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface2",
+     "name": "Fill1",
+     "op": "fill",
+     "inputs": [
+      "Oval"
+     ],
+     "creates": [
+      "Lid"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve2",
+     "name": "Circle1",
+     "op": "circle",
+     "center": [
+      0,
+      -30,
+      20
+     ],
+     "normal": [
+      0,
+      1,
+      0
+     ],
+     "radius": 8,
+     "creates": [
+      "Mark"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve3",
+     "name": "Project1",
+     "op": "project",
+     "inputs": [
+      "Mark",
+      "Drum"
+     ],
+     "direction": [
+      0,
+      1,
+      0
+     ],
+     "creates": [
+      "Window"
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface3",
+     "name": "Extrude2",
+     "op": "extrude",
+     "inputs": [
+      "Window"
+     ],
+     "direction": [
+      0,
+      -10,
+      0
+     ],
+     "creates": [
+      "Tunnel"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve4",
+     "name": "Project2",
+     "op": "project",
+     "inputs": [
+      "Mark",
+      "Drum"
+     ],
+     "creates": [
+      "Shadow"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Blade",
+     "wire": true,
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -30,
+        0
+       ],
+       "end": [
+        30,
+        0
+       ],
+       "id": "b1"
+      }
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface4",
+     "name": "Extrude3",
+     "op": "extrude",
+     "inputs": [
+      "sketch2"
+     ],
+     "distance": 40,
+     "creates": [
+      "Blade"
+     ]
+    },
+    {
+     "type": "curve",
+     "id": "curve5",
+     "name": "Intersect2",
+     "op": "intersect",
+     "inputs": [
+      "Drum",
+      "Blade"
+     ],
+     "creates": [
+      "Seams"
+     ]
+    },
+    {
+     "type": "thicken",
+     "id": "thicken1",
+     "name": "Thicken1",
+     "inputs": [
+      "Lid"
+     ],
+     "thickness": 1,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

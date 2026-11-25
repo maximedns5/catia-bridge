@@ -1,0 +1,205 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S7/Collar",
+   "name": "Collar",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Block",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "line",
+       "start": [
+        -20.0,
+        -15.0
+       ],
+       "end": [
+        20.0,
+        -15.0
+       ],
+       "id": "sketch1l0"
+      },
+      {
+       "type": "line",
+       "start": [
+        20.0,
+        -15.0
+       ],
+       "end": [
+        20.0,
+        15.0
+       ],
+       "id": "sketch1l1"
+      },
+      {
+       "type": "line",
+       "start": [
+        20.0,
+        15.0
+       ],
+       "end": [
+        -20.0,
+        15.0
+       ],
+       "id": "sketch1l2"
+      },
+      {
+       "type": "line",
+       "start": [
+        -20.0,
+        15.0
+       ],
+       "end": [
+        -20.0,
+        -15.0
+       ],
+       "id": "sketch1l3"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch1l0",
+        "sketch1l1",
+        "sketch1l2",
+        "sketch1l3"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "extrude",
+     "id": "extrude1",
+     "name": "Extrude1",
+     "sketch": "sketch1",
+     "distance": 20,
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    },
+    {
+     "type": "extract",
+     "id": "extract1",
+     "name": "Extract1",
+     "bodies": [
+      "Body1"
+     ],
+     "face": {
+      "type": "face",
+      "geometry": "plane",
+      "point": [
+       0.0,
+       0.0,
+       20.0
+      ],
+      "normal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "area": 1200.0
+     },
+     "creates": [
+      "Top"
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Post",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 10,
+       "id": "sketch2c"
+      }
+     ],
+     "wire": true
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Extrude2",
+     "op": "extrude",
+     "inputs": [
+      "sketch2"
+     ],
+     "distance": 40,
+     "creates": [
+      "Post"
+     ]
+    },
+    {
+     "type": "trim_surfaces",
+     "id": "trim1",
+     "name": "Trim1",
+     "inputs": [
+      "Top",
+      "Post"
+     ],
+     "keep_points": [
+      [
+       15,
+       10,
+       20
+      ],
+      [
+       10,
+       0,
+       5
+      ]
+     ],
+     "creates": [
+      "Collar"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}

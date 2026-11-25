@@ -1,0 +1,164 @@
+{
+ "version": 1,
+ "parts": [
+  {
+   "id": "/S7/Vase",
+   "name": "Vase",
+   "features": [
+    {
+     "type": "sketch",
+     "id": "sketch1",
+     "name": "Foot",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 10,
+       "id": "sketch1c"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch1c"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch2",
+     "name": "Waist",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       15
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 6,
+       "id": "sketch2c"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch2c"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "sketch",
+     "id": "sketch3",
+     "name": "Mouth",
+     "plane": {
+      "origin": [
+       0,
+       0,
+       30
+      ],
+      "x_dir": [
+       1,
+       0,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     },
+     "entities": [
+      {
+       "type": "circle",
+       "center": [
+        0,
+        0
+       ],
+       "radius": 9,
+       "id": "sketch3c"
+      }
+     ],
+     "profiles": [
+      {
+       "outer": [
+        "sketch3c"
+       ],
+       "inner": []
+      }
+     ]
+    },
+    {
+     "type": "surface",
+     "id": "surface1",
+     "name": "Loft1",
+     "op": "loft",
+     "inputs": [
+      "sketch1",
+      "sketch2",
+      "sketch3"
+     ],
+     "ruled": true,
+     "creates": [
+      "Vase"
+     ]
+    },
+    {
+     "type": "close_surface",
+     "id": "close1",
+     "name": "Close1",
+     "inputs": [
+      "Vase"
+     ],
+     "operation": "new_body",
+     "creates": [
+      "Body1"
+     ]
+    }
+   ],
+   "bodies": [
+    "Body1"
+   ]
+  }
+ ]
+}
