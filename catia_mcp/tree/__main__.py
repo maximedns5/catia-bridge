@@ -109,6 +109,8 @@ def _reference(tree, step_dir=None) -> int:
               f"cog ({cog})")
         for name, surface in (props.get("surfaces") or {}).items():  # docs/surfaces.md
             print(f"  surface {name}: area {surface['area_mm2']:.4f} mm2")
+        for name, curve in (props.get("curves") or {}).items():  # docs/surfaces.md
+            print(f"  curve {name}: length {curve['length_mm']:.4f} mm")
     return 0
 
 

@@ -296,8 +296,8 @@ the bill of materials reads, and its parameters in a parameter set with a
 design table for its variants
 ([docs/materials-properties.md](docs/materials-properties.md)).
 
-Surface features (Generative Shape Design) and the named reference planes
-sketches sit on are in [docs/surfaces.md](docs/surfaces.md).
+Surface features and 3D curves (Generative Shape Design) and the named
+reference planes sketches sit on are in [docs/surfaces.md](docs/surfaces.md).
 
 ### Remote use: agent on a Mac or another machine
 

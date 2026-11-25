@@ -43,6 +43,7 @@ from datetime import date as _date
 from itertools import pairwise
 from typing import Any
 
+from catia_mcp.tree.curves import extent_points
 from catia_mcp.tree.geometry import Frame, Vec, add, cross, dot, norm, scale, unit
 
 SHEETS: dict[str, tuple[float, float]] = {
@@ -202,6 +203,7 @@ def estimate_geometry(part: dict[str, Any]) -> PartGeometry:
         if feature.get("operation") in ("cut", "intersect"):
             continue
         kind = feature["type"]
+        points += extent_points(feature)  # 3D curves, spheres, cylinders (curves.py)
         if kind == "surface" and feature.get("op") in ("extrude", "revolve", "loft", "sweep", "fill"):
             # A surface spans what the solid feature of the same kind would
             # (docs/surfaces.md): its inputs are the sketches.

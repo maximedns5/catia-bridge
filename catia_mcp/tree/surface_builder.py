@@ -35,6 +35,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from catia_mcp.automation import call_fill_array
+from catia_mcp.tree.curve_builder import SPLINE_REL_TOL, MoreSurfaceFeatures
+from catia_mcp.tree.curves import vec
 from catia_mcp.tree.extrude import extrude_vector
 from catia_mcp.tree.geometry import Frame, Vec, distance, norm, scale, unit
 from catia_mcp.tree.loft import plan_loft, section_sketch
@@ -54,8 +56,9 @@ SPLIT_ORIENTATIONS = (1, -1)
 M2_TO_MM2 = 1e6
 
 
-class SurfaceFeatures:
-    """TreeBuilder's surface features (mixin)."""
+class SurfaceFeatures(MoreSurfaceFeatures):
+    """TreeBuilder's surface features (mixin); curves and the second slice's
+    surfaces are in curve_builder.py."""
 
     # ── State ──
 
@@ -140,6 +143,9 @@ class SurfaceFeatures:
     # ── Surfaces ──
 
     def _feature_surface(self, feature: dict[str, Any], entry: dict[str, Any]) -> None:
+        if feature["op"] == "loft" and len(feature["inputs"]) > 2:
+            self._surface_ruled_loft(feature, entry)
+            return
         variants = getattr(self, f"_surface_{feature['op']}")(feature, entry)
         self._keep_surface(feature, entry, variants)
 
@@ -178,11 +184,14 @@ class SurfaceFeatures:
         self._keep_surface(feature, entry, variants, fallback_check=side_check)
 
     def _surface_extrude(self, feature: dict[str, Any], entry: dict[str, Any]):
-        sketch = self.sketches[feature["inputs"][0]]
-        vector = extrude_vector(feature, Frame.from_tree(sketch["plane"]))
+        name = feature["inputs"][0]
+        if self._is_shape(name):  # a 3D curve, along the tree's direction
+            vector = vec(feature["direction"])
+        else:
+            vector = extrude_vector(feature, Frame.from_tree(self.sketches[name]["plane"]))
         length, direction = norm(vector), unit(vector)
         symmetric = bool(feature.get("symmetric"))
-        ref = self._curve_sketch(sketch, entry)
+        ref = self._profile_ref(name, entry)
         factory = self.part.HybridShapeFactory
 
         def build(sign: float):
@@ -203,12 +212,11 @@ class SurfaceFeatures:
         return variants
 
     def _surface_revolve(self, feature: dict[str, Any], entry: dict[str, Any]):
-        sketch = self.sketches[feature["inputs"][0]]
         axis = feature["axis"]
         origin = tuple(float(c) for c in axis["origin"])
         direction = unit(tuple(float(c) for c in axis["direction"]))
         angle = float(feature["angle"])
-        ref = self._curve_sketch(sketch, entry)
+        ref = self._profile_ref(feature["inputs"][0], entry)
         axis_ref = self.datums.line(origin, direction)
         factory = self.part.HybridShapeFactory
 
@@ -223,7 +231,7 @@ class SurfaceFeatures:
         return variants
 
     def _surface_fill(self, feature: dict[str, Any], entry: dict[str, Any]):
-        ref = self._curve_sketch(self.sketches[feature["inputs"][0]], entry)
+        ref = self._profile_ref(feature["inputs"][0], entry)
 
         def build():
             made = self.part.HybridShapeFactory.AddNewFill()
@@ -240,6 +248,12 @@ class SurfaceFeatures:
                 for flag in (False, True)]
 
     def _surface_sweep(self, feature: dict[str, Any], entry: dict[str, Any]):
+        if feature.get("guide") is not None:  # along a 3D curve
+            profile = self._profile_ref(feature["inputs"][0], entry)
+            guide = self._surface_ref(feature["guide"])
+            factory = self.part.HybridShapeFactory
+            return [("explicit sweep along the guide",
+                     lambda: factory.AddNewSweepExplicit(profile, guide))]
         sketch = self.sketches[feature["inputs"][0]]
         frame = sweep_frame(sketch, feature["path"])
         profile = self._curve_sketch(sketch, entry)
@@ -302,6 +316,7 @@ class SurfaceFeatures:
 
         (name,) = feature["creates"]
         want = (self._expected_part().get("surfaces") or {}).get(name)
+        loose = self._mark_loose(feature)  # made from a spline (curve_builder.py)
         tried: list[str] = []
         geoset = self._surface_set()
         state = self._surface_state()
@@ -319,25 +334,18 @@ class SurfaceFeatures:
                     with contextlib.suppress(Exception):
                         self._delete(shape)
                 continue
-            problem = _surface_problem(area, cog, want) if want else \
+            problem = _surface_problem(area, cog, want, loose) if want else \
                 (fallback_check(shape) if fallback_check else None)
             if problem is None:
-                state["shapes"][name] = shape
-                for driven_feature, key, target, scale_ in state["drive"]:
-                    self.plan.drive(driven_feature, key, lambda target=target: target, scale_)
-                with contextlib.suppress(Exception):
-                    shape.Name = name
-                entry["catia"].append(str(shape.Name))
-                notes = entry.setdefault("notes", []) if tried or not want else None
-                if tried:
-                    notes.append(f"{name}: {label} ({'; '.join(tried)})")
-                if not want:
-                    notes.append(f"{name}: no build123d reference, area not checked")
-                self.record.surfaces.append({
-                    "name": name, "feature": feature.get("id"), "catia": str(shape.Name),
-                    "area_mm2": round(area, 4),
-                    "expected_area_mm2": round(float(want["area_mm2"]), 4) if want else None,
-                    "cog_mm": [round(c, 4) for c in cog] if cog else None})
+                self._kept(feature, entry, name, shape, label, tried, want, loose)
+                row = {"name": name, "feature": feature.get("id"), "catia": str(shape.Name),
+                       "area_mm2": round(area, 4),
+                       "expected_area_mm2": round(float(want["area_mm2"]), 4) if want else None,
+                       "cog_mm": [round(c, 4) for c in cog] if cog else None}
+                if loose and want:
+                    row["deviation"] = round(abs(area - float(want["area_mm2"]))
+                                             / float(want["area_mm2"]), 6)
+                self.record.surfaces.append(row)
                 return
             tried.append(f"{label}: {problem}")
             with contextlib.suppress(Exception):
@@ -370,6 +378,7 @@ class SurfaceFeatures:
         from catia_mcp.tree.builder import BuildFailed
 
         want = (self._expected_part().get("solids") or {}).get(str(feature.get("id")))
+        loose = feature["inputs"][0] in self._loose()
         part = self.part
         tried: list[str] = []
         for label, build in variants:
@@ -385,10 +394,14 @@ class SurfaceFeatures:
                     with contextlib.suppress(Exception):
                         self._delete(made)
                 continue
-            problem = _solid_problem(volume, cog, want) if want else \
+            problem = _solid_problem(volume, cog, want, loose) if want else \
                 (None if volume > 0 else "no volume")
             if problem is None:
                 entry["catia"].append(str(made.Name))
+                if loose and want:  # a spline's solid: the part check allows as much
+                    self.record.spline_allowance_mm3 += SPLINE_REL_TOL * float(want["volume_mm3"])
+                    entry.setdefault("notes", []).append(
+                        f"{made.Name}: made from a spline, checked within {SPLINE_REL_TOL:.0%}")
                 if tried or not want:
                     notes = entry.setdefault("notes", [])
                     if tried:
@@ -404,23 +417,28 @@ class SurfaceFeatures:
                           f"build123d's solid ({'; '.join(tried)})")
 
 
-def _surface_problem(area: float, cog: Vec | None, want: dict[str, Any]) -> str | None:
+def _surface_problem(area: float, cog: Vec | None, want: dict[str, Any],
+                     loose: bool = False) -> str | None:
     want_area = float(want["area_mm2"])
-    if abs(area - want_area) > max(AREA_ABS_TOL, AREA_REL_TOL * want_area):
+    rel = SPLINE_REL_TOL if loose else AREA_REL_TOL
+    if abs(area - want_area) > max(AREA_ABS_TOL, rel * want_area):
         return f"area {area:.4f} mm2, build123d {want_area:.4f} mm2"
     if cog is not None and want.get("cog_mm"):
-        tol = max(CENTRE_ABS_TOL, CENTRE_REL_TOL * math.sqrt(want_area))
+        rel = SPLINE_REL_TOL if loose else CENTRE_REL_TOL
+        tol = max(CENTRE_ABS_TOL, rel * math.sqrt(want_area))
         if distance(cog, tuple(want["cog_mm"])) > tol:
             return (f"centre at ({', '.join(f'{c:.3f}' for c in cog)}), build123d at "
                     f"({', '.join(f'{c:.3f}' for c in want['cog_mm'])})")
     return None
 
 
-def _solid_problem(volume: float, cog: Vec, want: dict[str, Any]) -> str | None:
+def _solid_problem(volume: float, cog: Vec, want: dict[str, Any],
+                   loose: bool = False) -> str | None:
     want_volume = float(want["volume_mm3"])
-    if abs(volume - want_volume) > max(1e-3, SOLID_REL_TOL * want_volume):
+    rel = SPLINE_REL_TOL if loose else SOLID_REL_TOL
+    if abs(volume - want_volume) > max(1e-3, rel * want_volume):
         return f"{volume:.4f} mm3, build123d {want_volume:.4f} mm3"
-    tol = max(1e-3, SOLID_REL_TOL * want_volume ** (1 / 3))
+    tol = max(1e-3, rel * want_volume ** (1 / 3))
     if distance(cog, tuple(want["cog_mm"])) > tol:
         return (f"centre at ({', '.join(f'{c:.3f}' for c in cog)}), build123d at "
                 f"({', '.join(f'{c:.3f}' for c in want['cog_mm'])})")

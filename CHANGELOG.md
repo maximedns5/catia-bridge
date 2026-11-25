@@ -264,6 +264,22 @@ All notable changes to this project are documented here.
   fixtures `d1`-`d3` and the `drafting_parts` assembly
   (`scripts/make_drafting_fixtures.py`); `scripts/probe_drawing.py` probes
   each new route (`--window`).
+- **Generative Shape Design, second slice** (docs/surfaces.md): 3D curves
+  as tree features (`curve`: helix, spline, polyline, circle, projection,
+  intersection) in a `Curves` set, each checked by its length and centre;
+  surfaces from curves (extrude, revolve, fill, sweep along a guide);
+  sphere and cylinder; translate, rotate, symmetry, scaling and affinity of
+  a surface; ruled multi-sections through three or more sections;
+  `trim_surfaces` and `extract`. CATIA's undocumented senses are tried in
+  order and checked against build123d; splines are CATIA's own
+  interpolation, checked within 2 %. Blend, shape fillets and smooth
+  multi-sections through more sections are documented as having no
+  build123d reference. Eight `s7_*` fixtures.
+- **One live run** (`scripts/live_suite.py`, docs/live-testing.md): every
+  tree fixture, the probes and, with `--product`, the assembly steps, run in
+  one command on a live CATIA; the reports, `summary.json` and a short
+  French `summary.txt` packed into one zip. Stops at a blocking dialog.
+
 
 ### Fixed
 - V5 assembly tools: `catia_add_new_part` makes a CATPart
